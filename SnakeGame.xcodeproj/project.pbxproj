@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		FB0005FB2F000005000001 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = FB0002FB2F000002000001 /* FirebaseCore */; };
+		FB0006FB2F000006000001 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = FB0003FB2F000003000001 /* FirebaseDatabase */; };
+		FB0007FB2F000007000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = FB0004FB2F000004000001 /* FirebaseAuth */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		E539AB952F4E15A700A78880 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +58,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FB0005FB2F000005000001 /* FirebaseCore in Frameworks */,
+				FB0006FB2F000006000001 /* FirebaseDatabase in Frameworks */,
+				FB0007FB2F000007000001 /* FirebaseAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +121,9 @@
 			);
 			name = SnakeGame;
 			packageProductDependencies = (
+				FB0002FB2F000002000001 /* FirebaseCore */,
+				FB0003FB2F000003000001 /* FirebaseDatabase */,
+				FB0004FB2F000004000001 /* FirebaseAuth */,
 			);
 			productName = SnakeGame;
 			productReference = E539AB872F4E15A400A78880 /* SnakeGame.app */;
@@ -195,6 +207,9 @@
 			);
 			mainGroup = E539AB7E2F4E15A400A78880;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				E56A99782F563C42003AE0AA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E539AB882F4E15A400A78880 /* Products */;
 			projectDirPath = "";
@@ -400,17 +415,23 @@
 				DEVELOPMENT_TEAM = UNB3YS9PAB;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = VipeRun;
+				INFOPLIST_KEY_CFBundleIconName = AppIcon;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.adventure-games";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take a selfie as your snake head";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Used to take a selfie as your snake head";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = co.chandrashrestha.SnakeGame;
+				PRODUCT_BUNDLE_IDENTIFIER = co.chandrashrestha.viperun;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -428,17 +449,23 @@
 				DEVELOPMENT_TEAM = UNB3YS9PAB;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = VipeRun;
+				INFOPLIST_KEY_CFBundleIconName = AppIcon;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.adventure-games";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take a selfie as your snake head";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Used to take a selfie as your snake head";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = co.chandrashrestha.SnakeGame;
+				PRODUCT_BUNDLE_IDENTIFIER = co.chandrashrestha.viperun;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -558,6 +585,43 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E56A99782F563C42003AE0AA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.10.0;
+			};
+		};
+		FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FB0002FB2F000002000001 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		FB0003FB2F000003000001 /* FirebaseDatabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseDatabase;
+		};
+		FB0004FB2F000004000001 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E539AB7F2F4E15A400A78880 /* Project object */;
 }
