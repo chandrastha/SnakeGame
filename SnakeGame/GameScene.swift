@@ -2451,6 +2451,7 @@ class GameScene: SKScene {
                     boostScoreDrainTimer = 0
                     score = max(0, score - 1)
                     updateScoreDisplay()
+                    updateSpeedForScore()
                 }
             }
         } else {
