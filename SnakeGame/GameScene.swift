@@ -45,6 +45,9 @@ struct BotState {
     var respawnTimer: CGFloat  // seconds remaining before bot reappears
     var aggressionActive: Bool // true when hard/medium bot is currently intercepting player
 
+    // Trail food
+    var trailFoodTimer: CGFloat
+
     init(id: Int, position: CGPoint, colorIndex: Int, name: String) {
         self.id           = id
         self.position     = position
@@ -62,8 +65,23 @@ struct BotState {
         self.isDead           = false
         self.respawnTimer     = 0
         self.aggressionActive = false
+        self.trailFoodTimer   = 0
     }
 }
+
+// MARK: - Bot AI Weights
+private struct BotWeights {
+    let foodScore:      CGFloat
+    let deathFoodScore: CGFloat
+    let wallPenalty:    CGFloat
+    let bodyPenalty:    CGFloat
+    let fleePenalty:    CGFloat
+    let huntBonus:      CGFloat
+    let horizon:        CGFloat   // lookahead seconds
+}
+private let easyWeights   = BotWeights(foodScore: 60, deathFoodScore:   0, wallPenalty: 200, bodyPenalty: 150, fleePenalty:  80, huntBonus:   0, horizon: 0.6)
+private let mediumWeights = BotWeights(foodScore: 55, deathFoodScore: 120, wallPenalty: 250, bodyPenalty: 200, fleePenalty:  60, huntBonus:   0, horizon: 0.8)
+private let hardWeights   = BotWeights(foodScore: 40, deathFoodScore: 140, wallPenalty: 300, bodyPenalty: 250, fleePenalty:  40, huntBonus: 110, horizon: 1.0)
 
 // MARK: - Remote Player (Online Mode)
 struct RemotePlayer {
@@ -156,7 +174,9 @@ class GameScene: SKScene {
     var foodTypes: [FoodType]   = []
     // Trail food
     var trailFoodTimer: CGFloat = 0
-    let trailFoodInterval: CGFloat = 1.2
+    let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
+    let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
+    let maxTrailFoodItems:   Int     = 150    // hard cap on active .trail nodes
     // Trail food: makeTrailFoodNode — scaled body segment matching player skin + pattern
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
@@ -193,6 +213,9 @@ class GameScene: SKScene {
     var ghostTimeLeft:       CGFloat = 0
     var score:          Int = 0
     var scoreMultiplier: Int = 1
+    /// Target body segment count derived directly from score.
+    /// initialBodyCount + 1 segment per 2 score points.
+    var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 2) }
 
     // MARK: - Other UI
     var pauseButton:  SKNode?
@@ -1216,9 +1239,12 @@ class GameScene: SKScene {
         return head
     }
 
-    func spawnTrailFood(at position: CGPoint) {
-        let food = makeTrailFoodNode(colorIndex: selectedSnakeColorIndex,
-                                     patternIndex: selectedSnakePatternIndex)
+    func spawnTrailFood(at position: CGPoint, colorIndex: Int, patternIndex: Int) {
+        // Hard cap: prevent node explosion when many snakes are moving
+        let trailCount = foodTypes.lazy.filter { $0 == .trail }.count
+        guard trailCount < maxTrailFoodItems else { return }
+
+        let food = makeTrailFoodNode(colorIndex: colorIndex, patternIndex: patternIndex)
         food.position = position
         food.alpha    = 0
         addChild(food)
@@ -1296,7 +1322,7 @@ class GameScene: SKScene {
         }
 
         spawnFood()
-        addBodySegment()
+        // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
 
         // Apply power-up effects
         switch type {
@@ -1349,6 +1375,7 @@ class GameScene: SKScene {
             maxMoveSpeed: maxMoveSpeed,
             speedBoostActive: speedBoostActive
         )
+        syncSnakeLength()
     }
 
     // MARK: - Floating Score Text
@@ -1509,6 +1536,22 @@ class GameScene: SKScene {
         seg.position = bodySegments.last?.position ?? snakeHead.position
         addChild(seg)
         bodySegments.append(seg)
+        updateSegmentScales()
+    }
+
+    /// Grow or shrink the player body to match targetBodyCount (score / 2 + initial).
+    /// Called on every score change so boost drain also shrinks the snake.
+    func syncSnakeLength() {
+        let target = targetBodyCount
+        while bodySegments.count < target {
+            let seg = makePlayerBodySegment(segIndex: bodySegments.count)
+            seg.position = bodySegments.last?.position ?? snakeHead.position
+            addChild(seg)
+            bodySegments.append(seg)
+        }
+        while bodySegments.count > target && bodySegments.count > 1 {
+            bodySegments.removeLast().removeFromParent()
+        }
         updateSegmentScales()
     }
 
@@ -1834,70 +1877,138 @@ class GameScene: SKScene {
         return best
     }
 
-    func updateBotTargetAngle(_ index: Int) {
-        guard let head = bots[index].head else { return }
-        let hx = head.position.x, hy = head.position.y
+    // MARK: - Utility Bot AI
 
-        // 1. Wall avoidance — same for all tiers
-        let nearWall = hx - headRadius < wallAvoidanceDistance ||
-                       arenaMaxX - (hx + headRadius) < wallAvoidanceDistance ||
-                       hy - headRadius < wallAvoidanceDistance ||
-                       arenaMaxY - (hy + headRadius) < wallAvoidanceDistance
-        if nearWall {
-            bots[index].targetAngle = atan2(worldSize/2 - hy, worldSize/2 - hx)
-            return
-        }
-
-        let tier = bots[index].tier
-        let distToPlayer = hypot(snakeHead.position.x - hx, snakeHead.position.y - hy)
-
-        // 2. Death food attraction (medium: 600u, hard: 800u)
-        if tier == .medium || tier == .hard {
-            let deathRadius: CGFloat = tier == .hard ? 800 : 600
-            if let df = findNearestDeathFood(to: head.position, within: deathRadius) {
-                bots[index].targetAngle = atan2(df.position.y - hy, df.position.x - hx)
-                bots[index].aggressionActive = false
-                return
-            }
-        }
-
-        // 3. Tier-specific player interaction
+    private func weightsForTier(_ tier: BotTier) -> BotWeights {
         switch tier {
-        case .hard:
-            // Become aggressive when bot is large enough relative to player
-            let aggrThreshold = max(0.50, 0.70 - CGFloat(score) / 500.0)
-            let botIsLargeEnough = CGFloat(bots[index].bodyLength) >= CGFloat(bodySegments.count) * aggrThreshold
-            if botIsLargeEnough && distToPlayer < 600 {
-                // Predict player position ahead along their current direction
-                let lookahead: CGFloat = 150.0
-                let predictedX = snakeHead.position.x + cos(currentAngle) * lookahead
-                let predictedY = snakeHead.position.y + sin(currentAngle) * lookahead
-                bots[index].targetAngle = atan2(predictedY - hy, predictedX - hx)
-                bots[index].aggressionActive = true
-                return
-            }
-            bots[index].aggressionActive = false
+        case .easy:   return easyWeights
+        case .medium: return mediumWeights
+        case .hard:   return hardWeights
+        }
+    }
 
-        case .medium:
-            // Flee only if player is bigger
-            if distToPlayer < playerAvoidanceDistance && bodySegments.count > bots[index].bodyLength {
-                bots[index].targetAngle = atan2(snakeHead.position.y - hy, snakeHead.position.x - hx) + .pi
-                bots[index].aggressionActive = false
-                return
-            }
-            bots[index].aggressionActive = false
+    /// Normalizes an angle difference to the range [-π, π].
+    private func normalizedAngleDiff(_ diff: CGFloat) -> CGFloat {
+        var d = diff
+        while d >  .pi { d -= 2 * .pi }
+        while d < -.pi { d += 2 * .pi }
+        return d
+    }
 
-        case .easy:
-            // Original: flee if player is within avoidance distance
-            if distToPlayer < playerAvoidanceDistance {
-                bots[index].targetAngle = atan2(snakeHead.position.y - hy, snakeHead.position.x - hx) + .pi
-                return
+    /// Evaluates how desirable a candidate heading is for the given bot.
+    /// Returns a composite score: higher = better choice.
+    private func evaluateHeading(botIndex i: Int,
+                                 angle:    CGFloat,
+                                 speed:    CGFloat,
+                                 weights:  BotWeights,
+                                 nearestFood:      SKNode?,
+                                 nearestDeathFood: SKNode?) -> CGFloat {
+        var sc: CGFloat = 0
+        let hx = bots[i].position.x, hy = bots[i].position.y
+        let wallMargin: CGFloat = 200
+
+        // --- 3 sample points along the projected ray ---
+        for k in 1...3 {
+            let t  = weights.horizon * CGFloat(k) / 3
+            let px = hx + cos(angle) * speed * t
+            let py = hy + sin(angle) * speed * t
+
+            // Wall zone — penalty escalates for later (nearer) samples
+            if px < wallMargin || px > arenaMaxX - wallMargin ||
+               py < wallMargin || py > arenaMaxY - wallMargin {
+                sc -= weights.wallPenalty * CGFloat(k)
+            }
+
+            // Player body
+            for seg in bodySegments {
+                if hypot(px - seg.position.x, py - seg.position.y) < 30 {
+                    sc -= weights.bodyPenalty
+                }
+            }
+
+            // Nearby bot bodies (coarse pre-filter: skip bots whose head is far away)
+            for j in bots.indices where j != i && bots[j].isActive && !bots[j].isDead {
+                guard hypot(bots[j].position.x - hx, bots[j].position.y - hy) < 400 else { continue }
+                for seg in bots[j].body {
+                    if hypot(px - seg.position.x, py - seg.position.y) < 28 {
+                        sc -= weights.bodyPenalty * 0.5
+                    }
+                }
+            }
+
+            // Flee from a larger player (medium / hard only)
+            if bots[i].tier != .easy &&
+               hypot(snakeHead.position.x - px, snakeHead.position.y - py) < 220 &&
+               bodySegments.count > bots[i].bodyLength {
+                sc -= weights.fleePenalty
             }
         }
 
-        // 4. Default: aim at nearest food
-        guard let fruit = findNearestFood(to: head.position) else { return }
-        bots[index].targetAngle = atan2(fruit.position.y - hy, fruit.position.x - hx)
+        // --- Directional bonuses with distance weighting ---
+
+        if let food = nearestFood {
+            let dx = food.position.x - hx, dy = food.position.y - hy
+            let dist = hypot(dx, dy)
+            let distFactor = max(0, 1.0 - dist / 700)   // far food = less pull
+            let diff = normalizedAngleDiff(angle - atan2(dy, dx))
+            sc += weights.foodScore * max(0, cos(diff)) * distFactor
+        }
+
+        if let df = nearestDeathFood {
+            let dx = df.position.x - hx, dy = df.position.y - hy
+            let dist = hypot(dx, dy)
+            let distFactor = max(0, 1.0 - dist / 900)
+            let diff = normalizedAngleDiff(angle - atan2(dy, dx))
+            sc += weights.deathFoodScore * max(0, cos(diff)) * distFactor
+        }
+
+        if bots[i].aggressionActive {
+            // Aim at predicted player position (150 px ahead of their current heading)
+            let predX = snakeHead.position.x + cos(currentAngle) * 150
+            let predY = snakeHead.position.y + sin(currentAngle) * 150
+            let diff  = normalizedAngleDiff(angle - atan2(predY - hy, predX - hx))
+            sc += weights.huntBonus * max(0, cos(diff))
+        }
+
+        return sc
+    }
+
+    /// Chooses the best of 13 candidate headings for bot `i` using utility scoring.
+    /// Replaces the old rule-priority `updateBotTargetAngle`.
+    func chooseBestHeading(for i: Int) -> CGFloat {
+        let pos     = bots[i].position
+        let tier    = bots[i].tier
+        let weights = weightsForTier(tier)
+        let speed   = botSpeed(for: tier)
+
+        // Cache food lookups once per bot — not once per candidate
+        let nearestFood:      SKNode? = findNearestFood(to: pos)
+        let nearestDeathFood: SKNode? = (tier != .easy)
+            ? findNearestDeathFood(to: pos, within: tier == .hard ? 800 : 600)
+            : nil
+
+        // Update aggression flag for hard bots (same threshold as before)
+        if tier == .hard {
+            let aggrThreshold    = max(0.50, 0.70 - CGFloat(score) / 500.0)
+            let botIsLargeEnough = CGFloat(bots[i].bodyLength) >= CGFloat(bodySegments.count) * aggrThreshold
+            let distToPlayer     = hypot(snakeHead.position.x - pos.x, snakeHead.position.y - pos.y)
+            bots[i].aggressionActive = botIsLargeEnough && distToPlayer < 600
+        } else {
+            bots[i].aggressionActive = false
+        }
+
+        // Evaluate 13 headings: current angle ± 90° in 15° steps
+        let base = bots[i].angle
+        var bestAngle = base
+        var bestScore: CGFloat = -.greatestFiniteMagnitude
+
+        for step in -6...6 {
+            let angle = base + CGFloat(step) * (.pi / 12)
+            let s = evaluateHeading(botIndex: i, angle: angle, speed: speed, weights: weights,
+                                    nearestFood: nearestFood, nearestDeathFood: nearestDeathFood)
+            if s > bestScore { bestScore = s; bestAngle = angle }
+        }
+        return bestAngle
     }
 
     func updateBots(dt: CGFloat, updateAI: Bool) {
@@ -1920,7 +2031,7 @@ class GameScene: SKScene {
             }
 
             if bots[i].isActive {
-                if updateAI { updateBotTargetAngle(i) }
+                if updateAI { bots[i].targetAngle = chooseBestHeading(for: i) }
                 smoothlyRotate(current: &bots[i].angle, target: bots[i].targetAngle, dt: dt)
 
                 let moveDist = botSpeed(for: bots[i].tier) * dt
@@ -1942,20 +2053,18 @@ class GameScene: SKScene {
                     let botSegPos = arcPositions(history: bots[i].posHistory, leadPos: bots[i].position,
                                                  count: bots[i].body.count, spacing: segmentPixelSpacing)
                     for (j, seg) in bots[i].body.enumerated() { seg.position = botSegPos[j] }
+                    // Food collision handled exclusively by checkBotFoodCollision below
+                }
 
-                    // Bot eats nearby food (including trail food)
-                    for (f, food) in foodItems.enumerated().reversed() {
-                        if hypot(bots[i].position.x - food.position.x,
-                                 bots[i].position.y - food.position.y) < (headRadius + foodRadius) {
-                            bots[i].score      += 1
-                            bots[i].bodyLength += 1
-                            food.removeFromParent()
-                            foodItems.remove(at: f)
-                            foodTypes.remove(at: f)
-                            spawnFood()
-                            break
-                        }
+                // Bot trail food
+                bots[i].trailFoodTimer += dt
+                if bots[i].trailFoodTimer >= botTrailInterval {
+                    if let tailSeg = bots[i].body.last {
+                        spawnTrailFood(at: tailSeg.position,
+                                       colorIndex: bots[i].colorIndex,
+                                       patternIndex: 0)
                     }
+                    bots[i].trailFoodTimer = 0
                 }
 
                 if GameLogic.isOutsideArena(point: bots[i].position, radius: headRadius,
@@ -2178,17 +2287,14 @@ class GameScene: SKScene {
         }
     }
 
-    /// ✂️ Shrink — instantly remove ~30% of body segments; gives a brief invincibility window.
+    /// ✂️ Shrink — reduce score by ~30% so that syncSnakeLength() contracts the body accordingly.
     func applyShrink() {
-        let keepCount   = max(3, Int(CGFloat(bodySegments.count) * 0.70))
-        let removeCount = bodySegments.count - keepCount
-        guard removeCount > 0 else { return }
-        for _ in 0..<removeCount {
-            bodySegments.last?.removeFromParent()
-            if !bodySegments.isEmpty { bodySegments.removeLast() }
-        }
+        guard score > 0 else { return }
+        let reduction  = max(1, score * 30 / 100)
+        score          = max(0, score - reduction)
+        updateScoreDisplay()
+        updateSpeedForScore()   // calls syncSnakeLength() → body contracts
         invincibleTimeLeft = 0.8   // brief safety window after shrink
-        updateSegmentScales()
         spawnFloatingText("✂️ Shrink!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 60))
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
@@ -2528,11 +2634,13 @@ class GameScene: SKScene {
 
         checkFoodCollisions()
 
-        // --- Trail food spawning ---
+        // --- Trail food spawning (player) ---
         if gameStarted, let tailSeg = bodySegments.last {
             trailFoodTimer += dt
-            if trailFoodTimer >= trailFoodInterval {
-                spawnTrailFood(at: tailSeg.position)
+            if trailFoodTimer >= playerTrailInterval {
+                spawnTrailFood(at: tailSeg.position,
+                               colorIndex: selectedSnakeColorIndex,
+                               patternIndex: selectedSnakePatternIndex)
                 trailFoodTimer = 0
             }
         }
