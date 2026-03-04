@@ -20,6 +20,7 @@ struct StartScreenView: View {
     @State private var showSourcePicker:  Bool = false
     @State private var showLeaderboard:   Bool = false
     @State private var showCustomize:     Bool = false
+    @State private var pulsePlay:         Bool = false
 
     // Detect compact vertical class = iPhone landscape
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -32,12 +33,39 @@ struct StartScreenView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.1, green: 0.1, blue: 0.15).ignoresSafeArea()
+            // Layered gradient background
+            LinearGradient(
+                colors: [
+                    Color(red: 0.05, green: 0.07, blue: 0.14),
+                    Color(red: 0.10, green: 0.08, blue: 0.18),
+                    Color(red: 0.05, green: 0.07, blue: 0.14)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            // Subtle radial glow at top center
+            RadialGradient(
+                colors: [
+                    Color(red: 0.2, green: 0.7, blue: 0.3).opacity(0.12),
+                    Color.clear
+                ],
+                center: .top,
+                startRadius: 0,
+                endRadius: 300
+            )
+            .ignoresSafeArea()
 
             if isLandscape {
                 landscapeLayout
             } else {
                 portraitLayout
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                pulsePlay = true
             }
         }
         // Image picker
@@ -76,6 +104,7 @@ struct StartScreenView: View {
             Text("VIPERUN")
                 .font(.system(size: 38, weight: .black))
                 .foregroundStyle(titleGradient)
+                .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.55), radius: 14, x: 0, y: 0)
                 .padding(.bottom, 20)
 
             scoreRow.padding(.bottom, 22)
@@ -112,6 +141,7 @@ struct StartScreenView: View {
                 Text("VIPERUN")
                     .font(.system(size: 26, weight: .black))
                     .foregroundStyle(titleGradient)
+                    .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.5), radius: 10, x: 0, y: 0)
                     .padding(.bottom, 12)
 
                 scoreRow
@@ -227,6 +257,7 @@ struct StartScreenView: View {
             .padding(.vertical, 9)
             .background(Color.white.opacity(0.10))
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(red: 1.0, green: 0.85, blue: 0.0).opacity(0.25), lineWidth: 1))
 
             Button(action: { showLeaderboard = true }) {
                 HStack(spacing: 3) {
@@ -276,12 +307,14 @@ struct StartScreenView: View {
                 .foregroundStyle(Color.white)
                 .frame(width: 220, height: 65)
                 .background(LinearGradient(
-                    colors: [Color(red: 0.2, green: 0.8, blue: 0.3), Color(red: 0.1, green: 0.6, blue: 0.2)],
+                    colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
                     startPoint: .top, endPoint: .bottom
                 ))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
-                .shadow(color: Color(red: 0.2, green: 0.8, blue: 0.3).opacity(0.5), radius: 12, x: 0, y: 4)
+                .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.25), lineWidth: 1))
+                .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.65), radius: 18, x: 0, y: 4)
         }
+        .scaleEffect(pulsePlay ? 1.035 : 1.0)
         .accessibilityIdentifier("playButton")
     }
 
@@ -294,12 +327,14 @@ struct StartScreenView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
                 .background(LinearGradient(
-                    colors: [Color(red: 0.2, green: 0.8, blue: 0.3), Color(red: 0.1, green: 0.6, blue: 0.2)],
+                    colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
                     startPoint: .top, endPoint: .bottom
                 ))
                 .clipShape(RoundedRectangle(cornerRadius: 15))
-                .shadow(color: Color(red: 0.2, green: 0.8, blue: 0.3).opacity(0.5), radius: 10, x: 0, y: 3)
+                .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.25), lineWidth: 1))
+                .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.6), radius: 14, x: 0, y: 3)
         }
+        .scaleEffect(pulsePlay ? 1.035 : 1.0)
         .accessibilityIdentifier("playButton")
     }
 
@@ -332,11 +367,26 @@ struct ModeButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 9)
-            .background(isSelected ? Color(red: 0.2, green: 0.55, blue: 0.85) : Color.white.opacity(0.07))
+            .background(
+                Group {
+                    if isSelected {
+                        LinearGradient(
+                            colors: [Color(red: 0.22, green: 0.60, blue: 0.95), Color(red: 0.14, green: 0.42, blue: 0.80)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    } else {
+                        LinearGradient(colors: [Color.white.opacity(0.07), Color.white.opacity(0.07)],
+                                       startPoint: .top, endPoint: .bottom)
+                    }
+                }
+            )
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12)
-                .stroke(isSelected ? Color(red: 0.3, green: 0.65, blue: 1.0) : Color.white.opacity(0.15), lineWidth: 1.5))
+                .stroke(isSelected ? Color(red: 0.4, green: 0.72, blue: 1.0) : Color.white.opacity(0.15), lineWidth: 1.5))
+            .shadow(color: isSelected ? Color(red: 0.2, green: 0.55, blue: 0.95).opacity(0.4) : .clear, radius: 6, x: 0, y: 2)
         }
+        .scaleEffect(isSelected ? 1.04 : 1.0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
     }
 }
 

@@ -14,8 +14,16 @@ struct SnakeCustomizeView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.1, green: 0.1, blue: 0.15)
-                .ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    Color(red: 0.05, green: 0.07, blue: 0.14),
+                    Color(red: 0.10, green: 0.08, blue: 0.18),
+                    Color(red: 0.05, green: 0.07, blue: 0.14)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 0) {

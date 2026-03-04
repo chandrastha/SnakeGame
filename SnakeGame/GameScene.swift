@@ -632,8 +632,8 @@ class GameScene: SKScene {
     // MARK: - Joystick
     func createJoystick() {
         let base = SKShapeNode(circleOfRadius: joystickBaseRadius)
-        base.fillColor   = SKColor(white: 1, alpha: 0.06)
-        base.strokeColor = SKColor(white: 1, alpha: 0.22)
+        base.fillColor   = SKColor(red: 0.15, green: 0.30, blue: 0.20, alpha: 0.18)
+        base.strokeColor = SKColor(red: 0.3, green: 0.85, blue: 0.45, alpha: 0.35)
         base.lineWidth   = 2
         base.position    = joystickCenter
         base.zPosition   = 500
@@ -650,8 +650,8 @@ class GameScene: SKScene {
         joystickInnerRing = ring
 
         let thumb = SKShapeNode(circleOfRadius: joystickThumbRadius)
-        thumb.fillColor   = SKColor(white: 1, alpha: 0.30)
-        thumb.strokeColor = SKColor(white: 1, alpha: 0.60)
+        thumb.fillColor   = SKColor(red: 0.25, green: 0.80, blue: 0.40, alpha: 0.38)
+        thumb.strokeColor = SKColor(red: 0.4, green: 0.95, blue: 0.55, alpha: 0.75)
         thumb.lineWidth   = 2
         thumb.glowWidth   = 6
         thumb.position    = joystickCenter
@@ -899,14 +899,22 @@ class GameScene: SKScene {
         overlay.name      = "gameOverOverlay"
 
         let bg = SKShapeNode(rectOf: CGSize(width: size.width * 2, height: size.height * 2))
-        bg.fillColor   = SKColor(white: 0.0, alpha: 0.82)
+        bg.fillColor   = SKColor(red: 0.03, green: 0.05, blue: 0.12, alpha: 0.88)
         bg.strokeColor = .clear
         bg.position    = CGPoint(x: cx, y: cy)
         overlay.addChild(bg)
 
+        // Card background for game-over content
+        let card = SKShapeNode(rectOf: CGSize(width: 280, height: 260), cornerRadius: 22)
+        card.fillColor   = SKColor(red: 0.08, green: 0.10, blue: 0.18, alpha: 0.95)
+        card.strokeColor = SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.30)
+        card.lineWidth   = 1.5
+        card.position    = CGPoint(x: cx, y: cy - 10)
+        overlay.addChild(card)
+
         let titleLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         titleLabel.text                    = title
-        titleLabel.fontSize                = 48
+        titleLabel.fontSize                = 42
         titleLabel.fontColor               = .white
         titleLabel.horizontalAlignmentMode = .center
         titleLabel.verticalAlignmentMode   = .center
@@ -915,19 +923,21 @@ class GameScene: SKScene {
 
         let finalScore = SKLabelNode(fontNamed: "Arial-BoldMT")
         finalScore.text                    = "\(playerName.isEmpty ? "You" : playerName): \(score)"
-        finalScore.fontSize                = 30
+        finalScore.fontSize                = 28
         finalScore.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
         finalScore.horizontalAlignmentMode = .center
         finalScore.verticalAlignmentMode   = .center
-        finalScore.position                = CGPoint(x: cx, y: cy + 30)
+        finalScore.position                = CGPoint(x: cx, y: cy + 35)
         overlay.addChild(finalScore)
 
         // Play Again / Rejoin button (primary action)
         let restartLabel = gameMode == .online ? "Rejoin" : "Play Again"
-        let restartBtnY  = cy - 50
-        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 58), cornerRadius: 14)
-        restartBg.fillColor   = SKColor(red: 0.2, green: 0.75, blue: 0.3, alpha: 1.0)
-        restartBg.strokeColor = .clear
+        let restartBtnY  = cy - 45
+        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 54), cornerRadius: 14)
+        restartBg.fillColor   = SKColor(red: 0.20, green: 0.78, blue: 0.32, alpha: 1.0)
+        restartBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
+        restartBg.lineWidth   = 1
+        restartBg.glowWidth   = 6
         restartBg.position    = CGPoint(x: cx, y: restartBtnY)
         restartBg.name        = "restartButton"
         overlay.addChild(restartBg)
@@ -943,10 +953,10 @@ class GameScene: SKScene {
         overlay.addChild(restartLbl)
 
         // Main Menu button (secondary action)
-        let menuBtnY  = cy - 125
-        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 58), cornerRadius: 14)
-        btnBg.fillColor   = SKColor(white: 0.18, alpha: 0.90)
-        btnBg.strokeColor = SKColor(white: 1.0, alpha: 0.15)
+        let menuBtnY  = cy - 115
+        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 54), cornerRadius: 14)
+        btnBg.fillColor   = SKColor(red: 0.12, green: 0.14, blue: 0.22, alpha: 0.95)
+        btnBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
         btnBg.lineWidth   = 1
         btnBg.position    = CGPoint(x: cx, y: menuBtnY)
         btnBg.name        = "playAgainButton"
@@ -955,7 +965,7 @@ class GameScene: SKScene {
         let btnLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         btnLabel.text                    = "Main Menu"
         btnLabel.fontSize                = 20
-        btnLabel.fontColor               = SKColor(white: 0.85, alpha: 1.0)
+        btnLabel.fontColor               = SKColor(white: 0.90, alpha: 1.0)
         btnLabel.horizontalAlignmentMode = .center
         btnLabel.verticalAlignmentMode   = .center
         btnLabel.position                = CGPoint(x: cx, y: menuBtnY)
@@ -989,8 +999,9 @@ class GameScene: SKScene {
         scorePanelHeight = panelH
 
         scorePanel = SKShapeNode(rect: CGRect(x: 0, y: 0, width: panelW, height: panelH), cornerRadius: 12)
-        scorePanel.fillColor   = SKColor(white: 0.0, alpha: 0.70)
-        scorePanel.strokeColor = .clear
+        scorePanel.fillColor   = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.85)
+        scorePanel.strokeColor = SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.45)
+        scorePanel.lineWidth   = 1.0
         scorePanel.zPosition   = 500
 
         let cx = worldSize / 2, cy = worldSize / 2
