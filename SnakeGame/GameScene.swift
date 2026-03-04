@@ -110,7 +110,7 @@ class GameScene: SKScene {
     let headRadius:              CGFloat = 13.0
     let bodySegmentRadius:       CGFloat = 10.0
     let collisionRadius:         CGFloat = 12.0
-    let foodRadius:              CGFloat = 20.0
+    let foodRadius:              CGFloat = 12.0
     let safeSpawnDistance:       CGFloat = 80.0
     let foodPadding:             CGFloat = 80.0
     let initialBodyCount:        Int     = 10
@@ -147,23 +147,18 @@ class GameScene: SKScene {
     var boostButtonCenter: CGPoint = .zero
     var boostButtonNode:   SKNode?
     var boostTouch:        UITouch?
-    // Boost energy meter
-    var boostEnergy:        CGFloat = 100.0
-    let boostEnergyMax:     CGFloat = 100.0
-    let boostDrainRate:     CGFloat = 25.0   // units/sec while boosting (~4s full drain)
-    let boostRegenRate:     CGFloat = 10.0   // units/sec while idle (~10s full regen)
-    let boostMinEnergy:     CGFloat = 15.0   // minimum to activate boost
-    var boostEnergyArcNode: SKShapeNode?
+    // Boost score drain — replaces energy bar; costs 1 score point per 200ms
+    var boostScoreDrainTimer: CGFloat = 0
 
     // MARK: - Food
     let fruitEmojis: [String] = ["🍎","🍊","🍋","🍇","🍓","🍉","🍑","🍌","🫐","🍒"]
-    var foodItems: [SKLabelNode] = []
+    var foodItems: [SKNode] = []
     var foodTypes: [FoodType]   = []
     // Trail food
     var trailFoodTimer: CGFloat = 0
     let trailFoodInterval: CGFloat = 1.2
-    let trailFoodEmojis: [String] = ["🌱", "💧", "⭐", "🫧"]
-    let deathFoodEmojis: [String] = ["💀", "🔮", "💠"]
+    // Trail food: makeTrailFoodNode — scaled body segment matching player skin + pattern
+    // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
     // MARK: - Arena
     var arenaMinX: CGFloat = 0, arenaMaxX: CGFloat = 4000
@@ -288,7 +283,7 @@ class GameScene: SKScene {
         ghostTimeLeft       = 0
         currentMoveSpeed    = baseMoveSpeed
         isBoostHeld         = false
-        boostEnergy         = boostEnergyMax
+        boostScoreDrainTimer = 0
         joystickTouch       = nil
         boostTouch          = nil
         joystickThumbOffset = .zero
@@ -489,7 +484,10 @@ class GameScene: SKScene {
         pop("3") { pop("2") { pop("1") {
             pop("GO!", color: SKColor(red: 0.3, green: 0.9, blue: 0.3, alpha: 1.0)) {
                 countLabel.removeFromParent()
-                self.gameStarted = true
+                self.gameStarted   = true
+                self.ghostActive   = true
+                self.ghostTimeLeft = 4.0
+                self.showGhostEffect()
             }
         }}}
     }
@@ -706,40 +704,8 @@ class GameScene: SKScene {
         label.verticalAlignmentMode   = .center
         btn.addChild(label)
 
-        // Energy arc background ring (child of btn, so it tracks with the button)
-        let bgRing = SKShapeNode(circleOfRadius: boostButtonRadius + 5)
-        bgRing.fillColor   = .clear
-        bgRing.strokeColor = SKColor(white: 1.0, alpha: 0.15)
-        bgRing.lineWidth   = 3
-        bgRing.zPosition   = 1
-        btn.addChild(bgRing)
-
-        // Foreground arc — updated every frame by updateBoostEnergyArc()
-        let arc = SKShapeNode()
-        arc.fillColor   = .clear
-        arc.strokeColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.9)
-        arc.lineWidth   = 3
-        arc.lineCap     = .round
-        arc.zPosition   = 2
-        btn.addChild(arc)
-        boostEnergyArcNode = arc
-
         addChild(btn)
         boostButtonNode = btn
-    }
-
-    func updateBoostEnergyArc() {
-        guard let arc = boostEnergyArcNode else { return }
-        let fraction = boostEnergy / boostEnergyMax
-        let endAngle = -.pi / 2.0 + fraction * 2.0 * .pi
-        let path = CGMutablePath()
-        // Arc uses local coordinates (parent = btn, origin = button center)
-        path.addArc(center: .zero, radius: boostButtonRadius + 5,
-                    startAngle: -.pi / 2.0, endAngle: endAngle, clockwise: false)
-        arc.path        = path
-        arc.strokeColor = fraction > 0.3
-            ? SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.9)
-            : SKColor(red: 1.0, green: 0.25, blue: 0.1,  alpha: 0.9)
     }
 
     func setBoostButtonActive(_ active: Bool) {
@@ -814,7 +780,9 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
-        spawnDeathFood(at: bodySegments.map(\.position))   // body scatters as death food
+        spawnDeathFood(at: bodySegments.map(\.position),
+                       colorIndex: selectedSnakeColorIndex,
+                       patternIndex: selectedSnakePatternIndex)   // body scatters as death food
         lastPlayerPosition = snakeHead.position
         UINotificationFeedbackGenerator().notificationOccurred(.error)
         spawnDeathParticles(at: snakeHead.position)
@@ -1151,18 +1119,18 @@ class GameScene: SKScene {
     }
 
     func spawnFood() {
-        // Distribution: regular 40%, multiplier 15%, speedBoost 10%, shield 10%,
-        //               magnet 10%, ghost 10%, shrink 5%
-        let roll = Int.random(in: 0...19)
+        // Distribution: regular 88%, each power-up 2% (6 types × 2% = 12%)
+        // Uses 0–99 roll for 1% precision
+        let roll = Int.random(in: 0...99)
         var type: FoodType
         switch roll {
-        case 0...7:   type = .regular
-        case 8...9:   type = .speedBoost
-        case 10...11: type = .shield
-        case 12...14: type = .multiplier
-        case 15...16: type = .magnet
-        case 17...18: type = .ghost
-        default:      type = .shrink
+        case 0...87:  type = .regular
+        case 88...89: type = .speedBoost
+        case 90...91: type = .shield
+        case 92...93: type = .multiplier
+        case 94...95: type = .magnet
+        case 96...97: type = .ghost
+        default:      type = .shrink       // 98...99
         }
 
         // Cap shields: never more than 2 shield items on the map at once
@@ -1180,10 +1148,9 @@ class GameScene: SKScene {
         case .magnet:     food.text = "🧲"
         case .ghost:      food.text = "👻"
         case .shrink:     food.text = "✂️"
-        case .trail:      food.text = trailFoodEmojis.randomElement()
-        case .death:      food.text = deathFoodEmojis.randomElement()   // not spawned by spawnFood() directly
+        case .trail, .death: food.text = "●"   // not spawned via spawnFood(); defensive fallback
         }
-        food.fontSize                = 28
+        food.fontSize                = 17
         food.verticalAlignmentMode   = .center
         food.horizontalAlignmentMode = .center
 
@@ -1206,17 +1173,57 @@ class GameScene: SKScene {
         return CGPoint(x: CGFloat.random(in: minX...maxX), y: CGFloat.random(in: minY...maxY))
     }
 
+    // MARK: - Skin-Matched Food Node Builders
+
+    /// Tiny body-segment circle matching the player/bot skin color and pattern.
+    /// Scale 0.5 → effective radius 5px (smaller than regular food).
+    func makeTrailFoodNode(colorIndex: Int, patternIndex: Int) -> SKShapeNode {
+        let idx     = colorIndex % snakeColorThemes.count
+        let theme   = snakeColorThemes[idx]
+        let pattern = SnakePattern(rawValue: patternIndex) ?? .solid
+        let node    = makeBodySegment(color: theme.bodySKColor,
+                                      stroke: theme.bodyStrokeSKColor,
+                                      pattern: pattern, segIndex: 0)
+        node.setScale(0.5)
+        return node
+    }
+
+    /// Body-segment circle matching a dead snake's skin, same visual size as regular food.
+    /// Scale 0.8 → effective radius 8px.
+    func makeDeathFoodNode(colorIndex: Int, patternIndex: Int) -> SKShapeNode {
+        let idx     = colorIndex % snakeColorThemes.count
+        let theme   = snakeColorThemes[idx]
+        let pattern = SnakePattern(rawValue: patternIndex) ?? .solid
+        let node    = makeBodySegment(color: theme.bodySKColor,
+                                      stroke: theme.bodyStrokeSKColor,
+                                      pattern: pattern, segIndex: 0)
+        node.setScale(0.8)
+        return node
+    }
+
+    /// Mini snake head (with eyes) matching a dead snake's head color.
+    /// Scale 0.65 on headRadius(13) → effective radius ~8.5px, slightly bigger than body circles.
+    func makeDeathHeadNode(colorIndex: Int) -> SKNode {
+        let idx   = colorIndex % snakeColorThemes.count
+        let theme = snakeColorThemes[idx]
+        let head  = SKShapeNode(circleOfRadius: headRadius)
+        head.fillColor   = theme.headSKColor
+        head.strokeColor = theme.headStrokeSKColor
+        head.lineWidth   = 2
+        head.glowWidth   = 4
+        head.setScale(0.65)
+        addEyes(to: head)
+        return head
+    }
+
     func spawnTrailFood(at position: CGPoint) {
-        let food = SKLabelNode(text: trailFoodEmojis.randomElement())
-        food.fontSize                = 16   // smaller than regular food
-        food.verticalAlignmentMode   = .center
-        food.horizontalAlignmentMode = .center
+        let food = makeTrailFoodNode(colorIndex: selectedSnakeColorIndex,
+                                     patternIndex: selectedSnakePatternIndex)
         food.position = position
         food.alpha    = 0
         addChild(food)
         foodItems.append(food)
         foodTypes.append(.trail)
-        // Fade in, persist 12s, then fade out and remove node
         food.run(SKAction.sequence([
             SKAction.fadeIn(withDuration: 0.25),
             SKAction.wait(forDuration: 12.0),
@@ -1225,29 +1232,35 @@ class GameScene: SKScene {
         ]))
     }
 
-    /// Scatter high-value food from a dead snake's body positions.
-    /// Spawns at every 3rd segment (max 12 items) to avoid map flooding.
-    func spawnDeathFood(at positions: [CGPoint]) {
+    /// Scatter skin-matched food from a dead snake's body positions.
+    /// Count = 1/3 of body length. First item is the snake's head (with eyes);
+    /// remaining items are scaled body-segment circles with the same color + pattern.
+    func spawnDeathFood(at positions: [CGPoint], colorIndex: Int, patternIndex: Int) {
         guard !positions.isEmpty else { return }
-        let step = max(1, positions.count / 12)
+        let totalItems = max(1, positions.count / 3)
+        let step       = max(1, positions.count / totalItems)
+
+        let deathPopAnimation = SKAction.sequence([
+            SKAction.group([SKAction.fadeIn(withDuration: 0.3),
+                            SKAction.scale(to: 1.3, duration: 0.15)]),
+            SKAction.scale(to: 1.0, duration: 0.15),
+            SKAction.wait(forDuration: 15.0),
+            SKAction.fadeOut(withDuration: 1.5),
+            SKAction.removeFromParent()
+        ])
+
+        var isFirst = true
         for i in Swift.stride(from: 0, to: positions.count, by: step) {
-            let food = SKLabelNode(text: deathFoodEmojis.randomElement()!)
-            food.fontSize                = 26
-            food.verticalAlignmentMode   = .center
-            food.horizontalAlignmentMode = .center
+            let food: SKNode = isFirst
+                ? makeDeathHeadNode(colorIndex: colorIndex)
+                : makeDeathFoodNode(colorIndex: colorIndex, patternIndex: patternIndex)
+            isFirst      = false
             food.position = positions[i]
             food.alpha    = 0
             addChild(food)
             foodItems.append(food)
             foodTypes.append(.death)
-            food.run(SKAction.sequence([
-                SKAction.group([SKAction.fadeIn(withDuration: 0.3),
-                                SKAction.scale(to: 1.3, duration: 0.15)]),
-                SKAction.scale(to: 1.0, duration: 0.15),
-                SKAction.wait(forDuration: 15.0),
-                SKAction.fadeOut(withDuration: 1.5),
-                SKAction.removeFromParent()
-            ]))
+            food.run(deathPopAnimation)
         }
     }
 
@@ -1310,23 +1323,21 @@ class GameScene: SKScene {
             applyShrink()
         }
 
-        // Per-type point values
+        // Per-type point values — power-ups are pure utility (0 pts)
         let pts: Int
         switch type {
-        case .regular, .speedBoost, .multiplier: pts = 2
-        case .shield:                            pts = 1
+        case .regular:                           pts = 2
         case .trail:                             pts = 1
         case .death:                             pts = 5
-        case .magnet:                            pts = 2
-        case .ghost:                             pts = 2
-        case .shrink:                            pts = 1
+        case .speedBoost, .shield, .multiplier,
+             .magnet, .ghost, .shrink:           pts = 0
         }
         score += pts * scoreMultiplier
         updateScoreDisplay()
         updateSpeedForScore()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         run(eatFoodAction)
-        spawnFloatingText("+\(pts * scoreMultiplier)", at: foodPos)
+        if pts > 0 { spawnFloatingText("+\(pts * scoreMultiplier)", at: foodPos) }
         spawnEatParticles(at: foodPos)
         refreshPowerUpPanel()
     }
@@ -1769,7 +1780,9 @@ class GameScene: SKScene {
     func respawnBot(_ index: Int) {
         guard !bots[index].isDead else { return }
         if bots[index].isActive {
-            spawnDeathFood(at: bots[index].body.map(\.position))  // body becomes death food
+            spawnDeathFood(at: bots[index].body.map(\.position),
+                           colorIndex: bots[index].colorIndex,
+                           patternIndex: 0)  // body becomes death food; bots use solid pattern
             deactivateBot(index)
         }
         // Mark dead with a tier-based respawn delay
@@ -2326,7 +2339,7 @@ class GameScene: SKScene {
             guard gameStarted, !isPausedGame else { continue }
 
             let boostDist = hypot(loc.x - boostButtonCenter.x, loc.y - boostButtonCenter.y)
-            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 && boostEnergy >= boostMinEnergy {
+            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 && score > 0 {
                 boostTouch  = touch
                 isBoostHeld = true
                 setBoostButtonActive(true)
@@ -2425,18 +2438,24 @@ class GameScene: SKScene {
         frameCounter += 1
         botBodyUpdateFrame = (botBodyUpdateFrame + 1) % 2
 
-        // --- Boost Energy ---
+        // --- Boost Score Drain (1 pt per 200ms) ---
         if isBoostHeld {
-            boostEnergy = max(0, boostEnergy - boostDrainRate * dt)
-            if boostEnergy <= 0 {
+            if score <= 0 {
+                // No score left — disengage boost
                 isBoostHeld = false
                 boostTouch  = nil
                 setBoostButtonActive(false)
+            } else {
+                boostScoreDrainTimer += dt
+                if boostScoreDrainTimer >= 0.2 {
+                    boostScoreDrainTimer = 0
+                    score = max(0, score - 1)
+                    updateScoreDisplay()
+                }
             }
         } else {
-            boostEnergy = min(boostEnergyMax, boostEnergy + boostRegenRate * dt)
+            boostScoreDrainTimer = 0
         }
-        updateBoostEnergyArc()
 
         // --- Player Movement ---
         let playerDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
@@ -2608,7 +2627,7 @@ extension GameScene: PhotonManagerDelegate {
         foodItems.remove(at: foodIndex)
         foodTypes.remove(at: foodIndex)
         let food = SKLabelNode(text: fruitEmojis.randomElement())
-        food.fontSize = 28
+        food.fontSize = 17
         food.verticalAlignmentMode   = .center
         food.horizontalAlignmentMode = .center
         food.position = CGPoint(x: CGFloat(newFoodX), y: CGFloat(newFoodY))
