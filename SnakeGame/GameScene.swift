@@ -15,6 +15,9 @@ enum FoodType {
     case shrink       // ✂️ instantly removes 30% of body (escape tool)
 }
 
+// MARK: - Bot Tier (Offline Mode)
+enum BotTier { case easy, medium, hard }
+
 // MARK: - Bot State
 struct BotState {
     let id: Int
@@ -36,6 +39,12 @@ struct BotState {
     // Virtual movement: change direction every ~3 s
     var dirChangeTimer: CGFloat
 
+    // Offline mode tier system
+    var tier: BotTier          // assigned by spawnBots(); default .easy
+    var isDead: Bool           // true during respawn delay countdown
+    var respawnTimer: CGFloat  // seconds remaining before bot reappears
+    var aggressionActive: Bool // true when hard/medium bot is currently intercepting player
+
     init(id: Int, position: CGPoint, colorIndex: Int, name: String) {
         self.id           = id
         self.position     = position
@@ -49,6 +58,10 @@ struct BotState {
         self.body         = []
         self.posHistory   = []
         self.dirChangeTimer = CGFloat.random(in: 1...3)
+        self.tier             = .easy
+        self.isDead           = false
+        self.respawnTimer     = 0
+        self.aggressionActive = false
     }
 }
 
@@ -134,6 +147,13 @@ class GameScene: SKScene {
     var boostButtonCenter: CGPoint = .zero
     var boostButtonNode:   SKNode?
     var boostTouch:        UITouch?
+    // Boost energy meter
+    var boostEnergy:        CGFloat = 100.0
+    let boostEnergyMax:     CGFloat = 100.0
+    let boostDrainRate:     CGFloat = 25.0   // units/sec while boosting (~4s full drain)
+    let boostRegenRate:     CGFloat = 10.0   // units/sec while idle (~10s full regen)
+    let boostMinEnergy:     CGFloat = 15.0   // minimum to activate boost
+    var boostEnergyArcNode: SKShapeNode?
 
     // MARK: - Food
     let fruitEmojis: [String] = ["🍎","🍊","🍋","🍇","🍓","🍉","🍑","🍌","🫐","🍒"]
@@ -199,7 +219,11 @@ class GameScene: SKScene {
     let totalBots = 30
     let botActivationRadius:   CGFloat = 800.0
     let botDeactivationRadius: CGFloat = 1000.0
-    let botMoveSpeed:          CGFloat = 120.0
+    // Per-tier base speeds (replaces single botMoveSpeed)
+    let botSpeedEasy:   CGFloat = 95.0
+    let botSpeedMedium: CGFloat = 120.0
+    let botSpeedHard:   CGFloat = 150.0
+    let botSpeedScoreCap: Int = 100
     var frameCounter = 0
     var botBodyUpdateFrame: Int = 0
 
@@ -264,6 +288,7 @@ class GameScene: SKScene {
         ghostTimeLeft       = 0
         currentMoveSpeed    = baseMoveSpeed
         isBoostHeld         = false
+        boostEnergy         = boostEnergyMax
         joystickTouch       = nil
         boostTouch          = nil
         joystickThumbOffset = .zero
@@ -681,8 +706,40 @@ class GameScene: SKScene {
         label.verticalAlignmentMode   = .center
         btn.addChild(label)
 
+        // Energy arc background ring (child of btn, so it tracks with the button)
+        let bgRing = SKShapeNode(circleOfRadius: boostButtonRadius + 5)
+        bgRing.fillColor   = .clear
+        bgRing.strokeColor = SKColor(white: 1.0, alpha: 0.15)
+        bgRing.lineWidth   = 3
+        bgRing.zPosition   = 1
+        btn.addChild(bgRing)
+
+        // Foreground arc — updated every frame by updateBoostEnergyArc()
+        let arc = SKShapeNode()
+        arc.fillColor   = .clear
+        arc.strokeColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.9)
+        arc.lineWidth   = 3
+        arc.lineCap     = .round
+        arc.zPosition   = 2
+        btn.addChild(arc)
+        boostEnergyArcNode = arc
+
         addChild(btn)
         boostButtonNode = btn
+    }
+
+    func updateBoostEnergyArc() {
+        guard let arc = boostEnergyArcNode else { return }
+        let fraction = boostEnergy / boostEnergyMax
+        let endAngle = -.pi / 2.0 + fraction * 2.0 * .pi
+        let path = CGMutablePath()
+        // Arc uses local coordinates (parent = btn, origin = button center)
+        path.addArc(center: .zero, radius: boostButtonRadius + 5,
+                    startAngle: -.pi / 2.0, endAngle: endAngle, clockwise: false)
+        arc.path        = path
+        arc.strokeColor = fraction > 0.3
+            ? SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.9)
+            : SKColor(red: 1.0, green: 0.25, blue: 0.1,  alpha: 0.9)
     }
 
     func setBoostButtonActive(_ active: Bool) {
@@ -975,7 +1032,7 @@ class GameScene: SKScene {
         let myName = playerName.isEmpty ? "You" : playerName
         // isMe flag prevents incorrect highlight when player sets a custom name
         var entries: [(name: String, score: Int, isMe: Bool)] = [(myName, score, true)]
-        for i in 0..<bots.count where bots[i].isActive {
+        for i in 0..<bots.count where bots[i].isActive && !bots[i].isDead {
             entries.append((bots[i].name, bots[i].score, false))
         }
         for (_, rp) in remotePlayers {
@@ -1054,7 +1111,7 @@ class GameScene: SKScene {
         // Offline: update bot dots
         for (i, dot) in minimapBotDots.enumerated() {
             guard i < bots.count else { break }
-            if bots[i].isActive {
+            if bots[i].isActive && !bots[i].isDead {
                 let bx = (bots[i].position.x / world - 0.5) * mapSize
                 let by = (bots[i].position.y / world - 0.5) * mapSize
                 dot.position = CGPoint(x: bx, y: by)
@@ -1604,6 +1661,12 @@ class GameScene: SKScene {
                 )
             }
             bots.append(BotState(id: i, position: position, colorIndex: colorIndex, name: name))
+            // Assign tier: 0–9 easy, 10–21 medium, 22–29 hard
+            switch i {
+            case 0..<10:  bots[i].tier = .easy
+            case 10..<22: bots[i].tier = .medium
+            default:      bots[i].tier = .hard
+            }
         }
     }
 
@@ -1693,25 +1756,65 @@ class GameScene: SKScene {
     }
 
     func respawnBot(_ index: Int) {
+        guard !bots[index].isDead else { return }
         if bots[index].isActive {
             spawnDeathFood(at: bots[index].body.map(\.position))  // body becomes death food
             deactivateBot(index)
         }
-        bots[index].score      = 0
-        bots[index].bodyLength = 10
-        bots[index].position   = CGPoint(
+        // Mark dead with a tier-based respawn delay
+        bots[index].isDead           = true
+        bots[index].aggressionActive = false
+        switch bots[index].tier {
+        case .easy:   bots[index].respawnTimer = 4.0
+        case .medium: bots[index].respawnTimer = 3.0
+        case .hard:   bots[index].respawnTimer = 2.0
+        }
+    }
+
+    private func finishRespawn(_ index: Int) {
+        bots[index].isDead         = false
+        bots[index].respawnTimer   = 0
+        bots[index].score          = 0
+        bots[index].bodyLength     = 10
+        bots[index].position       = CGPoint(
             x: CGFloat.random(in: 300...(worldSize - 300)),
             y: CGFloat.random(in: 300...(worldSize - 300))
         )
-        bots[index].angle        = CGFloat.random(in: 0...(2 * .pi))
-        bots[index].targetAngle  = bots[index].angle
+        bots[index].angle          = CGFloat.random(in: 0...(2 * .pi))
+        bots[index].targetAngle    = bots[index].angle
         bots[index].dirChangeTimer = CGFloat.random(in: 1...3)
+    }
+
+    /// Returns current move speed for a bot, scaled by player score.
+    func botSpeed(for tier: BotTier) -> CGFloat {
+        let base: CGFloat
+        switch tier {
+        case .easy:   base = botSpeedEasy
+        case .medium: base = botSpeedMedium
+        case .hard:   base = botSpeedHard
+        }
+        // At score 0: 1.0x; at score 100+: 1.5x
+        let fraction = CGFloat(min(score, botSpeedScoreCap)) / CGFloat(botSpeedScoreCap * 2)
+        return base * (1.0 + fraction)
+    }
+
+    /// Returns the nearest `.death` food within `radius` units of `position`, or nil.
+    func findNearestDeathFood(to position: CGPoint, within radius: CGFloat) -> SKLabelNode? {
+        var best: SKLabelNode? = nil
+        var bestDist = radius
+        for (i, food) in foodItems.enumerated() {
+            guard foodTypes[i] == .death else { continue }
+            let d = hypot(food.position.x - position.x, food.position.y - position.y)
+            if d < bestDist { bestDist = d; best = food }
+        }
+        return best
     }
 
     func updateBotTargetAngle(_ index: Int) {
         guard let head = bots[index].head else { return }
         let hx = head.position.x, hy = head.position.y
 
+        // 1. Wall avoidance — same for all tiers
         let nearWall = hx - headRadius < wallAvoidanceDistance ||
                        arenaMaxX - (hx + headRadius) < wallAvoidanceDistance ||
                        hy - headRadius < wallAvoidanceDistance ||
@@ -1721,19 +1824,69 @@ class GameScene: SKScene {
             return
         }
 
-        guard let fruit = findNearestFood(to: head.position) else { return }
-        var foodAngle = atan2(fruit.position.y - hy, fruit.position.x - hx)
+        let tier = bots[index].tier
         let distToPlayer = hypot(snakeHead.position.x - hx, snakeHead.position.y - hy)
-        if distToPlayer < playerAvoidanceDistance {
-            foodAngle = atan2(snakeHead.position.y - hy, snakeHead.position.x - hx) + .pi
+
+        // 2. Death food attraction (medium: 600u, hard: 800u)
+        if tier == .medium || tier == .hard {
+            let deathRadius: CGFloat = tier == .hard ? 800 : 600
+            if let df = findNearestDeathFood(to: head.position, within: deathRadius) {
+                bots[index].targetAngle = atan2(df.position.y - hy, df.position.x - hx)
+                bots[index].aggressionActive = false
+                return
+            }
         }
-        bots[index].targetAngle = foodAngle
+
+        // 3. Tier-specific player interaction
+        switch tier {
+        case .hard:
+            // Become aggressive when bot is large enough relative to player
+            let aggrThreshold = max(0.50, 0.70 - CGFloat(score) / 500.0)
+            let botIsLargeEnough = CGFloat(bots[index].bodyLength) >= CGFloat(bodySegments.count) * aggrThreshold
+            if botIsLargeEnough && distToPlayer < 600 {
+                // Predict player position ahead along their current direction
+                let lookahead: CGFloat = 150.0
+                let predictedX = snakeHead.position.x + cos(currentAngle) * lookahead
+                let predictedY = snakeHead.position.y + sin(currentAngle) * lookahead
+                bots[index].targetAngle = atan2(predictedY - hy, predictedX - hx)
+                bots[index].aggressionActive = true
+                return
+            }
+            bots[index].aggressionActive = false
+
+        case .medium:
+            // Flee only if player is bigger
+            if distToPlayer < playerAvoidanceDistance && bodySegments.count > bots[index].bodyLength {
+                bots[index].targetAngle = atan2(snakeHead.position.y - hy, snakeHead.position.x - hx) + .pi
+                bots[index].aggressionActive = false
+                return
+            }
+            bots[index].aggressionActive = false
+
+        case .easy:
+            // Original: flee if player is within avoidance distance
+            if distToPlayer < playerAvoidanceDistance {
+                bots[index].targetAngle = atan2(snakeHead.position.y - hy, snakeHead.position.x - hx) + .pi
+                return
+            }
+        }
+
+        // 4. Default: aim at nearest food
+        guard let fruit = findNearestFood(to: head.position) else { return }
+        bots[index].targetAngle = atan2(fruit.position.y - hy, fruit.position.x - hx)
     }
 
     func updateBots(dt: CGFloat, updateAI: Bool) {
         let playerPos = snakeHead.position
 
         for i in 0..<bots.count {
+            // Respawn delay countdown — skip dead bots entirely
+            if bots[i].isDead {
+                bots[i].respawnTimer -= dt
+                if bots[i].respawnTimer <= 0 { finishRespawn(i) }
+                continue
+            }
+
             let dist = hypot(bots[i].position.x - playerPos.x, bots[i].position.y - playerPos.y)
 
             if !bots[i].isActive && dist < botActivationRadius {
@@ -1746,7 +1899,7 @@ class GameScene: SKScene {
                 if updateAI { updateBotTargetAngle(i) }
                 smoothlyRotate(current: &bots[i].angle, target: bots[i].targetAngle, dt: dt)
 
-                let moveDist = botMoveSpeed * dt
+                let moveDist = botSpeed(for: bots[i].tier) * dt
                 let newX = bots[i].position.x + cos(bots[i].angle) * moveDist
                 let newY = bots[i].position.y + sin(bots[i].angle) * moveDist
                 bots[i].position = CGPoint(x: newX, y: newY)
@@ -1797,8 +1950,8 @@ class GameScene: SKScene {
                 }
                 smoothlyRotate(current: &bots[i].angle, target: bots[i].targetAngle, dt: dt)
 
-                var newX = bots[i].position.x + cos(bots[i].angle) * botMoveSpeed * dt
-                var newY = bots[i].position.y + sin(bots[i].angle) * botMoveSpeed * dt
+                var newX = bots[i].position.x + cos(bots[i].angle) * botSpeed(for: bots[i].tier) * dt
+                var newY = bots[i].position.y + sin(bots[i].angle) * botSpeed(for: bots[i].tier) * dt
 
                 if newX < wallAvoidanceDistance || newX > worldSize - wallAvoidanceDistance {
                     bots[i].angle = .pi - bots[i].angle
@@ -1831,7 +1984,7 @@ class GameScene: SKScene {
 
     func checkPlayerCollidesWithBotBodies() -> Bool {
         if ghostActive { return false }   // 👻 ghost: pass through bodies
-        for bot in bots where bot.isActive {
+        for bot in bots where bot.isActive && !bot.isDead {
             if GameLogic.headCollidesWithBody(
                 head: snakeHead.position,
                 segments: bot.body.map(\.position),
@@ -1840,6 +1993,39 @@ class GameScene: SKScene {
             ) { return true }
         }
         return false
+    }
+
+    /// Offline: player head collides with a bot head → both die (head-to-head).
+    func checkPlayerHeadVsBotHeads() -> Bool {
+        guard gameMode == .offline, !ghostActive else { return false }
+        for i in 0..<bots.count {
+            guard bots[i].isActive, !bots[i].isDead, let botHead = bots[i].head else { continue }
+            let dist = hypot(snakeHead.position.x - botHead.position.x,
+                             snakeHead.position.y - botHead.position.y)
+            if dist < (headRadius + headRadius) {
+                respawnBot(i)   // bot dies simultaneously
+                return true     // player also dies (caller triggers playerGameOver)
+            }
+        }
+        return false
+    }
+
+    /// Offline: any active bot's head hitting the player's body kills that bot.
+    func checkBotHeadsHitPlayerBody() {
+        guard gameMode == .offline else { return }
+        let playerBodyPositions = bodySegments.map(\.position)
+        guard !playerBodyPositions.isEmpty else { return }
+        for i in 0..<bots.count {
+            guard bots[i].isActive, !bots[i].isDead, let botHead = bots[i].head else { continue }
+            if GameLogic.headCollidesWithBody(
+                head: botHead.position,
+                segments: playerBodyPositions,
+                combinedRadius: collisionRadius + bodySegmentRadius,
+                skip: 0
+            ) {
+                respawnBot(i)
+            }
+        }
     }
 
     // MARK: - Remote Players (Online Mode)
@@ -2062,18 +2248,30 @@ class GameScene: SKScene {
 
     func checkBotVsBotCollisions() {
         for i in 0..<bots.count {
-            guard bots[i].isActive, let headI = bots[i].head else { continue }
+            guard bots[i].isActive, !bots[i].isDead, let headI = bots[i].head else { continue }
             for j in 0..<bots.count {
-                guard j != i, bots[j].isActive else { continue }
+                guard j != i, bots[j].isActive, !bots[j].isDead else { continue }
+
+                // Bot i head → bot j body
                 let bodyPositions = bots[j].body.map(\.position)
-                guard !bodyPositions.isEmpty else { continue }
-                if GameLogic.headCollidesWithBody(
+                if !bodyPositions.isEmpty,
+                   GameLogic.headCollidesWithBody(
                     head: headI.position,
                     segments: bodyPositions,
                     combinedRadius: collisionRadius + bodySegmentRadius,
                     skip: 0
-                ) {
+                   ) {
                     respawnBot(i)
+                    break
+                }
+
+                // Bot i head → bot j head (head-to-head: both die)
+                guard let headJ = bots[j].head else { continue }
+                let d = hypot(headI.position.x - headJ.position.x,
+                              headI.position.y - headJ.position.y)
+                if d < (headRadius + headRadius) {
+                    respawnBot(i)
+                    respawnBot(j)
                     break
                 }
             }
@@ -2117,7 +2315,7 @@ class GameScene: SKScene {
             guard gameStarted, !isPausedGame else { continue }
 
             let boostDist = hypot(loc.x - boostButtonCenter.x, loc.y - boostButtonCenter.y)
-            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 {
+            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 && boostEnergy >= boostMinEnergy {
                 boostTouch  = touch
                 isBoostHeld = true
                 setBoostButtonActive(true)
@@ -2216,6 +2414,19 @@ class GameScene: SKScene {
         frameCounter += 1
         botBodyUpdateFrame = (botBodyUpdateFrame + 1) % 2
 
+        // --- Boost Energy ---
+        if isBoostHeld {
+            boostEnergy = max(0, boostEnergy - boostDrainRate * dt)
+            if boostEnergy <= 0 {
+                isBoostHeld = false
+                boostTouch  = nil
+                setBoostButtonActive(false)
+            }
+        } else {
+            boostEnergy = min(boostEnergyMax, boostEnergy + boostRegenRate * dt)
+        }
+        updateBoostEnergyArc()
+
         // --- Player Movement ---
         let playerDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
 
@@ -2264,7 +2475,7 @@ class GameScene: SKScene {
         if shieldActive && dangerCount > 0 && frameCounter % 2 == 0 {
             let dangerPositions = (dangerStart..<totalSegs).map { bodySegments[$0].position }
             for bi in 0..<bots.count {
-                guard bots[bi].isActive, let botHead = bots[bi].head else { continue }
+                guard bots[bi].isActive, !bots[bi].isDead, let botHead = bots[bi].head else { continue }
                 if GameLogic.headCollidesWithBody(
                     head: botHead.position,
                     segments: dangerPositions,
@@ -2281,6 +2492,7 @@ class GameScene: SKScene {
         // Self-collision intentionally disabled: snake passes through its own body
 
         if gameMode == .offline && checkPlayerCollidesWithBotBodies()    { playerGameOver(); return }
+        if gameMode == .offline && checkPlayerHeadVsBotHeads()           { playerGameOver(); return }
         if gameMode == .online  && checkPlayerCollidesWithRemotePlayers() { playerGameOver(); return }
 
         checkFoodCollisions()
@@ -2317,7 +2529,8 @@ class GameScene: SKScene {
         if gameMode == .offline {
             let updateAI = frameCounter % 2 == 0  // bot AI at ~30 Hz
             updateBots(dt: dt, updateAI: updateAI)
-            if frameCounter % 3 == 0 { checkBotVsBotCollisions() }  // bot-vs-bot at ~20 Hz
+            if frameCounter % 3 == 0 { checkBotVsBotCollisions() }        // bot-vs-bot at ~20 Hz
+            if frameCounter % 3 == 0 { checkBotHeadsHitPlayerBody() }    // bot head → player body
         } else if gameMode == .online {
             if frameCounter % 4 == 0 {
                 PhotonManager.shared.sendPlayerState(
