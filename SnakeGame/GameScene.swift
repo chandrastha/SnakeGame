@@ -1823,8 +1823,8 @@ class GameScene: SKScene {
     }
 
     /// Returns the nearest `.death` food within `radius` units of `position`, or nil.
-    func findNearestDeathFood(to position: CGPoint, within radius: CGFloat) -> SKLabelNode? {
-        var best: SKLabelNode? = nil
+    func findNearestDeathFood(to position: CGPoint, within radius: CGFloat) -> SKNode? {
+        var best: SKNode? = nil
         var bestDist = radius
         for (i, food) in foodItems.enumerated() {
             guard foodTypes[i] == .death else { continue }
@@ -2243,7 +2243,7 @@ class GameScene: SKScene {
     }
 
     // MARK: - AI / Smooth Rotation
-    func findNearestFood(to position: CGPoint) -> SKLabelNode? {
+    func findNearestFood(to position: CGPoint) -> SKNode? {
         foodItems.min(by: {
             hypot($0.position.x - position.x, $0.position.y - position.y) <
             hypot($1.position.x - position.x, $1.position.y - position.y)
