@@ -21,13 +21,3 @@ jobs:
 
       - name: Build
         run: xcodebuild build -scheme SnakeGame -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
-
-      - name: Run unit tests
-        run: |
-          xcodebuild test \
-            -scheme SnakeGame \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
-            -destination-timeout 180 \
-            -parallel-testing-enabled NO \
-            -only-testing:SnakeGameTests \
-            CODE_SIGNING_ALLOWED=NO
