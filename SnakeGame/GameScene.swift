@@ -332,6 +332,10 @@ class GameScene: SKScene {
         return (size.width * zoom / 2, size.height * zoom / 2)
     }
 
+    private func hudControlScale() -> CGFloat {
+        cameraScale()
+    }
+
     private func joystickMargins() -> CGPoint {
         isLandscapeLayout ? CGPoint(x: 74, y: 132) : CGPoint(x: 90, y: 100)
     }
@@ -689,6 +693,7 @@ class GameScene: SKScene {
         let cx = cameraNode.position.x
         let cy = cameraNode.position.y
         let extents = cameraHalfExtents()
+        let controlScale = hudControlScale()
         let joystickInset = joystickMargins()
         let boostInset = boostMargins()
         let minimapInset = minimapMargins()
@@ -697,16 +702,20 @@ class GameScene: SKScene {
         boostButtonCenter = CGPoint(x: cx + extents.halfW - boostInset.x,    y: cy - extents.halfH + boostInset.y)
 
         joystickBaseNode?.position  = joystickCenter
+        joystickBaseNode?.setScale(controlScale)
         joystickInnerRing?.position = joystickCenter
+        joystickInnerRing?.setScale(controlScale)
+        joystickThumbNode?.setScale(controlScale)
         if joystickTouch == nil {
             joystickThumbNode?.position = joystickCenter
         } else {
             joystickThumbNode?.position = CGPoint(
-                x: joystickCenter.x + joystickThumbOffset.x,
-                y: joystickCenter.y + joystickThumbOffset.y
+                x: joystickCenter.x + joystickThumbOffset.x * controlScale,
+                y: joystickCenter.y + joystickThumbOffset.y * controlScale
             )
         }
         boostButtonNode?.position = boostButtonCenter
+        boostButtonNode?.setScale(controlScale * (isBoostHeld ? 1.15 : 1.0))
 
         let panelH = scorePanelHeight
         scorePanel?.position  = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
@@ -846,8 +855,9 @@ class GameScene: SKScene {
     }
 
     func updateJoystick(at location: CGPoint) {
-        let dx    = location.x - joystickCenter.x
-        let dy    = location.y - joystickCenter.y
+        let controlScale = hudControlScale()
+        let dx    = (location.x - joystickCenter.x) / controlScale
+        let dy    = (location.y - joystickCenter.y) / controlScale
         let dist  = hypot(dx, dy)
         let angle = atan2(dy, dx)
         let normalized = max(0, min(1, (dist - joystickDeadZone) / (joystickBaseRadius - joystickDeadZone)))
@@ -859,8 +869,8 @@ class GameScene: SKScene {
         joystickEngagement = engagement
         joystickThumbOffset = CGPoint(x: cos(angle) * thumbDistance, y: sin(angle) * thumbDistance)
         joystickThumbNode?.position = CGPoint(
-            x: joystickCenter.x + joystickThumbOffset.x,
-            y: joystickCenter.y + joystickThumbOffset.y
+            x: joystickCenter.x + joystickThumbOffset.x * controlScale,
+            y: joystickCenter.y + joystickThumbOffset.y * controlScale
         )
 
         if normalized > 0 {
@@ -914,7 +924,7 @@ class GameScene: SKScene {
                 : SKColor(white: 1.0, alpha: 0.40)
             circle.glowWidth = active ? 10 : 3
         }
-        btn.run(SKAction.scale(to: active ? 1.15 : 1.0, duration: 0.09))
+        btn.run(SKAction.scale(to: hudControlScale() * (active ? 1.15 : 1.0), duration: 0.09))
     }
 
     // MARK: - Power-up Panel
@@ -2338,7 +2348,7 @@ class GameScene: SKScene {
             ))
         }
 
-        for j in bots.indices where j != i && !bots[j].isDead {
+        for j in bots.indices where j != i && bots[j].isActive && !bots[j].isDead {
             let distance = hypot(bots[j].position.x - pos.x, bots[j].position.y - pos.y)
             guard distance < radius else { continue }
             threats.append(BotThreatSnapshot(
@@ -3343,8 +3353,9 @@ class GameScene: SKScene {
 
             guard gameStarted, !isPausedGame else { continue }
 
+            let controlScale = hudControlScale()
             let boostDist = hypot(loc.x - boostButtonCenter.x, loc.y - boostButtonCenter.y)
-            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 && score > 0 {
+            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 * controlScale && score > 0 {
                 boostTouch  = touch
                 isBoostHeld = true
                 setBoostButtonActive(true)
@@ -3352,7 +3363,7 @@ class GameScene: SKScene {
             }
 
             let joystickDist = hypot(loc.x - joystickCenter.x, loc.y - joystickCenter.y)
-            if joystickTouch == nil && joystickDist < joystickBaseRadius * 1.6 {
+            if joystickTouch == nil && joystickDist < joystickBaseRadius * 1.6 * controlScale {
                 joystickTouch = touch
                 updateJoystick(at: loc)
                 continue
