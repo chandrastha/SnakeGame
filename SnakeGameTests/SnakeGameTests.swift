@@ -146,3 +146,83 @@ import CoreGraphics
     let b = CGPoint(x: 100, y: 0)
     #expect(GameLogic.circlesOverlap(a, b, combinedRadius: 15) == false)
 }
+
+// MARK: - Bot AI Tests
+
+@Test func botFoodContestAvoidsLosingRaceAgainstLargerRival() {
+    let shouldContest = GameLogic.shouldContestFood(
+        BotFoodContestSnapshot(
+            selfDistance: 200,
+            selfSpeed: 120,
+            rivalDistance: 150,
+            rivalSpeed: 140,
+            value: 16,
+            rivalLengthAdvantage: 10,
+            riskTolerance: 0.4
+        )
+    )
+    #expect(shouldContest == false)
+}
+
+@Test func botFoodContestAllowsHighValueRaceWhenAdvantaged() {
+    let shouldContest = GameLogic.shouldContestFood(
+        BotFoodContestSnapshot(
+            selfDistance: 160,
+            selfSpeed: 170,
+            rivalDistance: 180,
+            rivalSpeed: 130,
+            value: 28,
+            rivalLengthAdvantage: -4,
+            riskTolerance: 0.7
+        )
+    )
+    #expect(shouldContest == true)
+}
+
+@Test func botIntentPrefersEscapeWhenDangerIsHigh() {
+    let profile = GameLogic.botPersonalityProfile(for: .coward)
+    let intent = GameLogic.chooseBotIntent(
+        BotModeSnapshot(
+            immediateDanger: 0.9,
+            escapeRouteQuality: 0.3,
+            foodOpportunity: 0.8,
+            scavengingOpportunity: 0.7,
+            huntOpportunity: 0.1,
+            cutOpportunity: 0.0,
+            nearbyCrowding: 0.8,
+            personality: profile
+        )
+    )
+    #expect(intent == .escape)
+}
+
+@Test func botIntentPrefersCutOffWhenOpportunityDominates() {
+    let profile = GameLogic.botPersonalityProfile(for: .interceptor)
+    let intent = GameLogic.chooseBotIntent(
+        BotModeSnapshot(
+            immediateDanger: 0.2,
+            escapeRouteQuality: 0.8,
+            foodOpportunity: 0.25,
+            scavengingOpportunity: 0.18,
+            huntOpportunity: 0.5,
+            cutOpportunity: 0.9,
+            nearbyCrowding: 0.2,
+            personality: profile
+        )
+    )
+    #expect(intent == .cutOff)
+}
+
+@Test func deathFoodIsValuedAboveRegularFood() {
+    let regular = GameLogic.botFoodValue(type: .regular, clusterBonus: 0, greed: 0.5, scavengerBias: 0.2)
+    let death = GameLogic.botFoodValue(type: .death, clusterBonus: 0, greed: 0.5, scavengerBias: 0.8)
+    #expect(death > regular)
+}
+
+@Test func hunterAndCowardProfilesStayDistinct() {
+    let hunter = GameLogic.botPersonalityProfile(for: .hunter)
+    let coward = GameLogic.botPersonalityProfile(for: .coward)
+    #expect(hunter.aggression > coward.aggression)
+    #expect(coward.caution > hunter.caution)
+    #expect(hunter.boostBias >= coward.boostBias)
+}
