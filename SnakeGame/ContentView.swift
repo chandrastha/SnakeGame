@@ -10,13 +10,8 @@ struct ContentView: View {
     @State private var isPlaying: Bool = false
     @State private var selectedGameMode: GameMode = .offline
     @State private var isAwaitingOnlineJoin: Bool = false
-    @ObservedObject private var photon = PhotonManager.shared
 
-    @State private var playerImage: UIImage? = {
-        if let data = UserDefaults.standard.data(forKey: "playerHeadImage"),
-           let img  = UIImage(data: data) { return img }
-        return nil
-    }()
+    @State private var playerImage: UIImage? = AvatarStore.load()
 
     @AppStorage("bestScore")                private var bestScore: Int = 0
     @AppStorage("selectedSnakeColorIndex")  private var selectedSnakeColorIndex: Int = 0
@@ -36,6 +31,9 @@ struct ContentView: View {
                         if finalScore > bestScore { bestScore = finalScore }
                         saveToLeaderboard(finalScore)
                         isAwaitingOnlineJoin = false
+                        if selectedGameMode == .online {
+                            PhotonManager.shared.disconnect()
+                        }
                         withAnimation(.easeInOut(duration: 0.4)) { isPlaying = false }
                     }
                 )
@@ -48,14 +46,8 @@ struct ContentView: View {
                     playerImage:      $playerImage,
                     onPlayTapped: {
                         if selectedGameMode == .online {
-                            isAwaitingOnlineJoin = true
                             PhotonManager.shared.setPlayerName(playerName)
-                            if photon.connectionState == .inRoom {
-                                isAwaitingOnlineJoin = false
-                                withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
-                            } else {
-                                PhotonManager.shared.connect()
-                            }
+                            isAwaitingOnlineJoin = true
                         } else {
                             isAwaitingOnlineJoin = false
                             isPlaying = true
@@ -66,27 +58,23 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
-        .onChange(of: selectedGameMode) { mode in
-            guard mode != .online, isAwaitingOnlineJoin else { return }
-            isAwaitingOnlineJoin = false
-            PhotonManager.shared.disconnect()
-        }
-        .onChange(of: photon.connectionState) { state in
-            guard isAwaitingOnlineJoin else { return }
-            switch state {
-            case .inRoom:
-                guard selectedGameMode == .online else {
+        .fullScreenCover(isPresented: $isAwaitingOnlineJoin) {
+            OnlineMatchView(
+                onMatchReady: {
                     isAwaitingOnlineJoin = false
-                    PhotonManager.shared.disconnect()
-                    return
+                    withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
+                },
+                onCancel: {
+                    isAwaitingOnlineJoin = false
                 }
+            )
+        }
+        .onChange(of: selectedGameMode) { mode in
+            guard mode != .online else { return }
+            if isAwaitingOnlineJoin {
                 isAwaitingOnlineJoin = false
-                withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
-            case .failed, .disconnected:
-                isAwaitingOnlineJoin = false
-            case .connecting, .inLobby:
-                break
             }
+            PhotonManager.shared.disconnect()
         }
     }
 
@@ -130,6 +118,11 @@ struct GameView: UIViewRepresentable {
             let newSize = uiView.bounds.size
             if newSize != .zero && scene.size != newSize { scene.size = newSize }
         }
+    }
+
+    static func dismantleUIView(_ uiView: SKView, coordinator: ()) {
+        (uiView.scene as? GameScene)?.shutdown()
+        uiView.presentScene(nil)
     }
 }
 

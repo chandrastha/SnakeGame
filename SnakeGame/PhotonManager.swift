@@ -93,7 +93,9 @@ final class PhotonManager: NSObject, ObservableObject {
     @Published var lastError: String = ""
 
     // MARK: Delegate (GameScene)
-    weak var delegate: PhotonManagerDelegate?
+    weak var delegate: PhotonManagerDelegate? {
+        didSet { replayCurrentRoomStateIfNeeded() }
+    }
 
     // MARK: Firebase refs
     // Uses the explicit URL above so it works even if GoogleService-Info.plist
@@ -114,6 +116,7 @@ final class PhotonManager: NSObject, ObservableObject {
     private var handlePlayerAdded:   DatabaseHandle?
     private var handlePlayerChanged: DatabaseHandle?
     private var handlePlayerRemoved: DatabaseHandle?
+    private var handleFoodAdded:     DatabaseHandle?
     private var handleFoodChanged:   DatabaseHandle?
     private var handlePlayerCount:   DatabaseHandle?
 
@@ -131,6 +134,10 @@ final class PhotonManager: NSObject, ObservableObject {
 
     // MARK: Watchdog (fail visibly if Firebase never responds)
     private var roomSearchWatchdog: DispatchWorkItem?
+
+    // MARK: Cached room state (replayed when GameScene attaches after lobby join)
+    private var latestRemotePlayers: [Int: RemotePlayerState] = [:]
+    private var latestFoodSlots: [Int: (x: Float, y: Float, type: Int)] = [:]
 
     // MARK: - Connect / Disconnect
 
@@ -220,9 +227,21 @@ final class PhotonManager: NSObject, ObservableObject {
 
     /// Leave the current room and return to lobby state.
     func leaveRoom() {
+        guard !roomId.isEmpty || myPlayerRef != nil || roomRef != nil else {
+            DispatchQueue.main.async {
+                self.roomPlayerCount = 0
+                self.connectionState = .disconnected
+            }
+            return
+        }
+
         roomSearchWatchdog?.cancel()
         roomSearchWatchdog = nil
         removeAllObservers()
+
+        // Cancel disconnect hooks so a manual leave does not apply a second decrement.
+        myPlayerRef?.cancelDisconnectOperations()
+        roomRef?.child("playerCount").cancelDisconnectOperations()
 
         // Remove own player node
         myPlayerRef?.removeValue()
@@ -244,6 +263,8 @@ final class PhotonManager: NSObject, ObservableObject {
         roomId       = ""
         playerIDMap  = [:]
         nextActorID  = 1
+        latestRemotePlayers.removeAll()
+        latestFoodSlots.removeAll()
 
         DispatchQueue.main.async {
             self.roomPlayerCount = 0
@@ -300,7 +321,9 @@ final class PhotonManager: NSObject, ObservableObject {
             "playerCount": 1,
             "maxPlayers":  maxPlayers,
             "status":      "waiting",
-            "createdAt":   ServerValue.timestamp()
+            "createdAt":   ServerValue.timestamp(),
+            "hostUID":     myUID,
+            "food":        Self.initialRoomFoodSeed()
         ]) { [weak self] error, _ in
             guard let self = self else { return }
             if error == nil {
@@ -327,7 +350,14 @@ final class PhotonManager: NSObject, ObservableObject {
             return TransactionResult.success(withValue: currentData)
         } andCompletionBlock: { [weak self] error, committed, _ in
             guard let self = self else { return }
-            if committed {
+            if let error {
+                let msg = error.localizedDescription
+                print("[PhotonManager] joinExistingRoom failed: \(msg)")
+                DispatchQueue.main.async {
+                    self.lastError = "Join room: \(msg)"
+                    self.connectionState = .failed
+                }
+            } else if committed {
                 self.enterRoom(roomId: roomId)
             } else {
                 // Room was full — create a new one instead
@@ -373,7 +403,7 @@ final class PhotonManager: NSObject, ObservableObject {
 
         DispatchQueue.main.async {
             self.connectionState = .inRoom
-            self.delegate?.didJoinRoom()
+            self.replayCurrentRoomStateIfNeeded()
         }
     }
 
@@ -394,6 +424,7 @@ final class PhotonManager: NSObject, ObservableObject {
         handlePlayerRemoved = playersRef?.observe(.childRemoved) { [weak self] snapshot in
             guard let self = self, snapshot.key != self.myUID else { return }
             let actorID = self.actorID(for: snapshot.key)
+            self.latestRemotePlayers.removeValue(forKey: actorID)
             DispatchQueue.main.async {
                 self.delegate?.didPlayerLeave(playerID: actorID)
             }
@@ -409,8 +440,9 @@ final class PhotonManager: NSObject, ObservableObject {
 
         let actorID = actorID(for: snapshot.key)
         let alive   = data["alive"] as? Bool ?? true
-        let remoteName = (data["playerName"] as? String)?.isEmpty == false
-            ? (data["playerName"] as! String)
+        let providedName = data["playerName"] as? String
+        let remoteName = (providedName?.isEmpty == false)
+            ? (providedName ?? "Player \(actorID)")
             : "Player \(actorID)"
         let state   = RemotePlayerState(
             headX:      (data["headX"]      as? NSNumber)?.floatValue ?? 0,
@@ -420,6 +452,12 @@ final class PhotonManager: NSObject, ObservableObject {
             bodyLength: (data["bodyLength"] as? Int) ?? 3,
             playerName: remoteName
         )
+
+        if alive {
+            latestRemotePlayers[actorID] = state
+        } else {
+            latestRemotePlayers.removeValue(forKey: actorID)
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -434,19 +472,28 @@ final class PhotonManager: NSObject, ObservableObject {
     // MARK: Food observer
 
     private func startObservingFood() {
+        handleFoodAdded = foodRef?.observe(.childAdded) { [weak self] snapshot in
+            self?.handleFoodSnapshot(snapshot)
+        }
+
         handleFoodChanged = foodRef?.observe(.childChanged) { [weak self] snapshot in
-            guard let data = snapshot.value as? [String: Any],
-                  let index = Int(snapshot.key) else { return }
+            self?.handleFoodSnapshot(snapshot)
+        }
+    }
 
-            let newX  = (data["x"]    as? NSNumber)?.floatValue ?? 0
-            let newY  = (data["y"]    as? NSNumber)?.floatValue ?? 0
-            let type  = (data["type"] as? Int) ?? 0
+    private func handleFoodSnapshot(_ snapshot: DataSnapshot) {
+        guard let data = snapshot.value as? [String: Any],
+              let index = Int(snapshot.key) else { return }
 
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didReceiveFoodEaten(
-                    foodIndex: index, newFoodX: newX, newFoodY: newY, newFoodType: type
-                )
-            }
+        let newX  = (data["x"]    as? NSNumber)?.floatValue ?? 0
+        let newY  = (data["y"]    as? NSNumber)?.floatValue ?? 0
+        let type  = (data["type"] as? Int) ?? 0
+        latestFoodSlots[index] = (newX, newY, type)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.didReceiveFoodEaten(
+                foodIndex: index, newFoodX: newX, newFoodY: newY, newFoodType: type
+            )
         }
     }
 
@@ -456,13 +503,79 @@ final class PhotonManager: NSObject, ObservableObject {
         if let h = handlePlayerAdded   { playersRef?.removeObserver(withHandle: h) }
         if let h = handlePlayerChanged { playersRef?.removeObserver(withHandle: h) }
         if let h = handlePlayerRemoved { playersRef?.removeObserver(withHandle: h) }
+        if let h = handleFoodAdded     { foodRef?.removeObserver(withHandle: h) }
         if let h = handleFoodChanged   { foodRef?.removeObserver(withHandle: h) }
         if let h = handlePlayerCount   { roomRef?.child("playerCount").removeObserver(withHandle: h) }
         handlePlayerAdded   = nil
         handlePlayerChanged = nil
         handlePlayerRemoved = nil
+        handleFoodAdded     = nil
         handleFoodChanged   = nil
         handlePlayerCount   = nil
+    }
+
+    // MARK: Room replay
+
+    private func replayCurrentRoomStateIfNeeded() {
+        guard connectionState == .inRoom, let delegate else { return }
+
+        DispatchQueue.main.async {
+            delegate.didJoinRoom()
+
+            for index in self.latestFoodSlots.keys.sorted() {
+                guard let food = self.latestFoodSlots[index] else { continue }
+                delegate.didReceiveFoodEaten(
+                    foodIndex: index,
+                    newFoodX: food.x,
+                    newFoodY: food.y,
+                    newFoodType: food.type
+                )
+            }
+
+            for actorID in self.latestRemotePlayers.keys.sorted() {
+                guard let state = self.latestRemotePlayers[actorID] else { continue }
+                delegate.didReceivePlayerState(state, playerID: actorID)
+            }
+        }
+    }
+
+    // MARK: Initial room food
+
+    static func initialRoomFoodSeed(
+        count: Int = 200,
+        worldSize: Float = 4000,
+        padding: Float = 80
+    ) -> [String: [String: Any]] {
+        var food: [String: [String: Any]] = [:]
+        var shieldCount = 0
+
+        for index in 0..<count {
+            let type = randomSpawnFoodType(activeShieldCount: &shieldCount)
+            food["\(index)"] = [
+                "x": Float.random(in: padding...(worldSize - padding)),
+                "y": Float.random(in: padding...(worldSize - padding)),
+                "type": type
+            ]
+        }
+
+        return food
+    }
+
+    private static func randomSpawnFoodType(activeShieldCount: inout Int) -> Int {
+        let roll = Int.random(in: 0...99)
+        let type: FoodType
+
+        switch roll {
+        case 0...89:  type = .regular
+        case 90...91: type = activeShieldCount < 2 ? .shield : .regular
+        case 92...93: type = .multiplier
+        case 94...95: type = .magnet
+        case 96...97: type = .ghost
+        default:      type = .shrink
+        }
+
+        if type == .shield { activeShieldCount += 1 }
+        return type.rawValue
     }
 
     // MARK: UID → stable Int actor ID
