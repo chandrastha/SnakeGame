@@ -148,44 +148,54 @@ import CoreGraphics
 }
 
 // MARK: - Bot AI Tests
+//
+// These tests exercise the pure AI helper functions in GameLogic.
+// They run without a simulator and serve as a regression guard for
+// the contest, intent, and food-valuation logic introduced in this PR.
 
+// shouldContestFood: the bot is further away AND slower than a much larger rival.
+// The length-advantage hard veto (>8 segments) should force a back-off.
 @Test func botFoodContestAvoidsLosingRaceAgainstLargerRival() {
     let shouldContest = GameLogic.shouldContestFood(
         BotFoodContestSnapshot(
-            selfDistance: 200,
-            selfSpeed: 120,
+            selfDistance: 200,       // further from food
+            selfSpeed: 120,          // slower
             rivalDistance: 150,
             rivalSpeed: 140,
-            value: 16,
-            rivalLengthAdvantage: 10,
+            value: 16,               // medium value — not worth the head-on risk
+            rivalLengthAdvantage: 10, // rival is 10 segments longer → veto applies
             riskTolerance: 0.4
         )
     )
     #expect(shouldContest == false)
 }
 
+// shouldContestFood: the bot is faster and the rival is slightly shorter.
+// High-value food (28 = max base) and a favourable risk tolerance should allow contest.
 @Test func botFoodContestAllowsHighValueRaceWhenAdvantaged() {
     let shouldContest = GameLogic.shouldContestFood(
         BotFoodContestSnapshot(
             selfDistance: 160,
-            selfSpeed: 170,
-            rivalDistance: 180,
+            selfSpeed: 170,          // meaningfully faster
+            rivalDistance: 180,      // rival is farther away
             rivalSpeed: 130,
-            value: 28,
-            rivalLengthAdvantage: -4,
-            riskTolerance: 0.7
+            value: 28,               // maximum base value food
+            rivalLengthAdvantage: -4, // bot is 4 segments longer → no penalty
+            riskTolerance: 0.7       // willing to take moderate risk
         )
     )
     #expect(shouldContest == true)
 }
 
+// chooseBotIntent: even with tempting food and scavenging opportunities,
+// extreme danger (0.9) must always override everything and force an escape.
 @Test func botIntentPrefersEscapeWhenDangerIsHigh() {
     let profile = GameLogic.botPersonalityProfile(for: .coward)
     let intent = GameLogic.chooseBotIntent(
         BotModeSnapshot(
-            immediateDanger: 0.9,
+            immediateDanger: 0.9,        // well above the 0.72 hard escape threshold
             escapeRouteQuality: 0.3,
-            foodOpportunity: 0.8,
+            foodOpportunity: 0.8,        // high food signal — should be ignored
             scavengingOpportunity: 0.7,
             huntOpportunity: 0.1,
             cutOpportunity: 0.0,
@@ -196,33 +206,41 @@ import CoreGraphics
     #expect(intent == .escape)
 }
 
+// chooseBotIntent: low danger, dominant cut opportunity, and interceptor personality
+// (high cutBias) — the bot must select .cutOff over hunt or food.
 @Test func botIntentPrefersCutOffWhenOpportunityDominates() {
     let profile = GameLogic.botPersonalityProfile(for: .interceptor)
     let intent = GameLogic.chooseBotIntent(
         BotModeSnapshot(
             immediateDanger: 0.2,
             escapeRouteQuality: 0.8,
-            foodOpportunity: 0.25,
+            foodOpportunity: 0.25,       // moderate food — should lose to cut
             scavengingOpportunity: 0.18,
-            huntOpportunity: 0.5,
-            cutOpportunity: 0.9,
-            nearbyCrowding: 0.2,
+            huntOpportunity: 0.5,        // notable hunt — still loses to cut
+            cutOpportunity: 0.9,         // dominant opportunity
+            nearbyCrowding: 0.2,         // low crowding — guard condition is met
             personality: profile
         )
     )
     #expect(intent == .cutOff)
 }
 
+// botFoodValue: death food (base 24) + high scavengerBias bonus must exceed
+// regular food (base 12) even with identical greed.
+// Validates that the scavengerBias multiplier is correctly applied only to .death/.trail.
 @Test func deathFoodIsValuedAboveRegularFood() {
     let regular = GameLogic.botFoodValue(type: .regular, clusterBonus: 0, greed: 0.5, scavengerBias: 0.2)
-    let death = GameLogic.botFoodValue(type: .death, clusterBonus: 0, greed: 0.5, scavengerBias: 0.8)
+    let death   = GameLogic.botFoodValue(type: .death,   clusterBonus: 0, greed: 0.5, scavengerBias: 0.8)
     #expect(death > regular)
 }
 
+// botPersonalityProfile: hunter and coward are intentionally polar opposites.
+// This test acts as a canary — if profile values are accidentally swapped or
+// normalised, these ordering invariants will fail.
 @Test func hunterAndCowardProfilesStayDistinct() {
     let hunter = GameLogic.botPersonalityProfile(for: .hunter)
-    let coward = GameLogic.botPersonalityProfile(for: .coward)
-    #expect(hunter.aggression > coward.aggression)
-    #expect(coward.caution > hunter.caution)
-    #expect(hunter.boostBias >= coward.boostBias)
+    let coward  = GameLogic.botPersonalityProfile(for: .coward)
+    #expect(hunter.aggression > coward.aggression)  // hunter is far more aggressive
+    #expect(coward.caution > hunter.caution)         // coward is far more cautious
+    #expect(hunter.boostBias >= coward.boostBias)    // hunter boosts at least as often
 }
