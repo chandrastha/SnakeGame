@@ -9,6 +9,8 @@ import SpriteKit
 struct ContentView: View {
     @State private var isPlaying: Bool = false
     @State private var selectedGameMode: GameMode = .offline
+    @State private var isAwaitingOnlineJoin: Bool = false
+    @ObservedObject private var photon = PhotonManager.shared
 
     @State private var playerImage: UIImage? = {
         if let data = UserDefaults.standard.data(forKey: "playerHeadImage"),
@@ -33,6 +35,7 @@ struct ContentView: View {
                     onGameOver: { finalScore in
                         if finalScore > bestScore { bestScore = finalScore }
                         saveToLeaderboard(finalScore)
+                        isAwaitingOnlineJoin = false
                         withAnimation(.easeInOut(duration: 0.4)) { isPlaying = false }
                     }
                 )
@@ -45,16 +48,36 @@ struct ContentView: View {
                     playerImage:      $playerImage,
                     onPlayTapped: {
                         if selectedGameMode == .online {
+                            isAwaitingOnlineJoin = true
                             PhotonManager.shared.setPlayerName(playerName)
-                            PhotonManager.shared.connect()
+                            if photon.connectionState == .inRoom {
+                                isAwaitingOnlineJoin = false
+                                withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
+                            } else {
+                                PhotonManager.shared.connect()
+                            }
+                        } else {
+                            isAwaitingOnlineJoin = false
+                            isPlaying = true
                         }
-                        isPlaying = true
                     }
                 )
                 .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
+        .onChange(of: photon.connectionState) { state in
+            guard isAwaitingOnlineJoin else { return }
+            switch state {
+            case .inRoom:
+                isAwaitingOnlineJoin = false
+                withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
+            case .failed, .disconnected:
+                isAwaitingOnlineJoin = false
+            case .connecting, .inLobby:
+                break
+            }
+        }
     }
 
     private func saveToLeaderboard(_ score: Int) {
