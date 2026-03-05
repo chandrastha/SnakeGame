@@ -70,16 +70,15 @@ struct StartScreenView: View {
         }
         // Image picker
         .confirmationDialog("Choose Photo", isPresented: $showSourcePicker, titleVisibility: .visible) {
-            Button("Take Selfie")         { imagePickerSource = .camera;       showImagePicker = true }
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Selfie") { imagePickerSource = .camera; showImagePicker = true }
+            }
             Button("Choose from Library") { imagePickerSource = .photoLibrary; showImagePicker = true }
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showImagePicker) {
             ImagePickerView(sourceType: imagePickerSource) { image in
-                playerImage = image
-                if let data = image.jpegData(compressionQuality: 0.8) {
-                    UserDefaults.standard.set(data, forKey: "playerHeadImage")
-                }
+                playerImage = AvatarStore.save(image) ?? image
             }
         }
         .sheet(isPresented: $showLeaderboard) { LeaderboardView(scores: leaderboardScores) }
@@ -397,7 +396,8 @@ struct ImagePickerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onImagePicked: onImagePicked) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
-        picker.sourceType    = sourceType
+        let resolvedSourceType = UIImagePickerController.isSourceTypeAvailable(sourceType) ? sourceType : .photoLibrary
+        picker.sourceType    = resolvedSourceType
         picker.allowsEditing = true
         picker.delegate      = context.coordinator
         return picker

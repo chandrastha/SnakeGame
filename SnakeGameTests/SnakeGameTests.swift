@@ -7,6 +7,7 @@
 
 import Testing
 import CoreGraphics
+import UIKit
 @testable import SnakeGame
 
 // MARK: - Enum Tests
@@ -243,4 +244,49 @@ import CoreGraphics
     #expect(hunter.aggression > coward.aggression)  // hunter is far more aggressive
     #expect(coward.caution > hunter.caution)         // coward is far more cautious
     #expect(hunter.boostBias >= coward.boostBias)    // hunter boosts at least as often
+}
+
+// MARK: - Online Sync Tests
+
+@Test func initialRoomFoodSeedCreatesStableSlotCountWithinBounds() {
+    let seed = PhotonManager.initialRoomFoodSeed(count: 40, worldSize: 1000, padding: 50)
+    #expect(seed.count == 40)
+
+    var shieldCount = 0
+    for index in 0..<40 {
+        let entry = seed["\(index)"]
+        let x = entry?["x"] as? Float
+        let y = entry?["y"] as? Float
+        let rawType = entry?["type"] as? Int
+
+        #expect(x != nil)
+        #expect(y != nil)
+        #expect(rawType != nil)
+        #expect((x ?? 0) >= 50)
+        #expect((x ?? 0) <= 950)
+        #expect((y ?? 0) >= 50)
+        #expect((y ?? 0) <= 950)
+
+        if rawType == FoodType.shield.rawValue {
+            shieldCount += 1
+        }
+    }
+
+    #expect(shieldCount <= 2)
+}
+
+// MARK: - Avatar Tests
+
+@Test func preparedAvatarNormalizesToSquareThumbnail() {
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 320))
+    let image = renderer.image { context in
+        UIColor.red.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 640, height: 320))
+    }
+
+    let prepared = AvatarStore.preparedAvatar(from: image, pixelSize: 128)
+
+    #expect(prepared != nil)
+    #expect(prepared?.size.width == 128)
+    #expect(prepared?.size.height == 128)
 }

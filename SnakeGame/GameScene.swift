@@ -3,15 +3,15 @@ import AVFoundation
 import UIKit
 
 // MARK: - FoodType
-enum FoodType {
-    case regular
-    case shield       // 🛡 absorbs one death
-    case multiplier   // ⭐ 2× score for 10s
-    case trail        // 🌱 left by snake movement
-    case death        // 💀 scattered from a dead snake body — 5 pts each
-    case magnet       // 🧲 pulls nearby food toward snake for 6s
-    case ghost        // 👻 pass through snake bodies for 4s
-    case shrink       // ✂️ instantly removes 10% of body (escape tool)
+enum FoodType: Int {
+    case regular = 0
+    case shield = 1      // 🛡 absorbs one death
+    case multiplier = 2  // ⭐ 2× score for 10s
+    case trail = 3       // 🌱 left by snake movement
+    case death = 4       // 💀 scattered from a dead snake body — 5 pts each
+    case magnet = 5      // 🧲 pulls nearby food toward snake for 6s
+    case ghost = 6       // 👻 pass through snake bodies for 4s
+    case shrink = 7      // ✂️ instantly removes 10% of body (escape tool)
 }
 
 // MARK: - Bot Tier (Offline Mode)
@@ -130,6 +130,7 @@ class GameScene: SKScene {
     var selectedSnakeColorIndex: Int = 0
     var selectedSnakePatternIndex: Int = 0
     var playerName: String = "Player"
+    private var hasShutdown = false
 
     // MARK: - Audio
     var backgroundMusicPlayer: AVAudioPlayer?
@@ -321,6 +322,33 @@ class GameScene: SKScene {
         }
     }
 
+    override func willMove(from view: SKView) {
+        super.willMove(from: view)
+        shutdown()
+    }
+
+    deinit {
+        shutdown()
+    }
+
+    func shutdown() {
+        guard !hasShutdown else { return }
+        hasShutdown = true
+
+        removeAllActions()
+        joystickTouch = nil
+        boostTouch = nil
+        isBoostHeld = false
+        stopBackgroundMusic()
+
+        if PhotonManager.shared.delegate === self {
+            PhotonManager.shared.delegate = nil
+        }
+        if gameMode == .online {
+            PhotonManager.shared.leaveRoom()
+        }
+    }
+
     private var isLandscapeLayout: Bool { size.width > size.height }
 
     private func cameraScale() -> CGFloat {
@@ -358,6 +386,7 @@ class GameScene: SKScene {
     }
 
     func setupNewGame() {
+        hasShutdown         = false
         isGameOver          = false
         isTouching          = false
         currentAngle        = 0
@@ -444,14 +473,17 @@ class GameScene: SKScene {
         if gameMode == .offline { createPauseButton() }
         createJoystick()
         createBoostButton()
-        spawnInitialFood()
+        if gameMode == .offline {
+            spawnInitialFood()
+        } else {
+            prepareOnlineFoodSlots()
+        }
         updateScoreDisplay()
 
         if gameMode == .offline {
             spawnBots()
         } else if gameMode == .online {
             PhotonManager.shared.delegate = self
-            PhotonManager.shared.connect()
         }
 
         gameSetupComplete = true
@@ -1153,6 +1185,9 @@ class GameScene: SKScene {
 
     func restartGame() {
         stopBackgroundMusic()
+        if gameMode == .online {
+            PhotonManager.shared.prepareLocalPlayerForNewRound()
+        }
         setupNewGame()
         startBackgroundMusic()
     }
@@ -1427,39 +1462,70 @@ class GameScene: SKScene {
         for _ in 0..<foodCount { spawnFood() }
     }
 
-    func spawnFood() {
-        // Distribution: regular 90%, each power-up 2% (5 types × 2% = 10%)
-        // Uses 0–99 roll for 1% precision
+    func prepareOnlineFoodSlots() {
+        guard gameMode == .online else { return }
+        if foodItems.count == foodCount, foodTypes.count == foodCount { return }
+
+        foodItems = (0..<foodCount).map { _ in SKNode() }
+        foodTypes = Array(repeating: .regular, count: foodCount)
+    }
+
+    func randomSpawnFoodType() -> FoodType {
         let roll = Int.random(in: 0...99)
-        var type: FoodType
+        let candidate: FoodType
         switch roll {
-        case 0...89:  type = .regular
-        case 90...91: type = .shield
-        case 92...93: type = .multiplier
-        case 94...95: type = .magnet
-        case 96...97: type = .ghost
-        default:      type = .shrink       // 98...99
+        case 0...89:  candidate = .regular
+        case 90...91: candidate = .shield
+        case 92...93: candidate = .multiplier
+        case 94...95: candidate = .magnet
+        case 96...97: candidate = .ghost
+        default:      candidate = .shrink
         }
 
-        // Cap shields: never more than 2 shield items on the map at once
-        let maxShieldsOnMap = 2
-        if type == .shield && foodTypes.filter({ $0 == .shield }).count >= maxShieldsOnMap {
-            type = .regular
+        if candidate == .shield && foodTypes.filter({ $0 == .shield }).count >= 2 {
+            return .regular
         }
+        return candidate
+    }
 
-        let food = SKLabelNode()
-        switch type {
-        case .regular:    food.text = fruitEmojis.randomElement()
-        case .shield:     food.text = "🛡"
-        case .multiplier: food.text = "⭐"
-        case .magnet:     food.text = "🧲"
-        case .ghost:      food.text = "👻"
-        case .shrink:     food.text = "✂️"
-        case .trail, .death: food.text = "●"   // not spawned via spawnFood(); defensive fallback
-        }
+    func makeRegularFoodNode() -> SKLabelNode {
+        let food = SKLabelNode(text: fruitEmojis.randomElement())
         food.fontSize                = 17
         food.verticalAlignmentMode   = .center
         food.horizontalAlignmentMode = .center
+        return food
+    }
+
+    func makeFoodNode(for type: FoodType) -> SKNode {
+        switch type {
+        case .regular:
+            return makeRegularFoodNode()
+        case .shield:
+            return makeIconFoodNode("🛡")
+        case .multiplier:
+            return makeIconFoodNode("⭐")
+        case .magnet:
+            return makeIconFoodNode("🧲")
+        case .ghost:
+            return makeIconFoodNode("👻")
+        case .shrink:
+            return makeIconFoodNode("✂️")
+        case .trail, .death:
+            return makeIconFoodNode("●")
+        }
+    }
+
+    func makeIconFoodNode(_ text: String) -> SKLabelNode {
+        let food = SKLabelNode(text: text)
+        food.fontSize                = 17
+        food.verticalAlignmentMode   = .center
+        food.horizontalAlignmentMode = .center
+        return food
+    }
+
+    func spawnFood() {
+        let type = randomSpawnFoodType()
+        let food = makeFoodNode(for: type)
 
         var pos = randomPositionInArena()
         var attempts = 0
@@ -1591,9 +1657,29 @@ class GameScene: SKScene {
         return false
     }
 
+    func applyOnlineFoodUpdate(foodIndex: Int, newFoodX: Float, newFoodY: Float, newFoodType: Int) {
+        prepareOnlineFoodSlots()
+        guard foodIndex >= 0, foodIndex < foodItems.count else { return }
+
+        let oldType = foodTypes[foodIndex]
+        if oldType == .trail {
+            activeTrailFoodCount = max(0, activeTrailFoodCount - 1)
+        }
+
+        foodItems[foodIndex].removeFromParent()
+
+        let type = FoodType(rawValue: newFoodType) ?? .regular
+        let node = makeFoodNode(for: type)
+        node.position = CGPoint(x: CGFloat(newFoodX), y: CGFloat(newFoodY))
+        addChild(node)
+        foodItems[foodIndex] = node
+        foodTypes[foodIndex] = type
+    }
+
     func checkFoodCollisions() {
         let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
         for (i, food) in foodItems.enumerated().reversed() {
+            guard food.parent != nil else { continue }
             let dx = snakeHead.position.x - food.position.x
             let dy = snakeHead.position.y - food.position.y
             if dx * dx + dy * dy < thresholdSq {
@@ -1606,20 +1692,27 @@ class GameScene: SKScene {
     func eatFood(at index: Int) {
         let foodPos = foodItems[index].position
         let type    = foodTypes[index]
-        if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
-        foodItems[index].removeFromParent()
-        foodItems.remove(at: index)
-        foodTypes.remove(at: index)
 
         if gameMode == .online {
             let newPos = randomPositionInArena()
+            let newType = randomSpawnFoodType()
+            applyOnlineFoodUpdate(
+                foodIndex: index,
+                newFoodX: Float(newPos.x),
+                newFoodY: Float(newPos.y),
+                newFoodType: newType.rawValue
+            )
             PhotonManager.shared.sendFoodEaten(foodIndex: index,
                                                newFoodX: Float(newPos.x),
                                                newFoodY: Float(newPos.y),
-                                               newFoodType: 0)
+                                               newFoodType: newType.rawValue)
+        } else {
+            if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
+            foodItems[index].removeFromParent()
+            foodItems.remove(at: index)
+            foodTypes.remove(at: index)
+            spawnFood()
         }
-
-        spawnFood()
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
 
         // Apply power-up effects
@@ -3182,6 +3275,7 @@ class GameScene: SKScene {
         let pullStrength: CGFloat   = 5.5
         let magnetRadiusSq: CGFloat = magnetRadius * magnetRadius
         for food in foodItems {
+            guard food.parent != nil else { continue }
             let dx     = snakeHead.position.x - food.position.x
             let dy     = snakeHead.position.y - food.position.y
             let distSq = dx * dx + dy * dy
@@ -3326,8 +3420,7 @@ class GameScene: SKScene {
                 if nodes(at: loc).contains(where: { $0.name == "resumeButton" }) {
                     togglePause()
                 } else if nodes(at: loc).contains(where: { $0.name == "quitButton" }) {
-                    stopBackgroundMusic()
-                    if gameMode == .online { PhotonManager.shared.leaveRoom() }
+                    shutdown()
                     pauseOverlay?.removeFromParent()
                     pauseOverlay = nil
                     onGameOver?(score)
@@ -3340,8 +3433,7 @@ class GameScene: SKScene {
                 if tappedNames.contains("restartButton") {
                     restartGame()
                 } else if tappedNames.contains("playAgainButton") {
-                    stopBackgroundMusic()
-                    if gameMode == .online { PhotonManager.shared.leaveRoom() }
+                    shutdown()
                     onGameOver?(score)
                 }
                 continue
@@ -3546,7 +3638,7 @@ class GameScene: SKScene {
         checkFoodCollisions()
 
         // --- Trail food spawning (player) ---
-        if gameStarted, let tailSeg = bodySegments.last {
+        if gameMode == .offline, gameStarted, let tailSeg = bodySegments.last {
             trailFoodTimer += dt
             if trailFoodTimer >= playerTrailInterval {
                 spawnTrailFood(at: tailSeg.position,
@@ -3557,7 +3649,7 @@ class GameScene: SKScene {
         }
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
-        if frameCounter % 300 == 0 {
+        if gameMode == .offline && frameCounter % 300 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
@@ -3647,19 +3739,12 @@ extension GameScene: PhotonManagerDelegate {
     }
 
     func didReceiveFoodEaten(foodIndex: Int, newFoodX: Float, newFoodY: Float, newFoodType: Int) {
-        guard foodIndex < foodItems.count else { return }
-        if foodTypes[foodIndex] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
-        foodItems[foodIndex].removeFromParent()
-        foodItems.remove(at: foodIndex)
-        foodTypes.remove(at: foodIndex)
-        let food = SKLabelNode(text: fruitEmojis.randomElement())
-        food.fontSize = 17
-        food.verticalAlignmentMode   = .center
-        food.horizontalAlignmentMode = .center
-        food.position = CGPoint(x: CGFloat(newFoodX), y: CGFloat(newFoodY))
-        addChild(food)
-        foodItems.append(food)
-        foodTypes.append(.regular)
+        applyOnlineFoodUpdate(
+            foodIndex: foodIndex,
+            newFoodX: newFoodX,
+            newFoodY: newFoodY,
+            newFoodType: newFoodType
+        )
     }
 
     func didPlayerLeave(playerID: Int) {

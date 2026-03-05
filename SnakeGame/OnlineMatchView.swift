@@ -67,7 +67,6 @@ struct OnlineMatchView: View {
 
                 // ── Cancel button ──
                 Button(action: {
-                    photon.leaveRoom()
                     photon.disconnect()
                     onCancel()
                 }) {
@@ -89,6 +88,7 @@ struct OnlineMatchView: View {
             // connect() now internally calls joinOrCreateRoom() once auth succeeds
             photon.connect()
         }
+        .interactiveDismissDisabled()
     }
 
     // MARK: - Sub-views
