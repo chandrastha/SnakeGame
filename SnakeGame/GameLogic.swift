@@ -38,11 +38,9 @@ enum GameLogic {
     static func calculateSpeed(
         score: Int,
         baseMoveSpeed: CGFloat = 150,
-        maxMoveSpeed:  CGFloat = 300,
-        speedBoostActive: Bool = false
+        maxMoveSpeed:  CGFloat = 300
     ) -> CGFloat {
-        var speed = min(baseMoveSpeed + CGFloat(score) * 2.5, maxMoveSpeed)
-        if speedBoostActive { speed = min(speed + 60, maxMoveSpeed + 60) }
+        let speed = min(baseMoveSpeed + CGFloat(score) * 2.5, maxMoveSpeed)
         return speed
     }
 

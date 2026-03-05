@@ -34,17 +34,6 @@ import CoreGraphics
     #expect(GameLogic.calculateSpeed(score: 100) == 300)
 }
 
-@Test func speedBoostAdds60BeyondCap() {
-    let boosted = GameLogic.calculateSpeed(score: 100, speedBoostActive: true)
-    #expect(boosted == 360) // maxMoveSpeed(300) + 60
-}
-
-@Test func speedBoostDoesNotExceedBoostedCap() {
-    // Even at very high scores, boosted cap is maxMoveSpeed + 60 = 360
-    let boosted = GameLogic.calculateSpeed(score: 9999, speedBoostActive: true)
-    #expect(boosted == 360)
-}
-
 // MARK: - Leaderboard Tests
 
 @Test func leaderboardInsertsAndSortsDescending() {

@@ -5,14 +5,13 @@ import UIKit
 // MARK: - FoodType
 enum FoodType {
     case regular
-    case speedBoost   // ⚡️ speed up for 5s
     case shield       // 🛡 absorbs one death
     case multiplier   // ⭐ 2× score for 10s
     case trail        // 🌱 left by snake movement
     case death        // 💀 scattered from a dead snake body — 5 pts each
     case magnet       // 🧲 pulls nearby food toward snake for 6s
     case ghost        // 👻 pass through snake bodies for 4s
-    case shrink       // ✂️ instantly removes 30% of body (escape tool)
+    case shrink       // ✂️ instantly removes 10% of body (escape tool)
 }
 
 // MARK: - Bot Tier (Offline Mode)
@@ -174,6 +173,7 @@ class GameScene: SKScene {
     var foodTypes: [FoodType]   = []
     // Trail food
     var trailFoodTimer: CGFloat = 0
+    var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
     let maxTrailFoodItems:   Int     = 150    // hard cap on active .trail nodes
@@ -201,8 +201,6 @@ class GameScene: SKScene {
 
     // MARK: - Power-ups
     var shieldActive:        Bool    = false
-    var speedBoostActive:    Bool    = false
-    var speedBoostTimeLeft:  CGFloat = 0
     var multiplierActive:    Bool    = false
     var multiplierTimeLeft:  CGFloat = 0
     var invincibleTimeLeft:  CGFloat = 0
@@ -295,8 +293,6 @@ class GameScene: SKScene {
         isPausedGame        = false
         scoreMultiplier     = 1
         shieldActive        = false
-        speedBoostActive    = false
-        speedBoostTimeLeft  = 0
         multiplierActive    = false
         multiplierTimeLeft  = 0
         invincibleTimeLeft  = 0
@@ -312,8 +308,9 @@ class GameScene: SKScene {
         joystickThumbOffset = .zero
         frameCounter        = 0
         leaderboardUpdateTimer = 0
-        trailFoodTimer      = 0
-        tailWigglePhase     = 0
+        trailFoodTimer       = 0
+        activeTrailFoodCount = 0
+        tailWigglePhase      = 0
 
         removeAllChildren()
         bodySegments.removeAll()
@@ -1142,13 +1139,12 @@ class GameScene: SKScene {
     }
 
     func spawnFood() {
-        // Distribution: regular 88%, each power-up 2% (6 types × 2% = 12%)
+        // Distribution: regular 90%, each power-up 2% (5 types × 2% = 10%)
         // Uses 0–99 roll for 1% precision
         let roll = Int.random(in: 0...99)
         var type: FoodType
         switch roll {
-        case 0...87:  type = .regular
-        case 88...89: type = .speedBoost
+        case 0...89:  type = .regular
         case 90...91: type = .shield
         case 92...93: type = .multiplier
         case 94...95: type = .magnet
@@ -1165,7 +1161,6 @@ class GameScene: SKScene {
         let food = SKLabelNode()
         switch type {
         case .regular:    food.text = fruitEmojis.randomElement()
-        case .speedBoost: food.text = "⚡️"
         case .shield:     food.text = "🛡"
         case .multiplier: food.text = "⭐"
         case .magnet:     food.text = "🧲"
@@ -1240,9 +1235,8 @@ class GameScene: SKScene {
     }
 
     func spawnTrailFood(at position: CGPoint, colorIndex: Int, patternIndex: Int) {
-        // Hard cap: prevent node explosion when many snakes are moving
-        let trailCount = foodTypes.lazy.filter { $0 == .trail }.count
-        guard trailCount < maxTrailFoodItems else { return }
+        // Hard cap: O(1) counter check instead of O(n) filter
+        guard activeTrailFoodCount < maxTrailFoodItems else { return }
 
         let food = makeTrailFoodNode(colorIndex: colorIndex, patternIndex: patternIndex)
         food.position = position
@@ -1250,10 +1244,22 @@ class GameScene: SKScene {
         addChild(food)
         foodItems.append(food)
         foodTypes.append(.trail)
+        activeTrailFoodCount += 1
+
         food.run(SKAction.sequence([
             SKAction.fadeIn(withDuration: 0.25),
             SKAction.wait(forDuration: 12.0),
             SKAction.fadeOut(withDuration: 1.0),
+            SKAction.run { [weak self, weak food] in
+                guard let self, let food else { return }
+                if let idx = self.foodItems.firstIndex(where: { $0 === food }) {
+                    // Natural expiry path: item still in arrays, hasn't been eaten early
+                    self.foodItems.remove(at: idx)
+                    self.foodTypes.remove(at: idx)
+                    self.activeTrailFoodCount = max(0, self.activeTrailFoodCount - 1)
+                }
+                // If not found: food was eaten early; counter already decremented at eat site
+            },
             SKAction.removeFromParent()
         ]))
     }
@@ -1297,9 +1303,11 @@ class GameScene: SKScene {
     }
 
     func checkFoodCollisions() {
+        let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
         for (i, food) in foodItems.enumerated().reversed() {
-            if hypot(snakeHead.position.x - food.position.x,
-                     snakeHead.position.y - food.position.y) < (headRadius + foodRadius) {
+            let dx = snakeHead.position.x - food.position.x
+            let dy = snakeHead.position.y - food.position.y
+            if dx * dx + dy * dy < thresholdSq {
                 eatFood(at: i)
                 return
             }
@@ -1309,6 +1317,7 @@ class GameScene: SKScene {
     func eatFood(at index: Int) {
         let foodPos = foodItems[index].position
         let type    = foodTypes[index]
+        if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
         foodItems[index].removeFromParent()
         foodItems.remove(at: index)
         foodTypes.remove(at: index)
@@ -1327,9 +1336,6 @@ class GameScene: SKScene {
         // Apply power-up effects
         switch type {
         case .regular, .trail, .death: break
-        case .speedBoost:
-            speedBoostActive   = true
-            speedBoostTimeLeft = 5.0
         case .shield:
             shieldActive = true
             showShieldGlow()
@@ -1355,7 +1361,7 @@ class GameScene: SKScene {
         case .regular:                           pts = 2
         case .trail:                             pts = 1
         case .death:                             pts = 5
-        case .speedBoost, .shield, .multiplier,
+        case .shield, .multiplier,
              .magnet, .ghost, .shrink:           pts = 0
         }
         score += pts * scoreMultiplier
@@ -1372,8 +1378,7 @@ class GameScene: SKScene {
         currentMoveSpeed = GameLogic.calculateSpeed(
             score: score,
             baseMoveSpeed: baseMoveSpeed,
-            maxMoveSpeed: maxMoveSpeed,
-            speedBoostActive: speedBoostActive
+            maxMoveSpeed: maxMoveSpeed
         )
         syncSnakeLength()
     }
@@ -2101,9 +2106,12 @@ class GameScene: SKScene {
 
     func checkBotFoodCollision(_ botIndex: Int) {
         guard let head = bots[botIndex].head else { return }
+        let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
         for (i, food) in foodItems.enumerated().reversed() {
-            if hypot(head.position.x - food.position.x,
-                     head.position.y - food.position.y) < (headRadius + foodRadius) {
+            let dx = head.position.x - food.position.x
+            let dy = head.position.y - food.position.y
+            if dx * dx + dy * dy < thresholdSq {
+                if foodTypes[i] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
                 food.removeFromParent()
                 foodItems.remove(at: i)
                 foodTypes.remove(at: i)
@@ -2276,21 +2284,23 @@ class GameScene: SKScene {
 
     /// 🧲 Magnet — pull nearby food items toward the snake head.
     func applyMagnetEffect() {
-        let pullStrength: CGFloat = 5.5
+        let pullStrength: CGFloat   = 5.5
+        let magnetRadiusSq: CGFloat = magnetRadius * magnetRadius
         for food in foodItems {
-            let dx   = snakeHead.position.x - food.position.x
-            let dy   = snakeHead.position.y - food.position.y
-            let dist = hypot(dx, dy)
-            guard dist > 1, dist < magnetRadius else { continue }
-            food.position.x += (dx / dist) * pullStrength
-            food.position.y += (dy / dist) * pullStrength
+            let dx     = snakeHead.position.x - food.position.x
+            let dy     = snakeHead.position.y - food.position.y
+            let distSq = dx * dx + dy * dy
+            guard distSq > 1, distSq < magnetRadiusSq else { continue }
+            let dist = hypot(dx, dy)   // sqrt only for in-range items
+            food.position = CGPoint(x: food.position.x + (dx / dist) * pullStrength,
+                                    y: food.position.y + (dy / dist) * pullStrength)
         }
     }
 
-    /// ✂️ Shrink — reduce score by ~30% so that syncSnakeLength() contracts the body accordingly.
+    /// ✂️ Shrink — reduce score by ~10% so that syncSnakeLength() contracts the body accordingly.
     func applyShrink() {
         guard score > 0 else { return }
-        let reduction  = max(1, score * 30 / 100)
+        let reduction  = max(1, score * 10 / 100)
         score          = max(0, score - reduction)
         updateScoreDisplay()
         updateSpeedForScore()   // calls syncSnakeLength() → body contracts
@@ -2496,15 +2506,6 @@ class GameScene: SKScene {
 
         if invincibleTimeLeft > 0 { invincibleTimeLeft = max(0, invincibleTimeLeft - dt) }
 
-        if speedBoostActive {
-            speedBoostTimeLeft -= dt
-            if speedBoostTimeLeft <= 0 {
-                speedBoostActive = false; speedBoostTimeLeft = 0
-                updateSpeedForScore()
-            }
-            changed = true
-        }
-
         if multiplierActive {
             multiplierTimeLeft -= dt
             if multiplierTimeLeft <= 0 {
@@ -2645,8 +2646,8 @@ class GameScene: SKScene {
             }
         }
 
-        // --- Purge orphaned trail food entries (node removed by SKAction, array still has entry) ---
-        if frameCounter % 300 == 0 {
+        // --- Safety net: purge any orphaned food entries missed by the completion handler ---
+        if frameCounter % 600 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
@@ -2655,6 +2656,8 @@ class GameScene: SKScene {
                 foodItems.remove(at: i)
                 foodTypes.remove(at: i)
             }
+            // Reconcile counter against live trail entries to correct any drift
+            activeTrailFoodCount = foodTypes.filter { $0 == .trail }.count
         }
 
         // --- Camera & HUD ---
