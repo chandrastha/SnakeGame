@@ -371,7 +371,11 @@ class GameScene: SKScene {
         }
 
         gameSetupComplete = true
-        startCountdown()
+        if gameMode == .offline {
+            startGameImmediately()
+        } else {
+            startCountdown()
+        }
     }
 
     // MARK: - Arena Border
@@ -477,6 +481,13 @@ class GameScene: SKScene {
     }
 
     // MARK: - Countdown
+    func startGameImmediately() {
+        gameStarted   = true
+        ghostActive   = true
+        ghostTimeLeft = 4.0
+        showGhostEffect()
+    }
+
     func startCountdown() {
         gameStarted = false
 
@@ -504,10 +515,7 @@ class GameScene: SKScene {
         pop("3") { pop("2") { pop("1") {
             pop("GO!", color: SKColor(red: 0.3, green: 0.9, blue: 0.3, alpha: 1.0)) {
                 countLabel.removeFromParent()
-                self.gameStarted   = true
-                self.ghostActive   = true
-                self.ghostTimeLeft = 4.0
-                self.showGhostEffect()
+                self.startGameImmediately()
             }
         }}}
     }

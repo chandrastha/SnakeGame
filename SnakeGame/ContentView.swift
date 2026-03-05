@@ -9,7 +9,6 @@ import SpriteKit
 struct ContentView: View {
     @State private var isPlaying: Bool = false
     @State private var selectedGameMode: GameMode = .offline
-    @State private var showOnlineMatch: Bool = false
 
     @State private var playerImage: UIImage? = {
         if let data = UserDefaults.standard.data(forKey: "playerHeadImage"),
@@ -47,22 +46,12 @@ struct ContentView: View {
                     onPlayTapped: {
                         if selectedGameMode == .online {
                             PhotonManager.shared.setPlayerName(playerName)
-                            showOnlineMatch = true
-                        } else {
-                            isPlaying = true
+                            PhotonManager.shared.connect()
                         }
+                        isPlaying = true
                     }
                 )
                 .transition(.opacity)
-                .sheet(isPresented: $showOnlineMatch) {
-                    OnlineMatchView(
-                        onMatchReady: {
-                            showOnlineMatch = false
-                            withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
-                        },
-                        onCancel: { showOnlineMatch = false }
-                    )
-                }
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
