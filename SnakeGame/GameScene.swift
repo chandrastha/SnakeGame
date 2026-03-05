@@ -196,6 +196,7 @@ class GameScene: SKScene {
     var gameOverOverlay:    SKNode? = nil
     var gameSetupComplete:  Bool    = false
     var gameStarted:        Bool    = false
+    var onlineRoundPrimed:  Bool    = false
     var isPausedGame:       Bool    = false
     var lastPlayerPosition: CGPoint = .zero
 
@@ -290,6 +291,7 @@ class GameScene: SKScene {
         lastUpdateTime      = 0
         gameSetupComplete   = false
         gameStarted         = false
+        onlineRoundPrimed   = false
         isPausedGame        = false
         scoreMultiplier     = 1
         shieldActive        = false
@@ -367,11 +369,15 @@ class GameScene: SKScene {
             spawnBots()
         } else if gameMode == .online {
             PhotonManager.shared.delegate = self
-            PhotonManager.shared.sendGameReady()
+            PhotonManager.shared.connect()
         }
 
         gameSetupComplete = true
-        startCountdown()
+        if gameMode == .offline {
+            startGameImmediately()
+        } else {
+            primeOnlineRoundIfReady()
+        }
     }
 
     // MARK: - Arena Border
@@ -477,6 +483,21 @@ class GameScene: SKScene {
     }
 
     // MARK: - Countdown
+    func primeOnlineRoundIfReady() {
+        guard gameMode == .online, gameSetupComplete, !onlineRoundPrimed else { return }
+        guard PhotonManager.shared.connectionState == .inRoom else { return }
+        onlineRoundPrimed = true
+        PhotonManager.shared.sendGameReady()
+        startCountdown()
+    }
+
+    func startGameImmediately() {
+        gameStarted   = true
+        ghostActive   = true
+        ghostTimeLeft = 4.0
+        showGhostEffect()
+    }
+
     func startCountdown() {
         gameStarted = false
 
@@ -504,10 +525,7 @@ class GameScene: SKScene {
         pop("3") { pop("2") { pop("1") {
             pop("GO!", color: SKColor(red: 0.3, green: 0.9, blue: 0.3, alpha: 1.0)) {
                 countLabel.removeFromParent()
-                self.gameStarted   = true
-                self.ghostActive   = true
-                self.ghostTimeLeft = 4.0
-                self.showGhostEffect()
+                self.startGameImmediately()
             }
         }}}
     }
@@ -2716,7 +2734,9 @@ extension SKColor {
 
 // MARK: - PhotonManager Delegate (Online Mode)
 extension GameScene: PhotonManagerDelegate {
-    func didJoinRoom() {}
+    func didJoinRoom() {
+        primeOnlineRoundIfReady()
+    }
 
     func didReceivePlayerState(_ state: RemotePlayerState, playerID: Int) {
         if remotePlayers[playerID] == nil {

@@ -4,8 +4,8 @@
 //
 //  Online multiplayer back-end — Firebase Realtime Database.
 //  Public interface (RemotePlayerState, PhotonManagerDelegate, PhotonManager singleton
-//  with identical method signatures) is unchanged so GameScene, ContentView, and
-//  OnlineMatchView require zero edits.
+//  with identical method signatures) is unchanged so GameScene and ContentView
+//  require minimal integration glue.
 //
 //  SETUP — do these once before first build:
 //  1. console.firebase.google.com → create project → add iOS app (bundle ID from Xcode)
@@ -253,12 +253,9 @@ final class PhotonManager: NSObject, ObservableObject {
 
     // MARK: - Game events (called by GameScene)
 
-    /// Signal that the local snake is ready; immediately fires `didJoinRoom()` on the delegate.
+    /// Signal that the local snake is ready.
     func sendGameReady() {
         myPlayerRef?.child("gameReady").setValue(true)
-        DispatchQueue.main.async { [weak self] in
-            self?.delegate?.didJoinRoom()
-        }
     }
 
     /// Broadcast local snake position at up to ~15 Hz.
@@ -364,7 +361,7 @@ final class PhotonManager: NSObject, ObservableObject {
             ServerValue.increment(-1)
         )
 
-        // Observe live player count for OnlineMatchView badge
+        // Observe live player count for UI/debug visibility
         handlePlayerCount = roomRef?.child("playerCount").observe(.value) { [weak self] snapshot in
             let count = snapshot.value as? Int ?? 0
             DispatchQueue.main.async { self?.roomPlayerCount = count }
@@ -374,7 +371,10 @@ final class PhotonManager: NSObject, ObservableObject {
         startObservingPlayers()
         startObservingFood()
 
-        DispatchQueue.main.async { self.connectionState = .inRoom }
+        DispatchQueue.main.async {
+            self.connectionState = .inRoom
+            self.delegate?.didJoinRoom()
+        }
     }
 
     // MARK: Players observer

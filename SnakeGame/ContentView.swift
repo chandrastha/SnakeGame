@@ -9,7 +9,8 @@ import SpriteKit
 struct ContentView: View {
     @State private var isPlaying: Bool = false
     @State private var selectedGameMode: GameMode = .offline
-    @State private var showOnlineMatch: Bool = false
+    @State private var isAwaitingOnlineJoin: Bool = false
+    @ObservedObject private var photon = PhotonManager.shared
 
     @State private var playerImage: UIImage? = {
         if let data = UserDefaults.standard.data(forKey: "playerHeadImage"),
@@ -34,6 +35,7 @@ struct ContentView: View {
                     onGameOver: { finalScore in
                         if finalScore > bestScore { bestScore = finalScore }
                         saveToLeaderboard(finalScore)
+                        isAwaitingOnlineJoin = false
                         withAnimation(.easeInOut(duration: 0.4)) { isPlaying = false }
                     }
                 )
@@ -46,26 +48,46 @@ struct ContentView: View {
                     playerImage:      $playerImage,
                     onPlayTapped: {
                         if selectedGameMode == .online {
+                            isAwaitingOnlineJoin = true
                             PhotonManager.shared.setPlayerName(playerName)
-                            showOnlineMatch = true
+                            if photon.connectionState == .inRoom {
+                                isAwaitingOnlineJoin = false
+                                withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
+                            } else {
+                                PhotonManager.shared.connect()
+                            }
                         } else {
+                            isAwaitingOnlineJoin = false
                             isPlaying = true
                         }
                     }
                 )
                 .transition(.opacity)
-                .sheet(isPresented: $showOnlineMatch) {
-                    OnlineMatchView(
-                        onMatchReady: {
-                            showOnlineMatch = false
-                            withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
-                        },
-                        onCancel: { showOnlineMatch = false }
-                    )
-                }
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
+        .onChange(of: selectedGameMode) { mode in
+            guard mode != .online, isAwaitingOnlineJoin else { return }
+            isAwaitingOnlineJoin = false
+            PhotonManager.shared.disconnect()
+        }
+        .onChange(of: photon.connectionState) { state in
+            guard isAwaitingOnlineJoin else { return }
+            switch state {
+            case .inRoom:
+                guard selectedGameMode == .online else {
+                    isAwaitingOnlineJoin = false
+                    PhotonManager.shared.disconnect()
+                    return
+                }
+                isAwaitingOnlineJoin = false
+                withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
+            case .failed, .disconnected:
+                isAwaitingOnlineJoin = false
+            case .connecting, .inLobby:
+                break
+            }
+        }
     }
 
     private func saveToLeaderboard(_ score: Int) {
