@@ -1185,6 +1185,9 @@ class GameScene: SKScene {
 
     func restartGame() {
         stopBackgroundMusic()
+        if gameMode == .online {
+            PhotonManager.shared.prepareLocalPlayerForNewRound()
+        }
         setupNewGame()
         startBackgroundMusic()
     }

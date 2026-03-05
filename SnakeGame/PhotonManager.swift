@@ -134,6 +134,8 @@ final class PhotonManager: NSObject, ObservableObject {
 
     // MARK: Watchdog (fail visibly if Firebase never responds)
     private var roomSearchWatchdog: DispatchWorkItem?
+    private var pendingPlayerRemovalWorkItem: DispatchWorkItem?
+    private var connectionAttemptID: UInt = 0
 
     // MARK: Cached room state (replayed when GameScene attaches after lobby join)
     private var latestRemotePlayers: [Int: RemotePlayerState] = [:]
@@ -145,16 +147,19 @@ final class PhotonManager: NSObject, ObservableObject {
     /// Calling this again while already connecting / in a room is a no-op.
     func connect() {
         guard connectionState == .disconnected || connectionState == .failed else { return }
+        connectionAttemptID &+= 1
+        let attemptID = connectionAttemptID
         DispatchQueue.main.async { self.connectionState = .connecting }
 
         Auth.auth().signInAnonymously { [weak self] result, error in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                guard self.connectionAttemptID == attemptID else { return }
                 if let uid = result?.user.uid {
                     self.myUID = uid
                     self.connectionState = .inLobby
                     // Immediately start room search — don't rely on an external timer
-                    self.joinOrCreateRoom()
+                    self.joinOrCreateRoom(attemptID: attemptID)
                 } else {
                     let msg = error?.localizedDescription ?? "Anonymous sign-in failed"
                     print("[PhotonManager] Auth failed: \(msg)")
@@ -167,6 +172,7 @@ final class PhotonManager: NSObject, ObservableObject {
 
     /// Sign out and tear down everything.
     func disconnect() {
+        connectionAttemptID &+= 1
         leaveRoom()
         try? Auth.auth().signOut()
         DispatchQueue.main.async {
@@ -179,6 +185,10 @@ final class PhotonManager: NSObject, ObservableObject {
 
     /// Find an open room (playerCount < maxPlayers) or create a new one.
     func joinOrCreateRoom(maxPlayers: Int = 100) {
+        joinOrCreateRoom(maxPlayers: maxPlayers, attemptID: connectionAttemptID)
+    }
+
+    private func joinOrCreateRoom(maxPlayers: Int = 100, attemptID: UInt) {
         guard connectionState == .inLobby, !myUID.isEmpty else { return }
 
         // Watchdog: if Firebase never responds within 10 s, surface the failure.
@@ -204,17 +214,19 @@ final class PhotonManager: NSObject, ObservableObject {
             .queryLimited(toFirst: 1)
             .observeSingleEvent(of: .value, with: { [weak self] snapshot in
                 guard let self = self else { return }
+                guard self.connectionAttemptID == attemptID else { return }
                 self.roomSearchWatchdog?.cancel()
 
                 if let firstRoom = snapshot.children.allObjects.first as? DataSnapshot {
                     // Found a room with space — join it
-                    self.joinExistingRoom(roomId: firstRoom.key, maxPlayers: maxPlayers)
+                    self.joinExistingRoom(roomId: firstRoom.key, maxPlayers: maxPlayers, attemptID: attemptID)
                 } else {
                     // No room available — create a new one
-                    self.createRoom(maxPlayers: maxPlayers)
+                    self.createRoom(maxPlayers: maxPlayers, attemptID: attemptID)
                 }
             }, withCancel: { [weak self] error in
                 guard let self = self else { return }
+                guard self.connectionAttemptID == attemptID else { return }
                 self.roomSearchWatchdog?.cancel()
                 let msg = error.localizedDescription
                 print("[PhotonManager] Room query failed: \(msg)")
@@ -227,6 +239,7 @@ final class PhotonManager: NSObject, ObservableObject {
 
     /// Leave the current room and return to lobby state.
     func leaveRoom() {
+        connectionAttemptID &+= 1
         guard !roomId.isEmpty || myPlayerRef != nil || roomRef != nil else {
             DispatchQueue.main.async {
                 self.roomPlayerCount = 0
@@ -237,6 +250,8 @@ final class PhotonManager: NSObject, ObservableObject {
 
         roomSearchWatchdog?.cancel()
         roomSearchWatchdog = nil
+        pendingPlayerRemovalWorkItem?.cancel()
+        pendingPlayerRemovalWorkItem = nil
         removeAllObservers()
 
         // Cancel disconnect hooks so a manual leave does not apply a second decrement.
@@ -276,12 +291,16 @@ final class PhotonManager: NSObject, ObservableObject {
 
     /// Signal that the local snake is ready.
     func sendGameReady() {
+        pendingPlayerRemovalWorkItem?.cancel()
+        pendingPlayerRemovalWorkItem = nil
         myPlayerRef?.child("gameReady").setValue(true)
     }
 
     /// Broadcast local snake position at up to ~15 Hz.
     func sendPlayerState(headX: Float, headY: Float, angle: Float,
                          score: Int, bodyLength: Int) {
+        pendingPlayerRemovalWorkItem?.cancel()
+        pendingPlayerRemovalWorkItem = nil
         myPlayerRef?.updateChildValues([
             "headX":      headX,
             "headY":      headY,
@@ -304,16 +323,27 @@ final class PhotonManager: NSObject, ObservableObject {
 
     /// Broadcast that the local snake died; removes own node from Firebase.
     func sendPlayerDied() {
+        pendingPlayerRemovalWorkItem?.cancel()
         myPlayerRef?.updateChildValues(["alive": false])
         // Short delay so remote clients see the death flag, then remove
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             self?.myPlayerRef?.removeValue()
+            self?.pendingPlayerRemovalWorkItem = nil
         }
+        pendingPlayerRemovalWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
+    }
+
+    /// Recreate the local player node for an online restart before the next countdown begins.
+    func prepareLocalPlayerForNewRound() {
+        pendingPlayerRemovalWorkItem?.cancel()
+        pendingPlayerRemovalWorkItem = nil
+        myPlayerRef?.setValue(initialLocalPlayerPayload())
     }
 
     // MARK: - Private helpers
 
-    private func createRoom(maxPlayers: Int) {
+    private func createRoom(maxPlayers: Int, attemptID: UInt) {
         let newRef = db.child("rooms").childByAutoId()
         let id = newRef.key ?? UUID().uuidString
 
@@ -326,8 +356,12 @@ final class PhotonManager: NSObject, ObservableObject {
             "food":        Self.initialRoomFoodSeed()
         ]) { [weak self] error, _ in
             guard let self = self else { return }
+            guard self.connectionAttemptID == attemptID else {
+                newRef.removeValue()
+                return
+            }
             if error == nil {
-                self.enterRoom(roomId: id)
+                self.enterRoom(roomId: id, attemptID: attemptID)
             } else {
                 let msg = error!.localizedDescription
                 print("[PhotonManager] createRoom failed: \(msg)")
@@ -339,7 +373,7 @@ final class PhotonManager: NSObject, ObservableObject {
         }
     }
 
-    private func joinExistingRoom(roomId: String, maxPlayers: Int) {
+    private func joinExistingRoom(roomId: String, maxPlayers: Int, attemptID: UInt) {
         // Atomically increment playerCount
         db.child("rooms/\(roomId)/playerCount").runTransactionBlock { currentData in
             let count = currentData.value as? Int ?? 0
@@ -350,6 +384,16 @@ final class PhotonManager: NSObject, ObservableObject {
             return TransactionResult.success(withValue: currentData)
         } andCompletionBlock: { [weak self] error, committed, _ in
             guard let self = self else { return }
+            guard self.connectionAttemptID == attemptID else {
+                if committed {
+                    self.db.child("rooms/\(roomId)/playerCount").runTransactionBlock { currentData in
+                        let count = max(0, (currentData.value as? Int ?? 1) - 1)
+                        currentData.value = count
+                        return TransactionResult.success(withValue: currentData)
+                    }
+                }
+                return
+            }
             if let error {
                 let msg = error.localizedDescription
                 print("[PhotonManager] joinExistingRoom failed: \(msg)")
@@ -358,15 +402,16 @@ final class PhotonManager: NSObject, ObservableObject {
                     self.connectionState = .failed
                 }
             } else if committed {
-                self.enterRoom(roomId: roomId)
+                self.enterRoom(roomId: roomId, attemptID: attemptID)
             } else {
                 // Room was full — create a new one instead
-                self.createRoom(maxPlayers: maxPlayers)
+                self.createRoom(maxPlayers: maxPlayers, attemptID: attemptID)
             }
         }
     }
 
-    private func enterRoom(roomId: String) {
+    private func enterRoom(roomId: String, attemptID: UInt) {
+        guard connectionAttemptID == attemptID else { return }
         self.roomId  = roomId
         roomRef      = db.child("rooms/\(roomId)")
         myPlayerRef  = roomRef?.child("players/\(myUID)")
@@ -374,16 +419,7 @@ final class PhotonManager: NSObject, ObservableObject {
         foodRef      = roomRef?.child("food")
 
         // Write own initial state
-        myPlayerRef?.setValue([
-            "headX":      Float(2000),
-            "headY":      Float(2000),
-            "angle":      Float(0),
-            "score":      0,
-            "bodyLength": 3,
-            "alive":      true,
-            "uid":        myUID,
-            "playerName": localPlayerName
-        ])
+        myPlayerRef?.setValue(initialLocalPlayerPayload())
 
         // Clean up own node if the device disconnects unexpectedly
         myPlayerRef?.onDisconnectRemoveValue()
@@ -402,9 +438,24 @@ final class PhotonManager: NSObject, ObservableObject {
         startObservingFood()
 
         DispatchQueue.main.async {
+            guard self.connectionAttemptID == attemptID else { return }
             self.connectionState = .inRoom
             self.replayCurrentRoomStateIfNeeded()
         }
+    }
+
+    private func initialLocalPlayerPayload() -> [String: Any] {
+        [
+            "headX": Float(2000),
+            "headY": Float(2000),
+            "angle": Float(0),
+            "score": 0,
+            "bodyLength": 3,
+            "alive": true,
+            "uid": myUID,
+            "playerName": localPlayerName,
+            "gameReady": false
+        ]
     }
 
     // MARK: Players observer
