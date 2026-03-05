@@ -2646,8 +2646,8 @@ class GameScene: SKScene {
             }
         }
 
-        // --- Safety net: purge any orphaned food entries missed by the completion handler ---
-        if frameCounter % 600 == 0 {
+        // --- Safety net: purge orphaned food entries (death food still relies on this) ---
+        if frameCounter % 300 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
