@@ -143,11 +143,16 @@ class GameScene: SKScene {
     let worldSize: CGFloat = 4000.0
     let visibleRadius: CGFloat = 700.0
     var cameraNode = SKCameraNode()
+    let cameraZoomStepScore: CGFloat = 300.0
+    let cameraZoomPerStep:   CGFloat = 0.10
+    let maxCameraScale:      CGFloat = 1.50
 
     // MARK: - Constants
     let baseMoveSpeed:           CGFloat = 100.0
     let maxMoveSpeed:            CGFloat = 200.0
     let turnSpeed:               CGFloat = 280.0
+    let playerTurnSpeedBase:     CGFloat = 340.0
+    let playerTurnSpeedBoost:    CGFloat = 170.0
     let wallAvoidanceDistance:   CGFloat = 80.0
     let playerAvoidanceDistance: CGFloat = 100.0
     let headRadius:              CGFloat = 13.0
@@ -178,8 +183,10 @@ class GameScene: SKScene {
     // MARK: - Joystick
     let joystickBaseRadius:  CGFloat = 65
     let joystickThumbRadius: CGFloat = 28
+    let joystickDeadZone:    CGFloat = 10
     var joystickCenter:      CGPoint = .zero
     var joystickThumbOffset: CGPoint = .zero
+    var joystickEngagement:  CGFloat = 0
     var joystickBaseNode:    SKShapeNode?
     var joystickInnerRing:   SKShapeNode?
     var joystickThumbNode:   SKShapeNode?
@@ -239,8 +246,8 @@ class GameScene: SKScene {
     var score:          Int = 0
     var scoreMultiplier: Int = 1
     /// Target body segment count derived directly from score.
-    /// initialBodyCount + 1 segment per 2 score points.
-    var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 2) }
+    /// initialBodyCount + 1 segment per 10 score points.
+    var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 10) }
 
     // MARK: - Other UI
     var pauseButton:  SKNode?
@@ -253,6 +260,8 @@ class GameScene: SKScene {
     var minimapPlayerDot:         SKShapeNode?
     var minimapBotDots:           [SKShapeNode] = []
     var minimapRemotePlayerDots:  [Int: SKShapeNode] = [:]
+    var leaderArrowNode:          SKNode?
+    var leaderArrowLabel:         SKLabelNode?
 
     // MARK: - Shield Wiggle
     var tailWigglePhase: CGFloat = 0
@@ -312,6 +321,38 @@ class GameScene: SKScene {
         }
     }
 
+    private var isLandscapeLayout: Bool { size.width > size.height }
+
+    private func cameraScale() -> CGFloat {
+        max(cameraNode.xScale, 1.0)
+    }
+
+    private func cameraHalfExtents(using scale: CGFloat? = nil) -> (halfW: CGFloat, halfH: CGFloat) {
+        let zoom = scale ?? cameraScale()
+        return (size.width * zoom / 2, size.height * zoom / 2)
+    }
+
+    private func joystickMargins() -> CGPoint {
+        isLandscapeLayout ? CGPoint(x: 74, y: 132) : CGPoint(x: 90, y: 100)
+    }
+
+    private func boostMargins() -> CGPoint {
+        isLandscapeLayout ? CGPoint(x: 94, y: 118) : CGPoint(x: 88, y: 100)
+    }
+
+    private func minimapMargins() -> CGPoint {
+        isLandscapeLayout ? CGPoint(x: 106, y: 78) : CGPoint(x: 88, y: 68)
+    }
+
+    private func leaderArrowMarginTop() -> CGFloat {
+        isLandscapeLayout ? 68 : 74
+    }
+
+    private func desiredCameraScale() -> CGFloat {
+        let zoomSteps = floor(CGFloat(score) / cameraZoomStepScore)
+        return min(1.0 + zoomSteps * cameraZoomPerStep, maxCameraScale)
+    }
+
     func setupNewGame() {
         isGameOver          = false
         isTouching          = false
@@ -338,6 +379,7 @@ class GameScene: SKScene {
         joystickTouch       = nil
         boostTouch          = nil
         joystickThumbOffset = .zero
+        joystickEngagement  = 0
         frameCounter        = 0
         leaderboardUpdateTimer = 0
         trailFoodTimer       = 0
@@ -361,6 +403,8 @@ class GameScene: SKScene {
         joystickThumbNode = nil
         boostButtonNode   = nil
         miniLeaderboard   = nil
+        leaderArrowNode   = nil
+        leaderArrowLabel  = nil
 
         backgroundColor = SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
         arenaMinX = 0; arenaMaxX = worldSize
@@ -380,8 +424,11 @@ class GameScene: SKScene {
 
         // Initial HUD world positions based on camera at world center
         let cx = worldSize / 2, cy = worldSize / 2
-        joystickCenter    = CGPoint(x: cx - size.width/2 + 90,  y: cy - size.height/2 + 100)
-        boostButtonCenter = CGPoint(x: cx + size.width/2 - 88,  y: cy - size.height/2 + 100)
+        let extents = cameraHalfExtents(using: 1.0)
+        let joystickInset = joystickMargins()
+        let boostInset = boostMargins()
+        joystickCenter    = CGPoint(x: cx - extents.halfW + joystickInset.x, y: cy - extents.halfH + joystickInset.y)
+        boostButtonCenter = CGPoint(x: cx + extents.halfW - boostInset.x,   y: cy - extents.halfH + boostInset.y)
 
         createArenaBorder()
         createSnakeHead()
@@ -389,6 +436,7 @@ class GameScene: SKScene {
         createScorePanel()
         createMiniLeaderboard()
         createMinimap()
+        createLeaderArrow()
         if gameMode == .offline { createPauseButton() }
         createJoystick()
         createBoostButton()
@@ -408,16 +456,55 @@ class GameScene: SKScene {
         } else {
             primeOnlineRoundIfReady()
         }
+
+        let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
+        animateSnakeEntrance(head: snakeHead, body: bodySegments, angle: currentAngle, accent: playerTheme.bodySKColor)
     }
 
     // MARK: - Arena Border
     func createArenaBorder() {
         // Arena background fill
         let arenaBg = SKShapeNode(rect: CGRect(x: 0, y: 0, width: worldSize, height: worldSize))
-        arenaBg.fillColor   = SKColor(red: 0.05, green: 0.07, blue: 0.12, alpha: 1.0)
+        arenaBg.fillColor   = SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
         arenaBg.strokeColor = .clear
         arenaBg.zPosition   = -11
         addChild(arenaBg)
+
+        let laneWidth: CGFloat = 260
+        for bandIndex in -2...18 {
+            let x = CGFloat(bandIndex) * laneWidth - 180
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: x, y: 0))
+            path.addLine(to: CGPoint(x: x + laneWidth * 0.90, y: 0))
+            path.addLine(to: CGPoint(x: x + laneWidth * 1.65, y: worldSize))
+            path.addLine(to: CGPoint(x: x + laneWidth * 0.75, y: worldSize))
+            path.closeSubpath()
+
+            let band = SKShapeNode(path: path)
+            band.fillColor = bandIndex.isMultiple(of: 2)
+                ? SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18)
+                : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16)
+            band.strokeColor = .clear
+            band.zPosition = -10.8
+            addChild(band)
+        }
+
+        let glowCenters: [CGPoint] = [
+            CGPoint(x: worldSize * 0.22, y: worldSize * 0.24),
+            CGPoint(x: worldSize * 0.78, y: worldSize * 0.30),
+            CGPoint(x: worldSize * 0.36, y: worldSize * 0.74),
+            CGPoint(x: worldSize * 0.74, y: worldSize * 0.82)
+        ]
+        for (index, center) in glowCenters.enumerated() {
+            let glow = SKShapeNode(circleOfRadius: index.isMultiple(of: 2) ? 300 : 240)
+            glow.position = center
+            glow.fillColor = index.isMultiple(of: 2)
+                ? SKColor(red: 0.60, green: 0.78, blue: 0.82, alpha: 0.07)
+                : SKColor(red: 0.15, green: 0.23, blue: 0.31, alpha: 0.10)
+            glow.strokeColor = .clear
+            glow.zPosition = -10.7
+            addChild(glow)
+        }
 
         // Grid texture lines
         createArenaGrid()
@@ -486,11 +573,34 @@ class GameScene: SKScene {
         }
 
         let grid = SKShapeNode(path: path)
-        grid.strokeColor = SKColor(red: 0.3, green: 0.5, blue: 0.8, alpha: 0.08)
+        grid.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.10)
         grid.lineWidth   = 1
         grid.fillColor   = .clear
         grid.zPosition   = -10
         addChild(grid)
+
+        let accentPath = CGMutablePath()
+        let accentStep: CGFloat = step * 3
+        var ax: CGFloat = accentStep
+        while ax < worldSize {
+            accentPath.move(to: CGPoint(x: ax, y: 0))
+            accentPath.addLine(to: CGPoint(x: ax, y: worldSize))
+            ax += accentStep
+        }
+
+        var ay: CGFloat = accentStep
+        while ay < worldSize {
+            accentPath.move(to: CGPoint(x: 0, y: ay))
+            accentPath.addLine(to: CGPoint(x: worldSize, y: ay))
+            ay += accentStep
+        }
+
+        let accentGrid = SKShapeNode(path: accentPath)
+        accentGrid.strokeColor = SKColor(red: 0.10, green: 0.18, blue: 0.24, alpha: 0.22)
+        accentGrid.lineWidth = 2
+        accentGrid.fillColor = .clear
+        accentGrid.zPosition = -9.95
+        addChild(accentGrid)
 
         // Dot at each grid intersection
         let dotPath = CGMutablePath()
@@ -506,7 +616,7 @@ class GameScene: SKScene {
             dx += step
         }
         let dots = SKShapeNode(path: dotPath)
-        dots.fillColor   = SKColor(red: 0.4, green: 0.6, blue: 1.0, alpha: 0.12)
+        dots.fillColor   = SKColor(red: 0.94, green: 0.98, blue: 1.0, alpha: 0.14)
         dots.strokeColor = .clear
         dots.zPosition   = -10
         addChild(dots)
@@ -562,8 +672,13 @@ class GameScene: SKScene {
 
     // MARK: - Camera Follow
     func updateCamera() {
-        let halfW = size.width  / 2
-        let halfH = size.height / 2
+        let desiredScale = desiredCameraScale()
+        let newScale = cameraNode.xScale + (desiredScale - cameraNode.xScale) * 0.08
+        cameraNode.setScale(newScale)
+
+        let extents = cameraHalfExtents(using: newScale)
+        let halfW = extents.halfW
+        let halfH = extents.halfH
         let clampedX = max(halfW, min(worldSize - halfW, snakeHead.position.x))
         let clampedY = max(halfH, min(worldSize - halfH, snakeHead.position.y))
         cameraNode.position = CGPoint(x: clampedX, y: clampedY)
@@ -573,9 +688,13 @@ class GameScene: SKScene {
     func updateHUDPositions() {
         let cx = cameraNode.position.x
         let cy = cameraNode.position.y
+        let extents = cameraHalfExtents()
+        let joystickInset = joystickMargins()
+        let boostInset = boostMargins()
+        let minimapInset = minimapMargins()
 
-        joystickCenter    = CGPoint(x: cx - size.width/2 + 90,  y: cy - size.height/2 + 100)
-        boostButtonCenter = CGPoint(x: cx + size.width/2 - 88,  y: cy - size.height/2 + 100)
+        joystickCenter    = CGPoint(x: cx - extents.halfW + joystickInset.x, y: cy - extents.halfH + joystickInset.y)
+        boostButtonCenter = CGPoint(x: cx + extents.halfW - boostInset.x,    y: cy - extents.halfH + boostInset.y)
 
         joystickBaseNode?.position  = joystickCenter
         joystickInnerRing?.position = joystickCenter
@@ -590,12 +709,12 @@ class GameScene: SKScene {
         boostButtonNode?.position = boostButtonCenter
 
         let panelH = scorePanelHeight
-        scorePanel?.position  = CGPoint(x: cx - size.width/2 + 20, y: cy + size.height/2 - 60 - panelH)
-        pauseButton?.position = CGPoint(x: cx + size.width/2 - 42, y: cy + size.height/2 - 42)
-        powerUpPanel?.position = CGPoint(x: cx, y: cy - size.height/2 + 170)
-        // Minimap sits in top-right; leaderboard is pushed down below it
-        minimapNode?.position     = CGPoint(x: cx + size.width/2 - 65, y: cy + size.height/2 - 55)
-        miniLeaderboard?.position = CGPoint(x: cx + size.width/2 - 10, y: cy + size.height/2 - 195)
+        scorePanel?.position  = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
+        pauseButton?.position = CGPoint(x: cx + extents.halfW - 42, y: cy + extents.halfH - 42)
+        powerUpPanel?.position = CGPoint(x: cx, y: cy - extents.halfH + 170)
+        minimapNode?.position = CGPoint(x: cx + extents.halfW - minimapInset.x, y: cy + extents.halfH - minimapInset.y)
+        miniLeaderboard?.position = CGPoint(x: cx + extents.halfW - minimapInset.x + 56, y: cy + extents.halfH - minimapInset.y - 140)
+        leaderArrowNode?.position = CGPoint(x: cx, y: cy + extents.halfH - leaderArrowMarginTop())
     }
 
     // MARK: - Pause
@@ -730,23 +849,31 @@ class GameScene: SKScene {
         let dx    = location.x - joystickCenter.x
         let dy    = location.y - joystickCenter.y
         let dist  = hypot(dx, dy)
-        let clamp = min(dist, joystickBaseRadius)
         let angle = atan2(dy, dx)
+        let normalized = max(0, min(1, (dist - joystickDeadZone) / (joystickBaseRadius - joystickDeadZone)))
+        let engagement = normalized > 0 ? pow(normalized, 0.82) : 0
+        let thumbDistance = normalized > 0
+            ? joystickDeadZone + engagement * (joystickBaseRadius - joystickDeadZone)
+            : 0
 
-        joystickThumbOffset = CGPoint(x: cos(angle) * clamp, y: sin(angle) * clamp)
+        joystickEngagement = engagement
+        joystickThumbOffset = CGPoint(x: cos(angle) * thumbDistance, y: sin(angle) * thumbDistance)
         joystickThumbNode?.position = CGPoint(
             x: joystickCenter.x + joystickThumbOffset.x,
             y: joystickCenter.y + joystickThumbOffset.y
         )
 
-        if dist > 8 {
+        if normalized > 0 {
             targetAngle = angle
             isTouching  = true
+        } else {
+            isTouching = false
         }
     }
 
     func resetJoystick() {
         joystickThumbOffset = .zero
+        joystickEngagement  = 0
         joystickThumbNode?.run(SKAction.move(to: joystickCenter, duration: 0.12))
         isTouching    = false
         joystickTouch = nil
@@ -1023,14 +1150,14 @@ class GameScene: SKScene {
     // MARK: - Score Panel
     func createScorePanel() {
         scoreLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        scoreLabel.text                    = "Score: 0"
+        scoreLabel.text                    = "0"
         scoreLabel.fontSize                = 20
         scoreLabel.fontColor               = .white
         scoreLabel.horizontalAlignmentMode = .center
         scoreLabel.verticalAlignmentMode   = .center
 
         let hPad: CGFloat = 16, vPad: CGFloat = 10
-        let panelW = scoreLabel.frame.width + hPad * 2
+        let panelW = max(scoreLabel.frame.width + hPad * 2, 72)
         let panelH = scoreLabel.frame.height + vPad * 2
         scorePanelHeight = panelH
 
@@ -1050,9 +1177,9 @@ class GameScene: SKScene {
 
     func updateScoreDisplay() {
         guard scoreLabel != nil, scorePanel != nil else { return }
-        scoreLabel.text = "Score: \(score)"
+        scoreLabel.text = "\(score)"
         let hPad: CGFloat = 16, vPad: CGFloat = 10
-        let panelW = max(scoreLabel.frame.width + hPad * 2, 110)
+        let panelW = max(scoreLabel.frame.width + hPad * 2, 72)
         let panelH = scoreLabel.frame.height + vPad * 2
         scorePanelHeight = panelH
         scorePanel.path = CGPath(
@@ -1105,22 +1232,32 @@ class GameScene: SKScene {
     // MARK: - Minimap
     func createMinimap() {
         minimapBotDots.removeAll()
-        let mapSize: CGFloat = 110
+        let mapSize: CGFloat = 118
         let container = SKNode()
         container.zPosition = 490
         container.name      = "minimapContainer"
 
-        let bg = SKShapeNode(rectOf: CGSize(width: mapSize, height: mapSize), cornerRadius: 4)
-        bg.fillColor   = SKColor(white: 0.0, alpha: 0.55)
-        bg.strokeColor = SKColor(white: 1.0, alpha: 0.25)
-        bg.lineWidth   = 1.0
+        let bg = SKShapeNode(rectOf: CGSize(width: mapSize, height: mapSize), cornerRadius: 16)
+        bg.fillColor   = SKColor(red: 0.07, green: 0.10, blue: 0.15, alpha: 0.30)
+        bg.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.22)
+        bg.lineWidth   = 1.2
         container.addChild(bg)
 
-        let innerBorder = SKShapeNode(rectOf: CGSize(width: mapSize - 6, height: mapSize - 6), cornerRadius: 2)
+        let innerBorder = SKShapeNode(rectOf: CGSize(width: mapSize - 8, height: mapSize - 8), cornerRadius: 13)
         innerBorder.fillColor   = .clear
-        innerBorder.strokeColor = SKColor(white: 1.0, alpha: 0.12)
-        innerBorder.lineWidth   = 0.5
+        innerBorder.strokeColor = SKColor(red: 0.25, green: 0.45, blue: 0.52, alpha: 0.26)
+        innerBorder.lineWidth   = 0.8
         container.addChild(innerBorder)
+
+        let crosshairPath = CGMutablePath()
+        crosshairPath.move(to: CGPoint(x: -mapSize / 2 + 10, y: 0))
+        crosshairPath.addLine(to: CGPoint(x: mapSize / 2 - 10, y: 0))
+        crosshairPath.move(to: CGPoint(x: 0, y: -mapSize / 2 + 10))
+        crosshairPath.addLine(to: CGPoint(x: 0, y: mapSize / 2 - 10))
+        let crosshair = SKShapeNode(path: crosshairPath)
+        crosshair.strokeColor = SKColor(red: 0.83, green: 0.92, blue: 0.96, alpha: 0.10)
+        crosshair.lineWidth = 0.8
+        container.addChild(crosshair)
 
         let playerDot = SKShapeNode(circleOfRadius: 3.5)
         playerDot.fillColor   = SKColor(red: 1.0, green: 0.9, blue: 0.1, alpha: 1.0)
@@ -1148,20 +1285,21 @@ class GameScene: SKScene {
 
     func updateMinimap() {
         guard let _ = minimapNode, let playerDot = minimapPlayerDot else { return }
-        let mapSize: CGFloat = 110
+        let mapSize: CGFloat = 118
         let world = CGFloat(worldSize)
 
         let px = (snakeHead.position.x / world - 0.5) * mapSize
         let py = (snakeHead.position.y / world - 0.5) * mapSize
         playerDot.position = CGPoint(x: px, y: py)
 
-        // Offline: update bot dots
         for (i, dot) in minimapBotDots.enumerated() {
             guard i < bots.count else { break }
-            if bots[i].isActive && !bots[i].isDead {
+            if !bots[i].isDead {
                 let bx = (bots[i].position.x / world - 0.5) * mapSize
                 let by = (bots[i].position.y / world - 0.5) * mapSize
                 dot.position = CGPoint(x: bx, y: by)
+                let theme = snakeColorThemes[bots[i].colorIndex % snakeColorThemes.count]
+                dot.fillColor = theme.bodySKColor.withAlphaComponent(bots[i].isActive ? 0.82 : 0.48)
                 dot.isHidden = false
             } else {
                 dot.isHidden = true
@@ -1179,6 +1317,99 @@ class GameScene: SKScene {
                 dot.isHidden = true
             }
         }
+    }
+
+    func createLeaderArrow() {
+        let node = SKNode()
+        node.zPosition = 505
+        node.isHidden = true
+
+        let ring = SKShapeNode(circleOfRadius: 14)
+        ring.fillColor = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.42)
+        ring.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.24)
+        ring.lineWidth = 1.2
+        node.addChild(ring)
+
+        let arrowPath = CGMutablePath()
+        arrowPath.move(to: CGPoint(x: 0, y: 12))
+        arrowPath.addLine(to: CGPoint(x: 8, y: -8))
+        arrowPath.addLine(to: CGPoint(x: 0, y: -3))
+        arrowPath.addLine(to: CGPoint(x: -8, y: -8))
+        arrowPath.closeSubpath()
+
+        let arrow = SKShapeNode(path: arrowPath)
+        arrow.fillColor = SKColor(red: 1.0, green: 0.82, blue: 0.18, alpha: 0.96)
+        arrow.strokeColor = SKColor(red: 1.0, green: 0.94, blue: 0.62, alpha: 0.98)
+        arrow.lineWidth = 1.0
+        arrow.glowWidth = 4
+        node.addChild(arrow)
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize = 10
+        label.fontColor = SKColor(white: 1.0, alpha: 0.82)
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .center
+        label.position = CGPoint(x: 0, y: -22)
+        label.text = ""
+        node.addChild(label)
+
+        addChild(node)
+        leaderArrowNode = node
+        leaderArrowLabel = label
+    }
+
+    private func highestScoringSnakeTarget() -> (name: String, score: Int, position: CGPoint, isPlayer: Bool)? {
+        guard snakeHead != nil else { return nil }
+
+        let myName = playerName.isEmpty ? "You" : playerName
+        var best: (name: String, score: Int, position: CGPoint, isPlayer: Bool) = (
+            name: myName,
+            score: score,
+            position: snakeHead.position,
+            isPlayer: true
+        )
+
+        for bot in bots where !bot.isDead {
+            if bot.score > best.score {
+                best = (name: bot.name, score: bot.score, position: bot.position, isPlayer: false)
+            }
+        }
+
+        for (_, remote) in remotePlayers {
+            if remote.score > best.score {
+                best = (
+                    name: remote.playerName.isEmpty ? "Player" : remote.playerName,
+                    score: remote.score,
+                    position: remote.head.position,
+                    isPlayer: false
+                )
+            }
+        }
+
+        return best
+    }
+
+    func updateLeaderArrow() {
+        guard let arrowNode = leaderArrowNode, let label = leaderArrowLabel else { return }
+        guard let target = highestScoringSnakeTarget(), !target.isPlayer else {
+            arrowNode.isHidden = true
+            return
+        }
+
+        let dx = target.position.x - cameraNode.position.x
+        let dy = target.position.y - cameraNode.position.y
+        let extents = cameraHalfExtents()
+        let inView = abs(dx) <= extents.halfW - 50 && abs(dy) <= extents.halfH - 90
+        if inView {
+            arrowNode.isHidden = true
+            return
+        }
+
+        arrowNode.isHidden = false
+        arrowNode.zRotation = atan2(dy, dx) - .pi / 2
+        label.zRotation = -arrowNode.zRotation
+        let displayName = target.name.count > 10 ? String(target.name.prefix(10)) : target.name
+        label.text = "\(displayName) \(target.score)"
     }
 
     // MARK: - Food System
@@ -1592,7 +1823,7 @@ class GameScene: SKScene {
         updateSegmentScales()
     }
 
-    /// Grow or shrink the player body to match targetBodyCount (score / 2 + initial).
+    /// Grow or shrink the player body to match targetBodyCount.
     /// Called on every score change so boost drain also shrinks the snake.
     func syncSnakeLength() {
         let target = targetBodyCount
@@ -1606,6 +1837,81 @@ class GameScene: SKScene {
             bodySegments.removeLast().removeFromParent()
         }
         updateSegmentScales()
+    }
+
+    func createSpawnHole(at position: CGPoint, angle: CGFloat, accent: SKColor) -> SKNode {
+        let hole = SKNode()
+        hole.position = position
+        hole.zPosition = -0.5
+        hole.zRotation = angle
+
+        let shadow = SKShapeNode(ellipseOf: CGSize(width: 60, height: 28))
+        shadow.fillColor = SKColor(red: 0.03, green: 0.05, blue: 0.07, alpha: 0.72)
+        shadow.strokeColor = SKColor(red: 0.12, green: 0.18, blue: 0.20, alpha: 0.40)
+        shadow.lineWidth = 1.0
+        shadow.yScale = 0.74
+        hole.addChild(shadow)
+
+        let rim = SKShapeNode(ellipseOf: CGSize(width: 72, height: 34))
+        rim.fillColor = .clear
+        rim.strokeColor = accent.withAlphaComponent(0.26)
+        rim.lineWidth = 1.6
+        rim.glowWidth = 4
+        rim.yScale = 0.72
+        hole.addChild(rim)
+
+        for index in 0..<6 {
+            let puff = SKShapeNode(circleOfRadius: CGFloat.random(in: 3.5...6.0))
+            puff.fillColor = SKColor(red: 0.75, green: 0.83, blue: 0.78, alpha: 0.18)
+            puff.strokeColor = .clear
+            let spread = CGFloat(index - 2) * 5.0
+            puff.position = CGPoint(x: spread, y: CGFloat.random(in: -5...4))
+            puff.zPosition = -0.1
+            hole.addChild(puff)
+
+            let rise = SKAction.group([
+                SKAction.moveBy(x: CGFloat.random(in: -10...10), y: CGFloat.random(in: 10...20), duration: 0.36),
+                SKAction.fadeOut(withDuration: 0.36),
+                SKAction.scale(to: 0.4, duration: 0.36)
+            ])
+            puff.run(SKAction.sequence([
+                SKAction.wait(forDuration: Double(index) * 0.015),
+                rise,
+                SKAction.removeFromParent()
+            ]))
+        }
+
+        return hole
+    }
+
+    func animateSnakeEntrance(head: SKNode, body: [SKShapeNode], angle: CGFloat, accent: SKColor) {
+        let hole = createSpawnHole(at: head.position, angle: angle, accent: accent)
+        addChild(hole)
+        hole.run(SKAction.sequence([
+            SKAction.wait(forDuration: 0.55),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.24),
+                SKAction.scale(to: 0.88, duration: 0.24)
+            ]),
+            SKAction.removeFromParent()
+        ]))
+
+        let nodes = [head] + body.map { $0 as SKNode }
+        for (index, node) in nodes.enumerated() {
+            let targetAlpha = node.alpha
+            let targetX = node.xScale
+            let targetY = node.yScale
+            node.alpha = 0
+            node.setScale(max(0.18, min(targetX, targetY) * 0.22))
+            node.run(SKAction.sequence([
+                SKAction.wait(forDuration: Double(min(index, 7)) * 0.028),
+                SKAction.group([
+                    SKAction.fadeAlpha(to: targetAlpha, duration: 0.28),
+                    SKAction.scaleX(to: targetX, duration: 0.32),
+                    SKAction.scaleY(to: targetY, duration: 0.32)
+                ])
+            ]))
+        }
     }
 
     func updateSegmentScales() {
@@ -1890,6 +2196,7 @@ class GameScene: SKScene {
         }
         updateBotBodyScales(index)
         bots[index].isActive = true
+        animateSnakeEntrance(head: head, body: bots[index].body, angle: bot.angle, accent: theme.bodySKColor)
     }
 
     func deactivateBot(_ index: Int) {
@@ -2783,6 +3090,7 @@ class GameScene: SKScene {
             bodyLength: 10, nameLabel: nameLabel, colorIndex: colorIndex,
             playerName: playerName
         )
+        animateSnakeEntrance(head: head, body: [], angle: 0, accent: theme.bodySKColor)
     }
 
     func removeRemotePlayer(actorID: Int) {
@@ -3153,7 +3461,17 @@ class GameScene: SKScene {
         let maxH = Int(CGFloat(bodySegments.count + 5) * segmentPixelSpacing) + 200
         if positionHistory.count > maxH { positionHistory.removeFirst(positionHistory.count - maxH) }
 
-        if isTouching { smoothlyRotate(current: &currentAngle, target: targetAngle, dt: dt) }
+        if isTouching {
+            let dynamicTurnSpeed = playerTurnSpeedBase
+                + joystickEngagement * playerTurnSpeedBoost
+                + (isBoostHeld ? 25 : 0)
+            smoothlyRotate(
+                current: &currentAngle,
+                target: targetAngle,
+                dt: dt,
+                maxTurnSpeed: dynamicTurnSpeed
+            )
+        }
 
         snakeHead.position.x += cos(currentAngle) * playerDist
         snakeHead.position.y += sin(currentAngle) * playerDist
@@ -3268,6 +3586,7 @@ class GameScene: SKScene {
 
         // --- Minimap (every frame) ---
         updateMinimap()
+        updateLeaderArrow()
 
         // --- Mini Leaderboard (update ~1 Hz) ---
         leaderboardUpdateTimer += dt
