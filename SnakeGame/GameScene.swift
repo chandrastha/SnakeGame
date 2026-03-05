@@ -2735,6 +2735,7 @@ extension GameScene: PhotonManagerDelegate {
 
     func didReceiveFoodEaten(foodIndex: Int, newFoodX: Float, newFoodY: Float, newFoodType: Int) {
         guard foodIndex < foodItems.count else { return }
+        if foodTypes[foodIndex] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
         foodItems[foodIndex].removeFromParent()
         foodItems.remove(at: foodIndex)
         foodTypes.remove(at: foodIndex)
