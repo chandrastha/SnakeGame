@@ -66,10 +66,20 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
+        .onChange(of: selectedGameMode) { mode in
+            guard mode != .online, isAwaitingOnlineJoin else { return }
+            isAwaitingOnlineJoin = false
+            PhotonManager.shared.disconnect()
+        }
         .onChange(of: photon.connectionState) { state in
             guard isAwaitingOnlineJoin else { return }
             switch state {
             case .inRoom:
+                guard selectedGameMode == .online else {
+                    isAwaitingOnlineJoin = false
+                    PhotonManager.shared.disconnect()
+                    return
+                }
                 isAwaitingOnlineJoin = false
                 withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
             case .failed, .disconnected:
