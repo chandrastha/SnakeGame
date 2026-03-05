@@ -42,7 +42,15 @@ struct BotState {
     var tier: BotTier          // assigned by spawnBots(); default .easy
     var isDead: Bool           // true during respawn delay countdown
     var respawnTimer: CGFloat  // seconds remaining before bot reappears
-    var aggressionActive: Bool // true when hard/medium bot is currently intercepting player
+    var personality: BotPersonalityKind
+    var intent: BotIntent
+    var decisionTimer: CGFloat
+    var boostTimer: CGFloat
+    var boostCooldown: CGFloat
+    var isBoosting: Bool
+    var focusPoint: CGPoint?
+    var focusTimer: CGFloat
+    var roamAnchor: CGPoint
 
     // Trail food
     var trailFoodTimer: CGFloat
@@ -60,27 +68,45 @@ struct BotState {
         self.body         = []
         self.posHistory   = []
         self.dirChangeTimer = CGFloat.random(in: 1...3)
-        self.tier             = .easy
-        self.isDead           = false
-        self.respawnTimer     = 0
-        self.aggressionActive = false
-        self.trailFoodTimer   = 0
+        self.tier          = .easy
+        self.isDead        = false
+        self.respawnTimer  = 0
+        self.personality   = .opportunist
+        self.intent        = .roam
+        self.decisionTimer = 0
+        self.boostTimer    = 0
+        self.boostCooldown = 0
+        self.isBoosting    = false
+        self.focusPoint    = nil
+        self.focusTimer    = 0
+        self.roamAnchor    = position
+        self.trailFoodTimer = 0
     }
 }
 
-// MARK: - Bot AI Weights
-private struct BotWeights {
-    let foodScore:      CGFloat
-    let deathFoodScore: CGFloat
-    let wallPenalty:    CGFloat
-    let bodyPenalty:    CGFloat
-    let fleePenalty:    CGFloat
-    let huntBonus:      CGFloat
-    let horizon:        CGFloat   // lookahead seconds
+private struct BotThreatSnapshot {
+    let id: Int
+    let position: CGPoint
+    let angle: CGFloat
+    let speed: CGFloat
+    let length: Int
+    let isPlayer: Bool
 }
-private let easyWeights   = BotWeights(foodScore: 60, deathFoodScore:   0, wallPenalty: 200, bodyPenalty: 150, fleePenalty:  80, huntBonus:   0, horizon: 0.6)
-private let mediumWeights = BotWeights(foodScore: 55, deathFoodScore: 120, wallPenalty: 250, bodyPenalty: 200, fleePenalty:  60, huntBonus:   0, horizon: 0.8)
-private let hardWeights   = BotWeights(foodScore: 40, deathFoodScore: 140, wallPenalty: 300, bodyPenalty: 250, fleePenalty:  40, huntBonus: 110, horizon: 1.0)
+
+private struct BotFoodTarget {
+    let index: Int
+    let position: CGPoint
+    let type: FoodType
+    let utility: CGFloat
+}
+
+private struct BotDecision {
+    let angle: CGFloat
+    let intent: BotIntent
+    let shouldBoost: Bool
+    let score: CGFloat
+    let focusPoint: CGPoint?
+}
 
 // MARK: - Remote Player (Online Mode)
 struct RemotePlayer {
@@ -241,6 +267,10 @@ class GameScene: SKScene {
     let botSpeedMedium: CGFloat = 120.0
     let botSpeedHard:   CGFloat = 150.0
     let botSpeedScoreCap: Int = 100
+    let botBoostMultiplier: CGFloat = 1.52
+    let botBoostDurationRange: ClosedRange<CGFloat> = 0.30...0.90
+    let botBoostCooldownRange: ClosedRange<CGFloat> = 1.10...2.40
+    let botDetailedAIRadius: CGFloat = 1200.0
     var frameCounter = 0
     var botBodyUpdateFrame: Int = 0
 
@@ -1755,7 +1785,61 @@ class GameScene: SKScene {
             case 10..<22: bots[i].tier = .medium
             default:      bots[i].tier = .hard
             }
+            let personalities = botPersonalities(for: bots[i].tier)
+            bots[i].personality = personalities[i % personalities.count]
+            configureBotIdentity(index: i, preservePersonality: true)
         }
+    }
+
+    private func botPersonalities(for tier: BotTier) -> [BotPersonalityKind] {
+        switch tier {
+        case .easy:
+            return [.scavenger, .coward, .opportunist, .trickster]
+        case .medium:
+            return [.opportunist, .sprinter, .vulture, .trickster, .hunter]
+        case .hard:
+            return [.hunter, .interceptor, .sprinter, .vulture, .opportunist]
+        }
+    }
+
+    private func randomBotLength(for index: Int) -> Int {
+        let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
+        let baseRange: ClosedRange<Int>
+        switch bots[index].tier {
+        case .easy:   baseRange = 9...18
+        case .medium: baseRange = 14...26
+        case .hard:   baseRange = 18...34
+        }
+
+        var length = Int.random(in: baseRange)
+        if profile.aggression > 0.75 { length += Int.random(in: 2...5) }
+        if profile.scavengerBias > 0.85 { length += Int.random(in: 1...4) }
+        if profile.caution > 0.85 { length -= Int.random(in: 0...2) }
+        return max(8, length)
+    }
+
+    private func configureBotIdentity(index: Int, preservePersonality: Bool) {
+        if !preservePersonality {
+            let personalities = botPersonalities(for: bots[index].tier)
+            bots[index].personality = personalities.randomElement() ?? .opportunist
+        }
+
+        let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
+        let length = randomBotLength(for: index)
+        let bonusScore = Int(CGFloat(length) * (0.35 + profile.aggression * 0.25 + profile.scavengerBias * 0.15))
+
+        bots[index].score = max(4, bonusScore + Int.random(in: 0...10))
+        bots[index].bodyLength = length
+        bots[index].intent = .roam
+        bots[index].decisionTimer = 0
+        bots[index].boostTimer = 0
+        bots[index].boostCooldown = CGFloat.random(in: 0.15...0.80)
+        bots[index].isBoosting = false
+        bots[index].focusPoint = nil
+        bots[index].focusTimer = 0
+        bots[index].roamAnchor = randomPositionInArena()
+        bots[index].dirChangeTimer = CGFloat.random(in: 1.8...4.6)
+        bots[index].trailFoodTimer = CGFloat.random(in: 0...(botTrailInterval * 0.8))
     }
 
     func activateBot(_ index: Int) {
@@ -1852,8 +1936,13 @@ class GameScene: SKScene {
             deactivateBot(index)
         }
         // Mark dead with a tier-based respawn delay
-        bots[index].isDead           = true
-        bots[index].aggressionActive = false
+        bots[index].isDead = true
+        bots[index].isBoosting = false
+        bots[index].boostTimer = 0
+        bots[index].boostCooldown = 0
+        bots[index].focusPoint = nil
+        bots[index].focusTimer = 0
+        bots[index].intent = .roam
         switch bots[index].tier {
         case .easy:   bots[index].respawnTimer = 4.0
         case .medium: bots[index].respawnTimer = 3.0
@@ -1862,226 +1951,703 @@ class GameScene: SKScene {
     }
 
     private func finishRespawn(_ index: Int) {
-        bots[index].isDead         = false
-        bots[index].respawnTimer   = 0
-        bots[index].score          = 0
-        bots[index].bodyLength     = 10
-        bots[index].position       = CGPoint(
+        bots[index].isDead = false
+        bots[index].respawnTimer = 0
+        bots[index].position = CGPoint(
             x: CGFloat.random(in: 300...(worldSize - 300)),
             y: CGFloat.random(in: 300...(worldSize - 300))
         )
-        bots[index].angle          = CGFloat.random(in: 0...(2 * .pi))
-        bots[index].targetAngle    = bots[index].angle
-        bots[index].dirChangeTimer = CGFloat.random(in: 1...3)
+        bots[index].angle = CGFloat.random(in: 0...(2 * .pi))
+        bots[index].targetAngle = bots[index].angle
+        configureBotIdentity(index: index, preservePersonality: true)
     }
 
-    /// Returns current move speed for a bot, scaled by player score.
-    func botSpeed(for tier: BotTier) -> CGFloat {
+    func botSpeed(for index: Int, includeBoost: Bool = true) -> CGFloat {
         let base: CGFloat
-        switch tier {
+        switch bots[index].tier {
         case .easy:   base = botSpeedEasy
         case .medium: base = botSpeedMedium
         case .hard:   base = botSpeedHard
         }
-        // At score 0: 1.0x; at score 100+: 1.5x
-        let fraction = CGFloat(min(score, botSpeedScoreCap)) / CGFloat(botSpeedScoreCap * 2)
-        return base * (1.0 + fraction)
+        let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
+        let scoreFraction = CGFloat(min(bots[index].score, botSpeedScoreCap)) / CGFloat(botSpeedScoreCap * 2)
+        var speed = base * (1.0 + scoreFraction) * profile.cruiseSpeedMultiplier
+        if includeBoost && bots[index].isBoosting {
+            speed *= botBoostMultiplier
+        }
+        return speed
     }
 
-    /// Returns the nearest `.death` food within `radius` units of `position`, or nil.
-    func findNearestDeathFood(to position: CGPoint, within radius: CGFloat) -> SKNode? {
-        var best: SKNode? = nil
-        var bestDist = radius
-        for (i, food) in foodItems.enumerated() {
-            guard foodTypes[i] == .death else { continue }
-            let d = hypot(food.position.x - position.x, food.position.y - position.y)
-            if d < bestDist { bestDist = d; best = food }
+    func botTurnSpeed(for index: Int) -> CGFloat {
+        let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
+        let boostAdjustment: CGFloat = bots[index].isBoosting ? 0.96 : 1.0
+        return turnSpeed * profile.turnRateMultiplier * boostAdjustment
+    }
+
+    private func arenaClearance(at point: CGPoint) -> CGFloat {
+        min(
+            point.x - arenaMinX - headRadius,
+            arenaMaxX - point.x - headRadius,
+            point.y - arenaMinY - headRadius,
+            arenaMaxY - point.y - headRadius
+        )
+    }
+
+    private func bodyClearance(at point: CGPoint, botIndex i: Int) -> (clearance: CGFloat, hardCollision: Bool) {
+        let hardLimit = collisionRadius + bodySegmentRadius + 3
+        let softLimit = collisionRadius + bodySegmentRadius + 24
+        var minClearance = CGFloat.greatestFiniteMagnitude
+
+        for seg in bodySegments {
+            let dist = hypot(point.x - seg.position.x, point.y - seg.position.y) - hardLimit
+            minClearance = min(minClearance, dist)
+            if dist < 0 { return (dist, true) }
         }
+
+        for j in bots.indices where j != i && bots[j].isActive && !bots[j].isDead {
+            for seg in bots[j].body {
+                let dist = hypot(point.x - seg.position.x, point.y - seg.position.y) - hardLimit
+                minClearance = min(minClearance, dist)
+                if dist < 0 { return (dist, true) }
+            }
+        }
+
+        return (minClearance.isFinite ? minClearance + (softLimit - hardLimit) : softLimit, false)
+    }
+
+    private func nearbyThreats(for i: Int, radius: CGFloat = 820) -> [BotThreatSnapshot] {
+        var threats: [BotThreatSnapshot] = []
+        let pos = bots[i].position
+
+        let playerDistance = hypot(snakeHead.position.x - pos.x, snakeHead.position.y - pos.y)
+        if playerDistance < radius {
+            threats.append(BotThreatSnapshot(
+                id: -1,
+                position: snakeHead.position,
+                angle: currentAngle,
+                speed: currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0),
+                length: bodySegments.count,
+                isPlayer: true
+            ))
+        }
+
+        for j in bots.indices where j != i && !bots[j].isDead {
+            let distance = hypot(bots[j].position.x - pos.x, bots[j].position.y - pos.y)
+            guard distance < radius else { continue }
+            threats.append(BotThreatSnapshot(
+                id: j,
+                position: bots[j].position,
+                angle: bots[j].angle,
+                speed: botSpeed(for: j),
+                length: bots[j].bodyLength,
+                isPlayer: false
+            ))
+        }
+
+        return threats
+    }
+
+    private func clusterBonus(around position: CGPoint, excluding foodIndex: Int) -> CGFloat {
+        var bonus: CGFloat = 0
+        for (i, food) in foodItems.enumerated() where i != foodIndex && food.parent != nil {
+            let distance = hypot(food.position.x - position.x, food.position.y - position.y)
+            guard distance < 110 else { continue }
+            switch foodTypes[i] {
+            case .death: bonus += 0.55
+            case .trail: bonus += 0.18
+            default:     bonus += 0.10
+            }
+        }
+        return min(2.4, bonus)
+    }
+
+    private func interestingFoodTargets(for i: Int, limit: Int = 8) -> [BotFoodTarget] {
+        let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
+        let position = bots[i].position
+        var targets: [BotFoodTarget] = []
+
+        for (index, food) in foodItems.enumerated() where food.parent != nil {
+            let distance = hypot(food.position.x - position.x, food.position.y - position.y)
+            guard distance < profile.foodSearchRadius else { continue }
+
+            let utility = GameLogic.botFoodValue(
+                type: foodTypes[index],
+                clusterBonus: clusterBonus(around: food.position, excluding: index),
+                greed: profile.greed,
+                scavengerBias: profile.scavengerBias
+            ) * max(0.18, 1.0 - distance / profile.foodSearchRadius)
+
+            guard utility > 0.5 else { continue }
+            targets.append(BotFoodTarget(index: index, position: food.position, type: foodTypes[index], utility: utility))
+        }
+
+        targets.sort { $0.utility > $1.utility }
+        return Array(targets.prefix(limit))
+    }
+
+    private func interceptPoint(botIndex i: Int, threat: BotThreatSnapshot, cutMode: Bool) -> CGPoint {
+        let selfSpeed = max(botSpeed(for: i), 1)
+        let distance = hypot(threat.position.x - bots[i].position.x, threat.position.y - bots[i].position.y)
+        let lookahead = min(1.25, max(0.45, distance / selfSpeed))
+        let future = GameLogic.projectedPoint(from: threat.position, angle: threat.angle, distance: threat.speed * lookahead)
+        let lead = CGFloat(cutMode ? 110 : 65)
+        return GameLogic.projectedPoint(from: future, angle: threat.angle, distance: lead)
+    }
+
+    private func interceptOpportunity(botIndex i: Int, threat: BotThreatSnapshot, cutMode: Bool) -> CGFloat {
+        let lengthAdvantage = bots[i].bodyLength - threat.length
+        guard lengthAdvantage > (cutMode ? 2 : 0) else { return 0 }
+
+        let point = interceptPoint(botIndex: i, threat: threat, cutMode: cutMode)
+        let angleToPoint = atan2(point.y - bots[i].position.y, point.x - bots[i].position.x)
+        let distance = hypot(point.x - bots[i].position.x, point.y - bots[i].position.y)
+        let align = max(0, cos(GameLogic.shortestAngleDiff(from: bots[i].angle, to: angleToPoint)))
+        let distFactor = max(0, 1.0 - distance / 760)
+        let crossFactor = cutMode
+            ? max(0.25, abs(sin(GameLogic.shortestAngleDiff(from: threat.angle, to: angleToPoint))))
+            : 1.0
+
+        return align * distFactor * CGFloat(lengthAdvantage) * crossFactor / 12.0
+    }
+
+    private func strategicSnapshot(botIndex i: Int,
+                                   profile: BotPersonalityProfile,
+                                   threats: [BotThreatSnapshot],
+                                   foods: [BotFoodTarget]) -> BotModeSnapshot {
+        let minWallClearance = arenaClearance(at: bots[i].position)
+        var immediateDanger = max(0, 1.0 - minWallClearance / max(profile.desiredClearance * 1.15, 1))
+        var crowding: CGFloat = 0
+        var huntOpportunity: CGFloat = 0
+        var cutOpportunity: CGFloat = 0
+
+        for threat in threats {
+            let distance = hypot(threat.position.x - bots[i].position.x, threat.position.y - bots[i].position.y)
+            let sizeFactor = CGFloat(threat.length - bots[i].bodyLength)
+            let pressure = max(0, 1.0 - distance / (280 + max(0, sizeFactor) * 8))
+            if sizeFactor >= -1 {
+                immediateDanger = max(immediateDanger, pressure * (sizeFactor > 0 ? 1.0 : 0.58))
+            }
+            crowding += max(0, 1.0 - distance / 520)
+            huntOpportunity = max(huntOpportunity, interceptOpportunity(botIndex: i, threat: threat, cutMode: false))
+            cutOpportunity = max(cutOpportunity, interceptOpportunity(botIndex: i, threat: threat, cutMode: true))
+        }
+
+        let bestFood = foods.filter { $0.type != .death && $0.type != .trail }.map(\.utility).max() ?? 0
+        let bestScavenge = foods.filter { $0.type == .death || $0.type == .trail }.map(\.utility).max() ?? 0
+
+        return BotModeSnapshot(
+            immediateDanger: min(1.0, immediateDanger),
+            escapeRouteQuality: GameLogic.clearanceScore(minClearance: minWallClearance, desired: profile.desiredClearance),
+            foodOpportunity: min(1.0, bestFood / 20),
+            scavengingOpportunity: min(1.0, bestScavenge / 28),
+            huntOpportunity: min(1.0, huntOpportunity),
+            cutOpportunity: min(1.0, cutOpportunity * (1 + profile.cutBias * 0.2)),
+            nearbyCrowding: min(1.0, crowding / 3.0),
+            personality: profile
+        )
+    }
+
+    private func foodContestPenalty(botIndex i: Int,
+                                    target: BotFoodTarget,
+                                    threats: [BotThreatSnapshot],
+                                    selfSpeed: CGFloat) -> CGFloat {
+        let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
+        let riskTolerance = GameLogic.clamp01(0.55 + profile.aggression * 0.25 - profile.caution * 0.20)
+        var penalty: CGFloat = 0
+
+        for threat in threats {
+            let rivalDistance = hypot(threat.position.x - target.position.x, threat.position.y - target.position.y)
+            guard rivalDistance < 340 else { continue }
+            let contest = BotFoodContestSnapshot(
+                selfDistance: hypot(bots[i].position.x - target.position.x, bots[i].position.y - target.position.y),
+                selfSpeed: selfSpeed,
+                rivalDistance: rivalDistance,
+                rivalSpeed: threat.speed,
+                value: target.utility,
+                rivalLengthAdvantage: CGFloat(threat.length - bots[i].bodyLength),
+                riskTolerance: riskTolerance
+            )
+
+            if !GameLogic.shouldContestFood(contest) {
+                penalty = max(penalty, target.utility * (threat.length >= bots[i].bodyLength ? 1.30 : 0.80))
+            } else if threat.length > bots[i].bodyLength {
+                penalty = max(penalty, target.utility * 0.24)
+            }
+        }
+
+        return penalty
+    }
+
+    private func shouldBoostForFood(botIndex i: Int,
+                                    target: BotFoodTarget,
+                                    threats: [BotThreatSnapshot],
+                                    selfSpeed: CGFloat,
+                                    minClearance: CGFloat) -> Bool {
+        guard bots[i].boostCooldown <= 0, target.utility > 14 else { return false }
+        guard minClearance > GameLogic.botPersonalityProfile(for: bots[i].personality).desiredClearance * 0.70 else { return false }
+
+        let boostedSpeed = selfSpeed * botBoostMultiplier
+        let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
+        let riskTolerance = GameLogic.clamp01(0.58 + profile.boostBias * 0.24 - profile.caution * 0.16)
+
+        for threat in threats {
+            let rivalDistance = hypot(threat.position.x - target.position.x, threat.position.y - target.position.y)
+            guard rivalDistance < 360 else { continue }
+
+            let normalContest = GameLogic.shouldContestFood(BotFoodContestSnapshot(
+                selfDistance: hypot(bots[i].position.x - target.position.x, bots[i].position.y - target.position.y),
+                selfSpeed: selfSpeed,
+                rivalDistance: rivalDistance,
+                rivalSpeed: threat.speed,
+                value: target.utility,
+                rivalLengthAdvantage: CGFloat(threat.length - bots[i].bodyLength),
+                riskTolerance: riskTolerance
+            ))
+
+            let boostedContest = GameLogic.shouldContestFood(BotFoodContestSnapshot(
+                selfDistance: hypot(bots[i].position.x - target.position.x, bots[i].position.y - target.position.y),
+                selfSpeed: boostedSpeed,
+                rivalDistance: rivalDistance,
+                rivalSpeed: threat.speed,
+                value: target.utility,
+                rivalLengthAdvantage: CGFloat(threat.length - bots[i].bodyLength),
+                riskTolerance: riskTolerance
+            ))
+
+            if !normalContest && boostedContest {
+                return true
+            }
+        }
+
+        return target.type == .death &&
+            hypot(target.position.x - bots[i].position.x, target.position.y - bots[i].position.y) < 240 &&
+            profile.boostBias > 0.60
+    }
+
+    private func candidateAngles(botIndex i: Int,
+                                 intent: BotIntent,
+                                 threats: [BotThreatSnapshot],
+                                 foods: [BotFoodTarget]) -> [CGFloat] {
+        var angles: [CGFloat] = []
+        let base = bots[i].angle
+        let sweepRange = intent == .escape ? -18...18 : -14...14
+        let increment: CGFloat = intent == .escape ? (CGFloat.pi / 20) : (CGFloat.pi / 18)
+        for step in sweepRange {
+            angles.append(base + CGFloat(step) * increment)
+        }
+
+        let position = bots[i].position
+        if let focus = bots[i].focusPoint {
+            angles.append(atan2(focus.y - position.y, focus.x - position.x))
+        }
+
+        angles.append(atan2(bots[i].roamAnchor.y - position.y, bots[i].roamAnchor.x - position.x))
+        angles.append(base + .pi)
+
+        for food in foods.prefix(intent == .escape ? 3 : 6) {
+            let angle = atan2(food.position.y - position.y, food.position.x - position.x)
+            angles.append(angle)
+            angles.append(angle + .pi / 18)
+            angles.append(angle - .pi / 18)
+        }
+
+        for threat in threats.prefix(5) {
+            let away = atan2(position.y - threat.position.y, position.x - threat.position.x)
+            angles.append(away)
+            angles.append(away + .pi / 10)
+            angles.append(away - .pi / 10)
+
+            if bots[i].bodyLength > threat.length + 1 {
+                let intercept = interceptPoint(botIndex: i, threat: threat, cutMode: intent == .cutOff)
+                let interceptAngle = atan2(intercept.y - position.y, intercept.x - position.x)
+                angles.append(interceptAngle)
+                angles.append(interceptAngle + .pi / 16)
+                angles.append(interceptAngle - .pi / 16)
+            }
+        }
+
+        var unique: [CGFloat] = []
+        var seen: Set<Int> = []
+        for angle in angles {
+            let normalized = atan2(sin(angle), cos(angle))
+            let bucket = Int(((normalized + .pi) * 180 / .pi).rounded())
+            if seen.insert(bucket).inserted {
+                unique.append(normalized)
+            }
+        }
+        return unique
+    }
+
+    private func headingScore(botIndex i: Int,
+                              angle: CGFloat,
+                              intent: BotIntent,
+                              profile: BotPersonalityProfile,
+                              threats: [BotThreatSnapshot],
+                              foods: [BotFoodTarget]) -> BotDecision {
+        let selfSpeed = botSpeed(for: i, includeBoost: false)
+        let tierHorizon: CGFloat
+        switch bots[i].tier {
+        case .easy:   tierHorizon = 0.85
+        case .medium: tierHorizon = 1.00
+        case .hard:   tierHorizon = 1.10
+        }
+
+        let horizon = tierHorizon * profile.horizonMultiplier
+        let steps = 5
+        let start = bots[i].position
+        let pathEnd = GameLogic.projectedPoint(from: start, angle: angle, distance: selfSpeed * horizon)
+        var minClearance = CGFloat.greatestFiniteMagnitude
+        var risk: CGFloat = 0
+        var escapeGain: CGFloat = 0
+
+        for step in 1...steps {
+            let t = horizon * CGFloat(step) / CGFloat(steps)
+            let point = GameLogic.projectedPoint(from: start, angle: angle, distance: selfSpeed * t)
+            let wallClearance = arenaClearance(at: point)
+            minClearance = min(minClearance, wallClearance)
+            if wallClearance < max(20, profile.desiredClearance * 0.42) {
+                return BotDecision(angle: angle, intent: intent, shouldBoost: false, score: -.greatestFiniteMagnitude, focusPoint: nil)
+            }
+
+            let body = bodyClearance(at: point, botIndex: i)
+            minClearance = min(minClearance, body.clearance)
+            if body.hardCollision {
+                return BotDecision(angle: angle, intent: intent, shouldBoost: false, score: -.greatestFiniteMagnitude, focusPoint: nil)
+            }
+
+            for threat in threats {
+                let predicted = GameLogic.projectedPoint(from: threat.position, angle: threat.angle, distance: threat.speed * t)
+                let headGap = hypot(point.x - predicted.x, point.y - predicted.y)
+                let headSafeDistance = headRadius * 2 + 20
+                if headGap < headSafeDistance {
+                    return BotDecision(angle: angle, intent: intent, shouldBoost: false, score: -.greatestFiniteMagnitude, focusPoint: nil)
+                }
+
+                let sizeDifference = threat.length - bots[i].bodyLength
+                let proximity = max(0, 1.0 - headGap / (240 + max(CGFloat(sizeDifference), 0) * 8))
+                let threatWeight: CGFloat = threat.isPlayer ? 1.15 : 1.0
+                if sizeDifference >= 0 {
+                    risk += proximity * (1.1 + CGFloat(max(0, sizeDifference)) * 0.05) * threatWeight
+                } else {
+                    risk += proximity * 0.18 * threatWeight
+                }
+
+                if sizeDifference > 0 {
+                    let startGap = hypot(start.x - threat.position.x, start.y - threat.position.y)
+                    escapeGain += max(0, (headGap - startGap) / 120)
+                }
+            }
+        }
+
+        let clearanceScore = GameLogic.clearanceScore(minClearance: minClearance, desired: profile.desiredClearance)
+        var score = clearanceScore * (44 + profile.caution * 12)
+        score += escapeGain * (intent == .escape ? 14 : 5)
+
+        let turnDiff = abs(GameLogic.shortestAngleDiff(from: bots[i].angle, to: angle))
+        score -= turnDiff * (10.4 - profile.turnRateMultiplier * 2.8)
+
+        if let focus = bots[i].focusPoint {
+            let focusAngle = atan2(focus.y - start.y, focus.x - start.x)
+            score += max(0, cos(GameLogic.shortestAngleDiff(from: angle, to: focusAngle))) * 10 * profile.targetStickiness
+        }
+
+        let roamAngle = atan2(bots[i].roamAnchor.y - start.y, bots[i].roamAnchor.x - start.x)
+        score += max(0, cos(GameLogic.shortestAngleDiff(from: angle, to: roamAngle))) * (intent == .roam ? 10 : 3)
+
+        var bestFoodContribution: CGFloat = -.greatestFiniteMagnitude
+        var selectedFood: BotFoodTarget?
+
+        for food in foods {
+            let pathDistance = GameLogic.distanceFromPoint(food.position, toSegment: start, pathEnd)
+            guard pathDistance < max(56, profile.desiredClearance * 0.85) else { continue }
+
+            let foodDistance = hypot(food.position.x - start.x, food.position.y - start.y)
+            let targetAngle = atan2(food.position.y - start.y, food.position.x - start.x)
+            let alignment = max(0, cos(GameLogic.shortestAngleDiff(from: angle, to: targetAngle)))
+            var contribution = food.utility * alignment * max(0.14, 1.0 - foodDistance / (profile.foodSearchRadius * 1.05))
+            contribution -= foodContestPenalty(botIndex: i, target: food, threats: threats, selfSpeed: selfSpeed)
+
+            switch intent {
+            case .scavenge:
+                contribution *= (food.type == .death || food.type == .trail) ? 1.28 : 0.76
+            case .escape:
+                contribution *= 0.55
+            case .hunt, .cutOff:
+                contribution *= (food.type == .death ? 1.12 : 0.74)
+            case .roam:
+                contribution *= 0.88
+            case .forage:
+                break
+            }
+
+            if contribution > bestFoodContribution {
+                bestFoodContribution = contribution
+                selectedFood = food
+            }
+        }
+
+        if selectedFood != nil {
+            score += bestFoodContribution
+        }
+
+        var bestInterceptBonus: CGFloat = 0
+        var interceptFocus: CGPoint? = nil
+        if intent == .hunt || intent == .cutOff {
+            for threat in threats {
+                let lengthAdvantage = bots[i].bodyLength - threat.length
+                guard lengthAdvantage > (intent == .cutOff ? 2 : 0) else { continue }
+
+                let intercept = interceptPoint(botIndex: i, threat: threat, cutMode: intent == .cutOff)
+                let interceptAngle = atan2(intercept.y - start.y, intercept.x - start.x)
+                let interceptDistance = hypot(intercept.x - start.x, intercept.y - start.y)
+                let alignment = max(0, cos(GameLogic.shortestAngleDiff(from: angle, to: interceptAngle)))
+                let distanceFactor = max(0, 1.0 - interceptDistance / 760)
+                let crossFactor = intent == .cutOff
+                    ? max(0.25, abs(sin(GameLogic.shortestAngleDiff(from: threat.angle, to: interceptAngle))))
+                    : 1.0
+                let bonusBase = intent == .cutOff ? (24 + profile.cutBias * 12) : (18 + profile.aggression * 10)
+                let bonus = alignment * distanceFactor * crossFactor * CGFloat(lengthAdvantage) * bonusBase / 10.0
+                if bonus > bestInterceptBonus {
+                    bestInterceptBonus = bonus
+                    interceptFocus = intercept
+                }
+            }
+        }
+        score += bestInterceptBonus
+
+        let unpredictable = sin(CGFloat(frameCounter) * 0.045 + CGFloat(bots[i].id) * 1.3) * profile.unpredictability * 2.5
+        score += unpredictable
+        score -= risk * (26 + profile.caution * 18)
+
+        if intent != .escape && clearanceScore < 0.46 {
+            score -= 30
+        }
+
+        var shouldBoost = false
+        if bots[i].boostCooldown <= 0 && minClearance > profile.desiredClearance * 0.70 {
+            if intent == .escape && risk > 0.95 {
+                shouldBoost = true
+            } else if let selectedFood, shouldBoostForFood(botIndex: i, target: selectedFood, threats: threats, selfSpeed: selfSpeed, minClearance: minClearance) {
+                shouldBoost = true
+            } else if (intent == .hunt || intent == .cutOff) && bestInterceptBonus > 18 && risk < 0.70 && profile.boostBias > 0.52 {
+                shouldBoost = true
+            }
+        }
+
+        let focusPoint = bestInterceptBonus > max(0, bestFoodContribution * 0.92)
+            ? interceptFocus
+            : selectedFood?.position
+
+        return BotDecision(angle: angle, intent: intent, shouldBoost: shouldBoost, score: score, focusPoint: focusPoint)
+    }
+
+    private func chooseBestHeading(for i: Int) -> BotDecision {
+        let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
+        let threats = nearbyThreats(for: i, radius: max(620, profile.foodSearchRadius))
+        let foods = interestingFoodTargets(for: i)
+        let snapshot = strategicSnapshot(botIndex: i, profile: profile, threats: threats, foods: foods)
+        let intent = GameLogic.chooseBotIntent(snapshot)
+        let candidates = candidateAngles(botIndex: i, intent: intent, threats: threats, foods: foods)
+
+        var best = BotDecision(
+            angle: bots[i].angle,
+            intent: intent,
+            shouldBoost: false,
+            score: -.greatestFiniteMagnitude,
+            focusPoint: bots[i].focusPoint
+        )
+
+        for candidate in candidates {
+            let decision = headingScore(
+                botIndex: i,
+                angle: candidate,
+                intent: intent,
+                profile: profile,
+                threats: threats,
+                foods: foods
+            )
+            if decision.score > best.score {
+                best = decision
+            }
+        }
+
+        if best.score == -.greatestFiniteMagnitude {
+            let escapeAngle = atan2(
+                bots[i].position.y - snakeHead.position.y,
+                bots[i].position.x - snakeHead.position.x
+            )
+            return BotDecision(angle: escapeAngle, intent: .escape, shouldBoost: bots[i].boostCooldown <= 0, score: 0, focusPoint: nil)
+        }
+
         return best
     }
 
-    // MARK: - Utility Bot AI
+    private func chooseAmbientDecision(for i: Int) -> BotDecision {
+        let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
+        if bots[i].dirChangeTimer <= 0 || hypot(bots[i].position.x - bots[i].roamAnchor.x, bots[i].position.y - bots[i].roamAnchor.y) < 130 {
+            bots[i].roamAnchor = randomPositionInArena()
+            bots[i].dirChangeTimer = CGFloat.random(in: 1.8...4.6)
+        }
 
-    private func weightsForTier(_ tier: BotTier) -> BotWeights {
-        switch tier {
-        case .easy:   return easyWeights
-        case .medium: return mediumWeights
-        case .hard:   return hardWeights
+        let nearFood = interestingFoodTargets(for: i, limit: 3)
+        var best = BotDecision(angle: bots[i].angle, intent: .roam, shouldBoost: false, score: -.greatestFiniteMagnitude, focusPoint: nil)
+        var angles = [
+            atan2(bots[i].roamAnchor.y - bots[i].position.y, bots[i].roamAnchor.x - bots[i].position.x),
+            bots[i].angle,
+            bots[i].angle + .pi / 14,
+            bots[i].angle - .pi / 14
+        ]
+        for food in nearFood {
+            angles.append(atan2(food.position.y - bots[i].position.y, food.position.x - bots[i].position.x))
+        }
+
+        for angle in angles {
+            let pathEnd = GameLogic.projectedPoint(from: bots[i].position, angle: angle, distance: botSpeed(for: i, includeBoost: false) * 0.85)
+            let clearance = arenaClearance(at: pathEnd)
+            guard clearance > 18 else { continue }
+
+            var score = GameLogic.clearanceScore(minClearance: clearance, desired: profile.desiredClearance) * 20
+            score += max(0, cos(GameLogic.shortestAngleDiff(
+                from: angle,
+                to: atan2(bots[i].roamAnchor.y - bots[i].position.y, bots[i].roamAnchor.x - bots[i].position.x)
+            ))) * 12
+
+            if let food = nearFood.max(by: { $0.utility < $1.utility }) {
+                let foodAngle = atan2(food.position.y - bots[i].position.y, food.position.x - bots[i].position.x)
+                score += max(0, cos(GameLogic.shortestAngleDiff(from: angle, to: foodAngle))) * food.utility * 0.45
+            }
+
+            score += sin(CGFloat(frameCounter) * 0.03 + CGFloat(bots[i].id)) * profile.unpredictability * 2
+            if score > best.score {
+                best = BotDecision(angle: angle, intent: .roam, shouldBoost: false, score: score, focusPoint: nil)
+            }
+        }
+
+        return best
+    }
+
+    private func updateBotBoostState(index i: Int, dt: CGFloat) {
+        bots[i].dirChangeTimer -= dt
+        bots[i].decisionTimer = max(0, bots[i].decisionTimer - dt)
+        bots[i].boostCooldown = max(0, bots[i].boostCooldown - dt)
+
+        if bots[i].focusTimer > 0 {
+            bots[i].focusTimer -= dt
+            if bots[i].focusTimer <= 0 { bots[i].focusPoint = nil }
+        }
+
+        if bots[i].boostTimer > 0 {
+            bots[i].boostTimer -= dt
+            if bots[i].boostTimer <= 0 {
+                bots[i].boostTimer = 0
+                bots[i].isBoosting = false
+                bots[i].boostCooldown = CGFloat.random(in: botBoostCooldownRange)
+            }
         }
     }
 
-    /// Normalizes an angle difference to the range [-π, π].
-    private func normalizedAngleDiff(_ diff: CGFloat) -> CGFloat {
-        var d = diff
-        while d >  .pi { d -= 2 * .pi }
-        while d < -.pi { d += 2 * .pi }
-        return d
+    private func applyBotDecision(_ decision: BotDecision, index i: Int) {
+        let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
+        bots[i].targetAngle = decision.angle
+        bots[i].intent = decision.intent
+
+        if let focus = decision.focusPoint {
+            bots[i].focusPoint = focus
+            bots[i].focusTimer = 0.55 + profile.targetStickiness * 0.45
+        } else if decision.intent == .roam {
+            bots[i].focusPoint = nil
+            bots[i].focusTimer = 0
+        }
+
+        if decision.shouldBoost && !bots[i].isBoosting && bots[i].boostCooldown <= 0 {
+            bots[i].isBoosting = true
+            bots[i].boostTimer = CGFloat.random(in: botBoostDurationRange)
+        }
+
+        let jitter = CGFloat.random(in: -profile.unpredictability...profile.unpredictability) * 0.05
+        bots[i].decisionTimer = max(0.12, profile.replanInterval + jitter)
     }
 
-    /// Evaluates how desirable a candidate heading is for the given bot.
-    /// Returns a composite score: higher = better choice.
-    private func evaluateHeading(botIndex i: Int,
-                                 angle:    CGFloat,
-                                 speed:    CGFloat,
-                                 weights:  BotWeights,
-                                 nearestFood:      SKNode?,
-                                 nearestDeathFood: SKNode?) -> CGFloat {
-        var sc: CGFloat = 0
-        let hx = bots[i].position.x, hy = bots[i].position.y
-        let wallMargin: CGFloat = 200
+    private func updateBotVisuals(_ index: Int) {
+        guard let head = bots[index].head else { return }
 
-        // --- 3 sample points along the projected ray ---
-        for k in 1...3 {
-            let t  = weights.horizon * CGFloat(k) / 3
-            let px = hx + cos(angle) * speed * t
-            let py = hy + sin(angle) * speed * t
+        bots[index].posHistory.append(head.position)
+        let maxHistory = Int(CGFloat(bots[index].body.count + 5) * segmentPixelSpacing) + 200
+        if bots[index].posHistory.count > maxHistory {
+            bots[index].posHistory.removeFirst(bots[index].posHistory.count - maxHistory)
+        }
 
-            // Wall zone — penalty escalates for later (nearer) samples
-            if px < wallMargin || px > arenaMaxX - wallMargin ||
-               py < wallMargin || py > arenaMaxY - wallMargin {
-                sc -= weights.wallPenalty * CGFloat(k)
-            }
+        head.position = bots[index].position
+        head.zRotation = (bots[index].angle * 180 / .pi - 90) * .pi / 180
+        head.glowWidth = bots[index].isBoosting ? 10 : 5
+        head.setScale(bots[index].isBoosting ? 1.04 : 1.0)
 
-            // Player body
-            for seg in bodySegments {
-                if hypot(px - seg.position.x, py - seg.position.y) < 30 {
-                    sc -= weights.bodyPenalty
-                }
-            }
-
-            // Nearby bot bodies (coarse pre-filter: skip bots whose head is far away)
-            for j in bots.indices where j != i && bots[j].isActive && !bots[j].isDead {
-                guard hypot(bots[j].position.x - hx, bots[j].position.y - hy) < 400 else { continue }
-                for seg in bots[j].body {
-                    if hypot(px - seg.position.x, py - seg.position.y) < 28 {
-                        sc -= weights.bodyPenalty * 0.5
-                    }
-                }
-            }
-
-            // Flee from a larger player (medium / hard only)
-            if bots[i].tier != .easy &&
-               hypot(snakeHead.position.x - px, snakeHead.position.y - py) < 220 &&
-               bodySegments.count > bots[i].bodyLength {
-                sc -= weights.fleePenalty
+        if botBodyUpdateFrame == 0 {
+            let positions = arcPositions(
+                history: bots[index].posHistory,
+                leadPos: bots[index].position,
+                count: bots[index].body.count,
+                spacing: segmentPixelSpacing
+            )
+            for (segmentIndex, segment) in bots[index].body.enumerated() {
+                segment.position = positions[segmentIndex]
+                let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? CGFloat(3) : 0
+                segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
+                    ? 6
+                    : baseGlow
             }
         }
-
-        // --- Directional bonuses with distance weighting ---
-
-        if let food = nearestFood {
-            let dx = food.position.x - hx, dy = food.position.y - hy
-            let dist = hypot(dx, dy)
-            let distFactor = max(0, 1.0 - dist / 700)   // far food = less pull
-            let diff = normalizedAngleDiff(angle - atan2(dy, dx))
-            sc += weights.foodScore * max(0, cos(diff)) * distFactor
-        }
-
-        if let df = nearestDeathFood {
-            let dx = df.position.x - hx, dy = df.position.y - hy
-            let dist = hypot(dx, dy)
-            let distFactor = max(0, 1.0 - dist / 900)
-            let diff = normalizedAngleDiff(angle - atan2(dy, dx))
-            sc += weights.deathFoodScore * max(0, cos(diff)) * distFactor
-        }
-
-        if bots[i].aggressionActive {
-            // Aim at predicted player position (150 px ahead of their current heading)
-            let predX = snakeHead.position.x + cos(currentAngle) * 150
-            let predY = snakeHead.position.y + sin(currentAngle) * 150
-            let diff  = normalizedAngleDiff(angle - atan2(predY - hy, predX - hx))
-            sc += weights.huntBonus * max(0, cos(diff))
-        }
-
-        return sc
-    }
-
-    /// Chooses the best of 13 candidate headings for bot `i` using utility scoring.
-    /// Replaces the old rule-priority `updateBotTargetAngle`.
-    func chooseBestHeading(for i: Int) -> CGFloat {
-        let pos     = bots[i].position
-        let tier    = bots[i].tier
-        let weights = weightsForTier(tier)
-        let speed   = botSpeed(for: tier)
-
-        // Cache food lookups once per bot — not once per candidate
-        let nearestFood:      SKNode? = findNearestFood(to: pos)
-        let nearestDeathFood: SKNode? = (tier != .easy)
-            ? findNearestDeathFood(to: pos, within: tier == .hard ? 800 : 600)
-            : nil
-
-        // Update aggression flag for hard bots (same threshold as before)
-        if tier == .hard {
-            let aggrThreshold    = max(0.50, 0.70 - CGFloat(score) / 500.0)
-            let botIsLargeEnough = CGFloat(bots[i].bodyLength) >= CGFloat(bodySegments.count) * aggrThreshold
-            let distToPlayer     = hypot(snakeHead.position.x - pos.x, snakeHead.position.y - pos.y)
-            bots[i].aggressionActive = botIsLargeEnough && distToPlayer < 600
-        } else {
-            bots[i].aggressionActive = false
-        }
-
-        // Evaluate 13 headings: current angle ± 90° in 15° steps
-        let base = bots[i].angle
-        var bestAngle = base
-        var bestScore: CGFloat = -.greatestFiniteMagnitude
-
-        for step in -6...6 {
-            let angle = base + CGFloat(step) * (.pi / 12)
-            let s = evaluateHeading(botIndex: i, angle: angle, speed: speed, weights: weights,
-                                    nearestFood: nearestFood, nearestDeathFood: nearestDeathFood)
-            if s > bestScore { bestScore = s; bestAngle = angle }
-        }
-        return bestAngle
     }
 
     func updateBots(dt: CGFloat, updateAI: Bool) {
         let playerPos = snakeHead.position
 
         for i in 0..<bots.count {
-            // Respawn delay countdown — skip dead bots entirely
             if bots[i].isDead {
                 bots[i].respawnTimer -= dt
                 if bots[i].respawnTimer <= 0 { finishRespawn(i) }
                 continue
             }
 
-            let dist = hypot(bots[i].position.x - playerPos.x, bots[i].position.y - playerPos.y)
+            updateBotBoostState(index: i, dt: dt)
+            let distanceToPlayer = hypot(bots[i].position.x - playerPos.x, bots[i].position.y - playerPos.y)
 
-            if !bots[i].isActive && dist < botActivationRadius {
+            if !bots[i].isActive && distanceToPlayer < botActivationRadius {
                 activateBot(i)
-            } else if bots[i].isActive && dist > botDeactivationRadius {
+            } else if bots[i].isActive && distanceToPlayer > botDeactivationRadius {
                 deactivateBot(i)
             }
 
+            if updateAI && bots[i].decisionTimer <= 0 {
+                let decision = distanceToPlayer < botDetailedAIRadius || bots[i].isActive
+                    ? chooseBestHeading(for: i)
+                    : chooseAmbientDecision(for: i)
+                applyBotDecision(decision, index: i)
+            }
+
+            smoothlyRotate(
+                current: &bots[i].angle,
+                target: bots[i].targetAngle,
+                dt: dt,
+                maxTurnSpeed: botTurnSpeed(for: i)
+            )
+
+            let moveDistance = botSpeed(for: i) * dt
+            bots[i].position = GameLogic.projectedPoint(from: bots[i].position, angle: bots[i].angle, distance: moveDistance)
+
+            if GameLogic.isOutsideArena(point: bots[i].position, radius: headRadius,
+                                        arenaMinX: arenaMinX, arenaMaxX: arenaMaxX,
+                                        arenaMinY: arenaMinY, arenaMaxY: arenaMaxY) {
+                respawnBot(i)
+                continue
+            }
+
             if bots[i].isActive {
-                if updateAI { bots[i].targetAngle = chooseBestHeading(for: i) }
-                smoothlyRotate(current: &bots[i].angle, target: bots[i].targetAngle, dt: dt)
+                updateBotVisuals(i)
 
-                let moveDist = botSpeed(for: bots[i].tier) * dt
-                let newX = bots[i].position.x + cos(bots[i].angle) * moveDist
-                let newY = bots[i].position.y + sin(bots[i].angle) * moveDist
-                bots[i].position = CGPoint(x: newX, y: newY)
-
-                guard let head = bots[i].head else { continue }
-                bots[i].posHistory.append(head.position)
-                let maxH = Int(CGFloat(bots[i].body.count + 5) * segmentPixelSpacing) + 200
-                if bots[i].posHistory.count > maxH {
-                    bots[i].posHistory.removeFirst(bots[i].posHistory.count - maxH)
-                }
-
-                head.position  = bots[i].position
-                head.zRotation = (bots[i].angle * 180 / .pi - 90) * .pi / 180
-
-                if botBodyUpdateFrame == 0 {
-                    let botSegPos = arcPositions(history: bots[i].posHistory, leadPos: bots[i].position,
-                                                 count: bots[i].body.count, spacing: segmentPixelSpacing)
-                    for (j, seg) in bots[i].body.enumerated() { seg.position = botSegPos[j] }
-                    // Food collision handled exclusively by checkBotFoodCollision below
-                }
-
-                // Bot trail food
                 bots[i].trailFoodTimer += dt
-                if bots[i].trailFoodTimer >= botTrailInterval {
+                let trailInterval = bots[i].isBoosting ? botTrailInterval * 0.65 : botTrailInterval
+                if bots[i].trailFoodTimer >= trailInterval {
                     if let tailSeg = bots[i].body.last {
                         spawnTrailFood(at: tailSeg.position,
                                        colorIndex: bots[i].colorIndex,
@@ -2089,53 +2655,46 @@ class GameScene: SKScene {
                     }
                     bots[i].trailFoodTimer = 0
                 }
-
-                if GameLogic.isOutsideArena(point: bots[i].position, radius: headRadius,
-                                             arenaMinX: arenaMinX, arenaMaxX: arenaMaxX,
-                                             arenaMinY: arenaMinY, arenaMaxY: arenaMaxY) {
-                    respawnBot(i); continue
-                }
-                checkBotFoodCollision(i)
-
-            } else {
-                // Virtual bot: simple random walk, bounce at walls
-                bots[i].dirChangeTimer -= dt
-                if bots[i].dirChangeTimer <= 0 {
-                    bots[i].targetAngle    = CGFloat.random(in: 0...(2 * .pi))
-                    bots[i].dirChangeTimer = CGFloat.random(in: 2...4)
-                }
-                smoothlyRotate(current: &bots[i].angle, target: bots[i].targetAngle, dt: dt)
-
-                var newX = bots[i].position.x + cos(bots[i].angle) * botSpeed(for: bots[i].tier) * dt
-                var newY = bots[i].position.y + sin(bots[i].angle) * botSpeed(for: bots[i].tier) * dt
-
-                if newX < wallAvoidanceDistance || newX > worldSize - wallAvoidanceDistance {
-                    bots[i].angle = .pi - bots[i].angle
-                    newX = max(wallAvoidanceDistance, min(worldSize - wallAvoidanceDistance, newX))
-                }
-                if newY < wallAvoidanceDistance || newY > worldSize - wallAvoidanceDistance {
-                    bots[i].angle = -bots[i].angle
-                    newY = max(wallAvoidanceDistance, min(worldSize - wallAvoidanceDistance, newY))
-                }
-                bots[i].position = CGPoint(x: newX, y: newY)
             }
+
+            checkBotFoodCollision(i)
+        }
+    }
+
+    private func botNutrition(for type: FoodType) -> (segments: Int, score: Int) {
+        switch type {
+        case .regular:                   return (1, 2)
+        case .trail:                     return (1, 1)
+        case .death:                     return (2, 5)
+        case .shield, .multiplier,
+             .magnet, .ghost:            return (1, 2)
+        case .shrink:                    return (0, 0)
         }
     }
 
     func checkBotFoodCollision(_ botIndex: Int) {
-        guard let head = bots[botIndex].head else { return }
+        let headPosition = bots[botIndex].position
         let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
         for (i, food) in foodItems.enumerated().reversed() {
-            let dx = head.position.x - food.position.x
-            let dy = head.position.y - food.position.y
+            let dx = headPosition.x - food.position.x
+            let dy = headPosition.y - food.position.y
             if dx * dx + dy * dy < thresholdSq {
                 if foodTypes[i] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
+                let nutrition = botNutrition(for: foodTypes[i])
                 food.removeFromParent()
                 foodItems.remove(at: i)
-                foodTypes.remove(at: i)
+                let type = foodTypes.remove(at: i)
                 spawnFood()
-                addBotBodySegment(botIndex)
-                bots[botIndex].score += 1
+                for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
+                bots[botIndex].score += nutrition.score
+
+                if type == .shrink, bots[botIndex].bodyLength > 12 {
+                    bots[botIndex].bodyLength = max(10, bots[botIndex].bodyLength - 2)
+                    while bots[botIndex].body.count > bots[botIndex].bodyLength {
+                        bots[botIndex].body.last?.removeFromParent()
+                        bots[botIndex].body.removeLast()
+                    }
+                }
                 return
             }
         }
@@ -2385,10 +2944,14 @@ class GameScene: SKScene {
     }
 
     func smoothlyRotate(current: inout CGFloat, target: CGFloat, dt: CGFloat) {
+        smoothlyRotate(current: &current, target: target, dt: dt, maxTurnSpeed: turnSpeed)
+    }
+
+    func smoothlyRotate(current: inout CGFloat, target: CGFloat, dt: CGFloat, maxTurnSpeed: CGFloat) {
         var diff = target - current
         while diff >  .pi { diff -= 2 * .pi }
         while diff < -.pi { diff += 2 * .pi }
-        let maxTurn = turnSpeed * .pi / 180.0 * dt
+        let maxTurn = maxTurnSpeed * .pi / 180.0 * dt
         if      diff >  maxTurn { current += maxTurn }
         else if diff < -maxTurn { current -= maxTurn }
         else                    { current  = target  }
