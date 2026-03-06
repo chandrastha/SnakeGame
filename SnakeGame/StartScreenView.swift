@@ -28,7 +28,8 @@ struct StartScreenView: View {
     private var leaderboardScores: [Int] {
         (UserDefaults.standard.array(forKey: "scoreHistory") as? [Int]) ?? []
     }
-    private var currentTheme: SnakeColorTheme { snakeColorThemes[selectedColorIndex] }
+    private var normalizedSelectedColorIndex: Int { normalizedSnakeColorIndex(selectedColorIndex) }
+    private var currentTheme: SnakeColorTheme { snakeColorThemes[normalizedSelectedColorIndex] }
     private var isLandscape: Bool { verticalSizeClass == .compact }
 
     var body: some View {

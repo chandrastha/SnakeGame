@@ -17,12 +17,16 @@ struct ContentView: View {
     @AppStorage("selectedSnakePatternIndex") private var selectedSnakePatternIndex: Int = 0
     @AppStorage("playerName")              private var playerName: String = "Player"
 
+    private var safeSnakeColorIndex: Int {
+        normalizedSnakeColorIndex(selectedSnakeColorIndex)
+    }
+
     var body: some View {
         ZStack {
             if isPlaying {
                 GameView(
                     gameMode:     selectedGameMode,
-                    colorIndex:   selectedSnakeColorIndex,
+                    colorIndex:   safeSnakeColorIndex,
                     patternIndex: selectedSnakePatternIndex,
                     playerName:   playerName,
                     playerImage:  playerImage,

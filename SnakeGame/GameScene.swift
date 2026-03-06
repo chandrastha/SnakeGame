@@ -409,6 +409,7 @@ class GameScene: SKScene {
         if !AppFeatureFlags.isOnlineModeEnabled, gameMode == .online {
             gameMode = .offline
         }
+        selectedSnakeColorIndex = normalizedSnakeColorIndex(selectedSnakeColorIndex)
         hasShutdown         = false
         isGameOver          = false
         isTouching          = false
@@ -1940,7 +1941,7 @@ class GameScene: SKScene {
 
     // MARK: - Snake Head
     func createSnakeHead() {
-        let theme    = snakeColorThemes[selectedSnakeColorIndex]
+        let theme    = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
         let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
 
         if let image = playerHeadImage {
@@ -2142,7 +2143,7 @@ class GameScene: SKScene {
     }
 
     func makePlayerBodySegment(segIndex: Int = 0) -> SKShapeNode {
-        let theme   = snakeColorThemes[selectedSnakeColorIndex]
+        let theme   = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
         let pattern = SnakePattern(rawValue: selectedSnakePatternIndex) ?? .solid
         return makeBodySegment(color: theme.bodySKColor, stroke: theme.bodyStrokeSKColor,
                                pattern: pattern, segIndex: segIndex)
@@ -2281,8 +2282,9 @@ class GameScene: SKScene {
         let nemesisIndex = gameMode == .challenge ? botCount - 1 : -1
 
         for i in 0..<botCount {
-            var colorIndex = (selectedSnakeColorIndex + 1 + (i % (snakeColorThemes.count - 1))) % snakeColorThemes.count
-            if colorIndex == selectedSnakeColorIndex {
+            let playerColorIndex = normalizedSnakeColorIndex(selectedSnakeColorIndex)
+            var colorIndex = (playerColorIndex + 1 + (i % (snakeColorThemes.count - 1))) % snakeColorThemes.count
+            if colorIndex == playerColorIndex {
                 colorIndex = (colorIndex + 1) % snakeColorThemes.count
             }
             let isNemesis = i == nemesisIndex
@@ -3977,7 +3979,7 @@ extension GameScene: PhotonManagerDelegate {
     func didReceivePlayerState(_ state: RemotePlayerState, playerID: Int) {
         if remotePlayers[playerID] == nil {
             addRemotePlayer(actorID: playerID,
-                            colorIndex: (selectedSnakeColorIndex + playerID) % snakeColorThemes.count,
+                            colorIndex: (normalizedSnakeColorIndex(selectedSnakeColorIndex) + playerID) % snakeColorThemes.count,
                             headPos: CGPoint(x: CGFloat(state.headX), y: CGFloat(state.headY)),
                             playerName: state.playerName)
         } else {

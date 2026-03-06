@@ -27,4 +27,13 @@ final class SnakeColorsTests: XCTestCase {
             XCTAssertFalse(pattern.emoji.isEmpty)
         }
     }
+
+    func test_givenNegativeColorIndex_whenNormalizing_thenReturnsZero() {
+        XCTAssertEqual(normalizedSnakeColorIndex(-5), 0)
+    }
+
+    func test_givenTooLargeColorIndex_whenNormalizing_thenReturnsLastThemeIndex() {
+        XCTAssertEqual(normalizedSnakeColorIndex(999), snakeColorThemes.count - 1)
+    }
+
 }
