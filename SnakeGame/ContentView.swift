@@ -59,7 +59,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
         .onChange(of: selectedGameMode) { mode in
-            if mode != .online || !AppFeatureFlags.isOnlineModeEnabled {
+            if Self.shouldDisconnectPhotonOnModeChange(mode: mode, isOnlineModeEnabled: AppFeatureFlags.isOnlineModeEnabled) {
                 PhotonManager.shared.disconnect()
             }
         }
@@ -74,6 +74,10 @@ struct ContentView: View {
         let history = (UserDefaults.standard.array(forKey: "scoreHistory") as? [Int]) ?? []
         let updated = GameLogic.processLeaderboardEntry(score: score, existing: history)
         UserDefaults.standard.set(updated, forKey: "scoreHistory")
+    }
+
+    static func shouldDisconnectPhotonOnModeChange(mode: GameMode, isOnlineModeEnabled: Bool) -> Bool {
+        isOnlineModeEnabled && mode != .online
     }
 }
 
