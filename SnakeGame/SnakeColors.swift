@@ -69,6 +69,11 @@ let snakeColorThemes: [SnakeColorTheme] = [
                     bodyR: 0.30, bodyG: 0.30, bodyB: 0.38),
 ]
 
+func normalizedSnakeColorIndex(_ index: Int) -> Int {
+    guard !snakeColorThemes.isEmpty else { return 0 }
+    return min(max(index, 0), snakeColorThemes.count - 1)
+}
+
 // MARK: - Snake Patterns
 enum SnakePattern: Int, CaseIterable {
     case solid   = 0   // Default flat fill
