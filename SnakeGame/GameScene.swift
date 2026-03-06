@@ -3481,33 +3481,60 @@ class GameScene: SKScene {
         )
     }
 
-    func checkBotVsBotCollisions() {
-        for i in 0..<bots.count {
-            guard bots[i].isActive, !bots[i].isDead, let headI = bots[i].head else { continue }
-            for j in 0..<bots.count {
-                guard j != i, bots[j].isActive, !bots[j].isDead else { continue }
 
-                // Bot i head → bot j body
-                let bodyPositions = bots[j].body.map(\.position)
-                if !bodyPositions.isEmpty,
-                   GameLogic.headCollidesWithBody(
-                    head: headI.position,
-                    segments: bodyPositions,
-                    combinedRadius: collisionRadius + bodySegmentRadius,
-                    skip: 0
-                   ) {
-                    respawnBot(i)
-                    break
+    @discardableResult
+    private func consumeBotShieldIfAvailable(_ index: Int) -> Bool {
+        guard bots[index].shieldCharges > 0 else { return false }
+        bots[index].shieldCharges -= 1
+        return true
+    }
+
+    func checkBotVsBotCollisions() {
+        guard bots.count > 1 else { return }
+
+        for i in 0..<(bots.count - 1) {
+            guard bots[i].isActive, !bots[i].isDead, let headI = bots[i].head else { continue }
+
+            for j in (i + 1)..<bots.count {
+                guard bots[j].isActive, !bots[j].isDead, let headJ = bots[j].head else { continue }
+
+                // Head-to-body collisions (both directions)
+                if bots[i].ghostTimeLeft <= 0 {
+                    let bodyJ = bots[j].body.map(\.position)
+                    if !bodyJ.isEmpty,
+                       GameLogic.headCollidesWithBody(
+                        head: headI.position,
+                        segments: bodyJ,
+                        combinedRadius: collisionRadius + bodySegmentRadius,
+                        skip: 0
+                       ) {
+                        if !consumeBotShieldIfAvailable(i) { respawnBot(i) }
+                        continue
+                    }
                 }
 
-                // Bot i head → bot j head (head-to-head: both die)
-                guard let headJ = bots[j].head else { continue }
-                let d = hypot(headI.position.x - headJ.position.x,
-                              headI.position.y - headJ.position.y)
-                if d < (headRadius + headRadius) {
-                    respawnBot(i)
-                    respawnBot(j)
-                    break
+                if bots[j].ghostTimeLeft <= 0 {
+                    let bodyI = bots[i].body.map(\.position)
+                    if !bodyI.isEmpty,
+                       GameLogic.headCollidesWithBody(
+                        head: headJ.position,
+                        segments: bodyI,
+                        combinedRadius: collisionRadius + bodySegmentRadius,
+                        skip: 0
+                       ) {
+                        if !consumeBotShieldIfAvailable(j) { respawnBot(j) }
+                        continue
+                    }
+                }
+
+                // Head-to-head collision (evaluated once per pair)
+                if bots[i].ghostTimeLeft <= 0, bots[j].ghostTimeLeft <= 0 {
+                    let d = hypot(headI.position.x - headJ.position.x,
+                                  headI.position.y - headJ.position.y)
+                    if d < (headRadius + headRadius) {
+                        if !consumeBotShieldIfAvailable(i) { respawnBot(i) }
+                        if !consumeBotShieldIfAvailable(j) { respawnBot(j) }
+                    }
                 }
             }
         }
