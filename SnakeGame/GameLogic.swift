@@ -34,6 +34,7 @@ enum BotPersonalityKind: String, CaseIterable {
     case vulture      // Patient scavenger with the widest food-search radius.
     case interceptor  // Specialises in cutting off rivals rather than eating food.
     case trickster    // High unpredictability; erratic movement confuses opponents.
+    case nemesis      // Elite killer tuned specifically for player elimination.
 }
 
 // MARK: - Bot Data Structures
@@ -309,6 +310,15 @@ enum GameLogic {
                 turnRateMultiplier: 1.16, horizonMultiplier: 0.98,
                 cruiseSpeedMultiplier: 1.02, replanInterval: 0.19,
                 desiredClearance: 80, foodSearchRadius: 660, targetStickiness: 0.50
+            )
+        case .nemesis:
+            // Hyper-aggressive apex predator for challenge mode.
+            return BotPersonalityProfile(
+                aggression: 1.00, caution: 0.34, greed: 0.40, scavengerBias: 0.10,
+                cutBias: 0.96, boostBias: 1.00, unpredictability: 0.08,
+                turnRateMultiplier: 1.30, horizonMultiplier: 1.20,
+                cruiseSpeedMultiplier: 1.22, replanInterval: 0.12,
+                desiredClearance: 70, foodSearchRadius: 920, targetStickiness: 0.96
             )
         }
     }

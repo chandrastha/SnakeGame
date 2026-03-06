@@ -54,4 +54,19 @@ final class GameSceneIntegrationTests: XCTestCase {
 
         XCTAssertTrue(true) // verifies no crash and idempotent guard path
     }
+
+    func test_givenChallengeModeScene_whenDidMove_thenSpawnsNemesisWithThousandScore() {
+        let scene = GameScene(size: CGSize(width: 390, height: 844))
+        scene.scaleMode = .resizeFill
+        scene.gameMode = .challenge
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+
+        scene.didMove(to: view)
+
+        XCTAssertEqual(scene.bots.count, scene.totalBots + 1)
+        let nemesisBots = scene.bots.filter { $0.isNemesis }
+        XCTAssertEqual(nemesisBots.count, 1)
+        XCTAssertEqual(nemesisBots.first?.score, scene.challengeNemesisScore)
+        XCTAssertEqual(nemesisBots.first?.personality, .nemesis)
+    }
 }
