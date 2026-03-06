@@ -1,5 +1,6 @@
 import XCTest
 import CoreGraphics
+import SpriteKit
 @testable import SnakeGame
 
 final class GamePerformanceTests: XCTestCase {
@@ -35,5 +36,24 @@ final class GamePerformanceTests: XCTestCase {
                 _ = GameLogic.chooseBotIntent(snapshot)
             }
         }
+    }
+
+    func test_givenLongSnakeScene_whenRunningUpdateLoop_thenBodyPathStaysPerformant() {
+        let scene = GameScene(size: CGSize(width: 390, height: 844))
+        scene.scaleMode = .resizeFill
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        scene.didMove(to: view)
+        scene.score = 1_500
+        scene.updateSpeedForScore()
+        scene.gameSetupComplete = true
+        scene.gameStarted = true
+
+        measure {
+            for tick in 1...120 {
+                scene.update(TimeInterval(tick) / 120.0)
+            }
+        }
+
+        XCTAssertEqual(scene.bodyPositionCache.count, scene.bodySegments.count)
     }
 }

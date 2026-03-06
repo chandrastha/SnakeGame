@@ -291,8 +291,6 @@ struct StartScreenView: View {
                 .kerning(2)
 
             HStack(spacing: 8) {
-                ModeButton(icon: "🌐", title: "Online",  isSelected: selectedGameMode == .online)  { selectedGameMode = .online }
-                    .accessibilityIdentifier("modeOnline")
                 ModeButton(icon: "🐍", title: "Offline", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
                     .accessibilityIdentifier("modeOffline")
                 ModeButton(icon: "⚔️", title: "Challenge", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
@@ -348,7 +346,7 @@ struct StartScreenView: View {
 
     private var instructionText: String {
         switch selectedGameMode {
-        case .online:  return "100 players · Eat & survive online"
+        case .online:  return "Offline-first build · Online mode is temporarily unavailable"
         case .offline: return "99 bots · Practice mode"
         case .challenge: return "Nemesis snake · 1000 pts · survive the hunt"
         }

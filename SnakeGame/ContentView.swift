@@ -9,7 +9,6 @@ import SpriteKit
 struct ContentView: View {
     @State private var isPlaying: Bool = false
     @State private var selectedGameMode: GameMode = .offline
-    @State private var isAwaitingOnlineJoin: Bool = false
 
     @State private var playerImage: UIImage? = AvatarStore.load()
 
@@ -30,8 +29,7 @@ struct ContentView: View {
                     onGameOver: { finalScore in
                         if finalScore > bestScore { bestScore = finalScore }
                         saveToLeaderboard(finalScore)
-                        isAwaitingOnlineJoin = false
-                        if selectedGameMode == .online {
+                        if AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
                             PhotonManager.shared.disconnect()
                         }
                         withAnimation(.easeInOut(duration: 0.4)) { isPlaying = false }
@@ -45,11 +43,9 @@ struct ContentView: View {
                     selectedGameMode: $selectedGameMode,
                     playerImage:      $playerImage,
                     onPlayTapped: {
-                        if selectedGameMode == .online {
+                        if AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
                             PhotonManager.shared.setPlayerName(playerName)
-                            isAwaitingOnlineJoin = true
                         } else {
-                            isAwaitingOnlineJoin = false
                             isPlaying = true
                         }
                     }
@@ -58,23 +54,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
-        .fullScreenCover(isPresented: $isAwaitingOnlineJoin) {
-            OnlineMatchView(
-                onMatchReady: {
-                    isAwaitingOnlineJoin = false
-                    withAnimation(.easeInOut(duration: 0.4)) { isPlaying = true }
-                },
-                onCancel: {
-                    isAwaitingOnlineJoin = false
-                }
-            )
-        }
         .onChange(of: selectedGameMode) { mode in
-            guard mode != .online else { return }
-            if isAwaitingOnlineJoin {
-                isAwaitingOnlineJoin = false
+            if mode != .online || !AppFeatureFlags.isOnlineModeEnabled {
+                PhotonManager.shared.disconnect()
             }
-            PhotonManager.shared.disconnect()
+        }
+        .onAppear {
+            if !AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
+                selectedGameMode = .offline
+            }
         }
     }
 
@@ -102,7 +90,7 @@ struct GameView: UIViewRepresentable {
         let scene = GameScene()
         scene.size                     = CGSize(width: 390, height: 844)
         scene.scaleMode                = .resizeFill
-        scene.gameMode                 = gameMode
+        scene.gameMode                 = AppFeatureFlags.isOnlineModeEnabled || gameMode != .online ? gameMode : .offline
         scene.selectedSnakeColorIndex  = colorIndex
         scene.selectedSnakePatternIndex = patternIndex
         scene.playerName               = playerName

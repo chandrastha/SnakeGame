@@ -19,8 +19,8 @@ final class SnakeGameUITests: XCTestCase {
     @MainActor
     func test_givenFreshLaunch_whenViewingStartScreen_thenCoreControlsAreReachable() {
         XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["modeOnline"].exists)
         XCTAssertTrue(app.buttons["modeOffline"].exists)
+        XCTAssertTrue(app.buttons["modeChallenge"].exists)
         XCTAssertTrue(app.buttons["leaderboardButton"].exists)
     }
 
@@ -46,14 +46,27 @@ final class SnakeGameUITests: XCTestCase {
 
     @MainActor
     func test_givenModeButtons_whenTogglingModes_thenControlsRemainInteractable() {
-        let online = app.buttons["modeOnline"]
         let offline = app.buttons["modeOffline"]
-
-        online.tap()
-        XCTAssertTrue(online.isHittable)
+        let challenge = app.buttons["modeChallenge"]
 
         offline.tap()
         XCTAssertTrue(offline.isHittable)
+
+        challenge.tap()
+        XCTAssertTrue(challenge.isHittable)
+    }
+
+    @MainActor
+    func test_givenOfflineFirstBuild_whenViewingStartScreen_thenOnlineModeIsHidden() {
+        XCTAssertFalse(app.buttons["modeOnline"].exists)
+    }
+
+    @MainActor
+    func test_givenOfflineMode_whenTappingPlay_thenOnlineMatchmakingIsNotPresented() {
+        app.buttons["modeOffline"].tap()
+        app.buttons["playButton"].tap()
+
+        XCTAssertFalse(app.staticTexts["🌐  ONLINE"].waitForExistence(timeout: 1))
     }
 
     @MainActor

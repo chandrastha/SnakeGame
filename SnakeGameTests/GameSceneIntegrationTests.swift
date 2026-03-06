@@ -69,4 +69,25 @@ final class GameSceneIntegrationTests: XCTestCase {
         XCTAssertEqual(nemesisBots.first?.score, scene.challengeNemesisScore)
         XCTAssertEqual(nemesisBots.first?.personality, .nemesis)
     }
+
+    func test_givenVeryHighScore_whenUpdatingScene_thenHistoryBuffersStayBounded() {
+        let scene = GameScene(size: CGSize(width: 390, height: 844))
+        scene.scaleMode = .resizeFill
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+
+        scene.didMove(to: view)
+        scene.score = 1_500
+        scene.updateSpeedForScore()
+        scene.gameSetupComplete = true
+        scene.gameStarted = true
+
+        for tick in 1...60 {
+            scene.update(TimeInterval(tick) / 60.0)
+        }
+
+        XCTAssertEqual(scene.bodySegments.count, scene.targetBodyCount)
+        XCTAssertEqual(scene.bodyPositionCache.count, scene.bodySegments.count)
+        XCTAssertLessThanOrEqual(scene.positionHistory.count, scene.positionHistory.capacity)
+        XCTAssertGreaterThan(scene.positionHistory.capacity, 0)
+    }
 }
