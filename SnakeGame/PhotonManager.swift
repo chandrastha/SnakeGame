@@ -146,6 +146,13 @@ final class PhotonManager: NSObject, ObservableObject {
     /// Authenticate anonymously with Firebase, then immediately search for / create a room.
     /// Calling this again while already connecting / in a room is a no-op.
     func connect() {
+        guard AppFeatureFlags.isOnlineModeEnabled else {
+            DispatchQueue.main.async {
+                self.lastError = "Online mode is disabled in this build."
+                self.connectionState = .failed
+            }
+            return
+        }
         guard connectionState == .disconnected || connectionState == .failed else { return }
         connectionAttemptID &+= 1
         let attemptID = connectionAttemptID

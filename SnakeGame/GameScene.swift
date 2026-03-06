@@ -32,7 +32,8 @@ struct BotState {
     // SpriteKit nodes – nil when virtual
     var head: SKShapeNode?
     var body: [SKShapeNode]
-    var posHistory: [CGPoint]
+    var posHistory: PointRingBuffer
+    var bodyPositionCache: [CGPoint]
     var nameLabel: SKLabelNode?
 
     // Virtual movement: change direction every ~3 s
@@ -71,7 +72,8 @@ struct BotState {
         self.name         = name
         self.isActive     = false
         self.body         = []
-        self.posHistory   = []
+        self.posHistory   = PointRingBuffer()
+        self.bodyPositionCache = []
         self.dirChangeTimer = CGFloat.random(in: 1...3)
         self.tier          = .easy
         self.isDead        = false
@@ -122,7 +124,8 @@ private struct BotDecision {
 struct RemotePlayer {
     var head: SKShapeNode
     var body: [SKShapeNode]
-    var posHistory: [CGPoint]
+    var posHistory: PointRingBuffer
+    var bodyPositionCache: [CGPoint]
     var score: Int
     var bodyLength: Int
     var nameLabel: SKLabelNode
@@ -186,7 +189,8 @@ class GameScene: SKScene {
     // MARK: - Player Snake
     var snakeHead: SKNode!
     var bodySegments:    [SKShapeNode] = []
-    var positionHistory: [CGPoint]     = []
+    var positionHistory = PointRingBuffer()
+    var bodyPositionCache: [CGPoint] = []
     var currentAngle: CGFloat = 0
     var targetAngle:  CGFloat = 0
     var isTouching:   Bool    = false
@@ -235,6 +239,9 @@ class GameScene: SKScene {
     var scorePanelHeight: CGFloat = 40
     var miniLeaderboard:  SKNode?
     var leaderboardUpdateTimer: CGFloat = 0
+    var minimapUpdateTimer: CGFloat = 0
+    var leaderArrowUpdateTimer: CGFloat = 0
+    var miniLeaderboardNeedsRefresh = true
 
     // MARK: - Game State
     var gameOverOverlay:    SKNode? = nil
@@ -293,6 +300,7 @@ class GameScene: SKScene {
     let botBoostDurationRange: ClosedRange<CGFloat> = 0.30...0.90
     let botBoostCooldownRange: ClosedRange<CGFloat> = 1.10...2.40
     let botDetailedAIRadius: CGFloat = 1200.0
+    let botCollisionBroadPhaseRadius: CGFloat = 260.0
     var frameCounter = 0
     var botBodyUpdateFrame: Int = 0
 
@@ -398,6 +406,9 @@ class GameScene: SKScene {
     }
 
     func setupNewGame() {
+        if !AppFeatureFlags.isOnlineModeEnabled, gameMode == .online {
+            gameMode = .offline
+        }
         hasShutdown         = false
         isGameOver          = false
         isTouching          = false
@@ -427,12 +438,16 @@ class GameScene: SKScene {
         joystickEngagement  = 0
         frameCounter        = 0
         leaderboardUpdateTimer = 0
+        minimapUpdateTimer     = 0
+        leaderArrowUpdateTimer = 0
+        miniLeaderboardNeedsRefresh = true
         trailFoodTimer       = 0
         activeTrailFoodCount = 0
         tailWigglePhase      = 0
 
         removeAllChildren()
         bodySegments.removeAll()
+        bodyPositionCache.removeAll()
         positionHistory.removeAll()
         bots.removeAll()
         remotePlayers.removeAll()
@@ -1249,6 +1264,79 @@ class GameScene: SKScene {
             cornerWidth: 12, cornerHeight: 12, transform: nil
         )
         scoreLabel.position = CGPoint(x: panelW / 2, y: panelH / 2)
+        miniLeaderboardNeedsRefresh = true
+    }
+
+    private func historyCapacity(forSegmentCount count: Int) -> Int {
+        max(64, Int(CGFloat(max(count, 1) + 5) * segmentPixelSpacing) + 200)
+    }
+
+    private func ensurePointCacheLength(_ count: Int, cache: inout [CGPoint]) {
+        if cache.count == count { return }
+        if cache.count < count {
+            cache.append(contentsOf: repeatElement(.zero, count: count - cache.count))
+        } else {
+            cache.removeLast(cache.count - count)
+        }
+    }
+
+    private func cacheBodyPositions(from nodes: [SKShapeNode], into cache: inout [CGPoint]) {
+        ensurePointCacheLength(nodes.count, cache: &cache)
+        guard !nodes.isEmpty else { return }
+        for index in nodes.indices {
+            cache[index] = nodes[index].position
+        }
+    }
+
+    private func interactionRadiusForPlayerBody() -> CGFloat {
+        CGFloat(max(1, bodySegments.count)) * segmentPixelSpacing + 140
+    }
+
+    private func botPairWithinBroadPhase(_ lhs: BotState, _ rhs: BotState) -> Bool {
+        let dx = lhs.position.x - rhs.position.x
+        let dy = lhs.position.y - rhs.position.y
+        let radius = botCollisionBroadPhaseRadius + CGFloat(max(lhs.bodyLength, rhs.bodyLength)) * 0.6
+        return dx * dx + dy * dy <= radius * radius
+    }
+
+    private func headCollidesWithPoints(_ head: CGPoint, points: [CGPoint], combinedRadius: CGFloat, skip: Int = 0) -> Bool {
+        guard points.count > skip else { return false }
+        let thresholdSq = combinedRadius * combinedRadius
+        for index in skip..<points.count {
+            let dx = head.x - points[index].x
+            let dy = head.y - points[index].y
+            if dx * dx + dy * dy < thresholdSq {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func headCollidesWithPoints(_ head: CGPoint, points: [CGPoint], startIndex: Int, combinedRadius: CGFloat) -> Bool {
+        guard points.count > startIndex else { return false }
+        let thresholdSq = combinedRadius * combinedRadius
+        for index in startIndex..<points.count {
+            let dx = head.x - points[index].x
+            let dy = head.y - points[index].y
+            if dx * dx + dy * dy < thresholdSq {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func headCollidesWithNodes(_ head: CGPoint, nodes: [SKShapeNode], combinedRadius: CGFloat, skip: Int = 0) -> Bool {
+        guard nodes.count > skip else { return false }
+        let thresholdSq = combinedRadius * combinedRadius
+        for index in skip..<nodes.count {
+            let point = nodes[index].position
+            let dx = head.x - point.x
+            let dy = head.y - point.y
+            if dx * dx + dy * dy < thresholdSq {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Mini Leaderboard
@@ -1264,6 +1352,7 @@ class GameScene: SKScene {
     func updateMiniLeaderboard() {
         guard let lb = miniLeaderboard else { return }
         lb.removeAllChildren()
+        miniLeaderboardNeedsRefresh = false
 
         let myName = playerName.isEmpty ? "You" : playerName
         // isMe flag prevents incorrect highlight when player sets a custom name
@@ -1921,8 +2010,9 @@ class GameScene: SKScene {
     // MARK: - Player Body
     func createInitialBody() {
         let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
-        // Pre-populate history with pixel-spaced positions (0.5 px per step)
-        let historyNeeded = (initialBodyCount + 5) * Int(segmentPixelSpacing) + 200
+        let historyNeeded = historyCapacity(forSegmentCount: initialBodyCount)
+        positionHistory.setCapacity(historyNeeded)
+        positionHistory.removeAll()
         for k in 0..<historyNeeded {
             positionHistory.append(CGPoint(x: spawnPos.x - CGFloat(k) * 0.5, y: spawnPos.y))
         }
@@ -1932,6 +2022,7 @@ class GameScene: SKScene {
             addChild(seg)
             bodySegments.append(seg)
         }
+        cacheBodyPositions(from: bodySegments, into: &bodyPositionCache)
         updateSegmentScales()
     }
 
@@ -1940,6 +2031,8 @@ class GameScene: SKScene {
         seg.position = bodySegments.last?.position ?? snakeHead.position
         addChild(seg)
         bodySegments.append(seg)
+        ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
+        positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
         updateSegmentScales()
     }
 
@@ -1956,6 +2049,8 @@ class GameScene: SKScene {
         while bodySegments.count > target && bodySegments.count > 1 {
             bodySegments.removeLast().removeFromParent()
         }
+        ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
+        positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
         updateSegmentScales()
     }
 
@@ -2310,10 +2405,10 @@ class GameScene: SKScene {
         head.addChild(nameLabel)
         bots[index].nameLabel = nameLabel
 
-        bots[index].posHistory.removeAll()
         let segCount = max(1, bot.bodyLength)
-        // Pre-populate history with pixel-spaced positions (0.5 px per step)
-        let historyNeeded = (segCount + 5) * Int(segmentPixelSpacing) + 200
+        bots[index].posHistory.setCapacity(historyCapacity(forSegmentCount: segCount))
+        bots[index].posHistory.removeAll()
+        let historyNeeded = historyCapacity(forSegmentCount: segCount)
         for k in 0..<historyNeeded {
             bots[index].posHistory.append(CGPoint(
                 x: bot.position.x - cos(bot.angle) * CGFloat(k) * 0.5,
@@ -2329,8 +2424,10 @@ class GameScene: SKScene {
             addChild(seg)
             bots[index].body.append(seg)
         }
+        cacheBodyPositions(from: bots[index].body, into: &bots[index].bodyPositionCache)
         updateBotBodyScales(index)
         bots[index].isActive = true
+        miniLeaderboardNeedsRefresh = true
         animateSnakeEntrance(head: head, body: bots[index].body, angle: bot.angle, accent: theme.bodySKColor)
     }
 
@@ -2341,8 +2438,10 @@ class GameScene: SKScene {
         bots[index].nameLabel = nil
         for seg in bots[index].body { seg.removeFromParent() }
         bots[index].body.removeAll()
+        bots[index].bodyPositionCache.removeAll()
         bots[index].posHistory.removeAll()
         bots[index].isActive = false
+        miniLeaderboardNeedsRefresh = true
     }
 
     func updateBotBodyScales(_ index: Int) {
@@ -2366,13 +2465,16 @@ class GameScene: SKScene {
         addChild(seg)
         bots[index].body.append(seg)
         bots[index].bodyLength += 1
+        ensurePointCacheLength(bots[index].body.count, cache: &bots[index].bodyPositionCache)
+        bots[index].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[index].body.count))
         updateBotBodyScales(index)
+        miniLeaderboardNeedsRefresh = true
     }
 
     func respawnBot(_ index: Int) {
         guard !bots[index].isDead else { return }
         if bots[index].isActive {
-            spawnDeathFood(at: bots[index].body.map(\.position),
+            spawnDeathFood(at: bots[index].bodyPositionCache,
                            colorIndex: bots[index].colorIndex,
                            patternIndex: 0)  // body becomes death food; bots use solid pattern
             deactivateBot(index)
@@ -2390,6 +2492,7 @@ class GameScene: SKScene {
         case .medium: bots[index].respawnTimer = 3.0
         case .hard:   bots[index].respawnTimer = 2.0
         }
+        miniLeaderboardNeedsRefresh = true
     }
 
     private func finishRespawn(_ index: Int) {
@@ -2402,6 +2505,7 @@ class GameScene: SKScene {
         bots[index].angle = CGFloat.random(in: 0...(2 * .pi))
         bots[index].targetAngle = bots[index].angle
         configureBotIdentity(index: index, preservePersonality: true)
+        miniLeaderboardNeedsRefresh = true
     }
 
     func botSpeed(for index: Int, includeBoost: Bool = true) -> CGFloat {
@@ -3025,10 +3129,6 @@ class GameScene: SKScene {
         guard let head = bots[index].head else { return }
 
         bots[index].posHistory.append(head.position)
-        let maxHistory = Int(CGFloat(bots[index].body.count + 5) * segmentPixelSpacing) + 200
-        if bots[index].posHistory.count > maxHistory {
-            bots[index].posHistory.removeFirst(bots[index].posHistory.count - maxHistory)
-        }
 
         head.position = bots[index].position
         head.zRotation = (bots[index].angle * 180 / .pi - 90) * .pi / 180
@@ -3036,14 +3136,15 @@ class GameScene: SKScene {
         head.setScale(bots[index].isBoosting ? 1.04 : 1.0)
 
         if botBodyUpdateFrame == 0 {
-            let positions = arcPositions(
+            fillArcPositions(
                 history: bots[index].posHistory,
                 leadPos: bots[index].position,
                 count: bots[index].body.count,
-                spacing: segmentPixelSpacing
+                spacing: segmentPixelSpacing,
+                into: &bots[index].bodyPositionCache
             )
             for (segmentIndex, segment) in bots[index].body.enumerated() {
-                segment.position = positions[segmentIndex]
+                segment.position = bots[index].bodyPositionCache[segmentIndex]
                 let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? CGFloat(3) : 0
                 segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
                     ? 6
@@ -3189,6 +3290,7 @@ class GameScene: SKScene {
                 for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
                 bots[botIndex].score += nutrition.score
                 applyBotPowerUp(type: type, botIndex: botIndex)
+                miniLeaderboardNeedsRefresh = true
 
                 if type == .shrink, bots[botIndex].bodyLength > 12 {
                     bots[botIndex].bodyLength = max(10, bots[botIndex].bodyLength - 2)
@@ -3196,6 +3298,8 @@ class GameScene: SKScene {
                         bots[botIndex].body.last?.removeFromParent()
                         bots[botIndex].body.removeLast()
                     }
+                    ensurePointCacheLength(bots[botIndex].body.count, cache: &bots[botIndex].bodyPositionCache)
+                    bots[botIndex].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[botIndex].body.count))
                 }
                 return
             }
@@ -3204,13 +3308,16 @@ class GameScene: SKScene {
 
     func checkPlayerCollidesWithBotBodies() -> Bool {
         if ghostActive { return false }   // 👻 ghost: pass through bodies
+        let interactionRadiusSq = interactionRadiusForPlayerBody() * interactionRadiusForPlayerBody()
         for bot in bots where bot.isActive && !bot.isDead {
             if bot.ghostTimeLeft > 0 { continue }
-            if GameLogic.headCollidesWithBody(
-                head: snakeHead.position,
-                segments: bot.body.map(\.position),
-                combinedRadius: collisionRadius + bodySegmentRadius,
-                skip: 0
+            let dx = snakeHead.position.x - bot.position.x
+            let dy = snakeHead.position.y - bot.position.y
+            guard dx * dx + dy * dy <= interactionRadiusSq else { continue }
+            if headCollidesWithPoints(
+                snakeHead.position,
+                points: bot.bodyPositionCache,
+                combinedRadius: collisionRadius + bodySegmentRadius
             ) { return true }
         }
         return false
@@ -3238,16 +3345,19 @@ class GameScene: SKScene {
     /// Offline: any active bot's head hitting the player's body kills that bot.
     func checkBotHeadsHitPlayerBody() {
         guard gameMode != .online else { return }
-        let playerBodyPositions = bodySegments.map(\.position)
-        guard !playerBodyPositions.isEmpty else { return }
+        let interactionRadius = interactionRadiusForPlayerBody()
+        let interactionRadiusSq = interactionRadius * interactionRadius
+        guard !bodyPositionCache.isEmpty else { return }
         for i in 0..<bots.count {
             guard bots[i].isActive, !bots[i].isDead, let botHead = bots[i].head else { continue }
             if bots[i].ghostTimeLeft > 0 { continue }
-            if GameLogic.headCollidesWithBody(
-                head: botHead.position,
-                segments: playerBodyPositions,
-                combinedRadius: collisionRadius + bodySegmentRadius,
-                skip: 0
+            let dx = snakeHead.position.x - botHead.position.x
+            let dy = snakeHead.position.y - botHead.position.y
+            guard dx * dx + dy * dy <= interactionRadiusSq else { continue }
+            if headCollidesWithPoints(
+                botHead.position,
+                points: bodyPositionCache,
+                combinedRadius: collisionRadius + bodySegmentRadius
             ) {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
@@ -3291,10 +3401,11 @@ class GameScene: SKScene {
         }
 
         remotePlayers[actorID] = RemotePlayer(
-            head: head, body: [], posHistory: [], score: 0,
+            head: head, body: [], posHistory: PointRingBuffer(), bodyPositionCache: [], score: 0,
             bodyLength: 10, nameLabel: nameLabel, colorIndex: colorIndex,
             playerName: playerName
         )
+        miniLeaderboardNeedsRefresh = true
         animateSnakeEntrance(head: head, body: [], angle: 0, accent: theme.bodySKColor)
     }
 
@@ -3305,6 +3416,7 @@ class GameScene: SKScene {
         remotePlayers.removeValue(forKey: actorID)
         minimapRemotePlayerDots[actorID]?.removeFromParent()
         minimapRemotePlayerDots.removeValue(forKey: actorID)
+        miniLeaderboardNeedsRefresh = true
     }
 
     func updateRemotePlayerPosition(actorID: Int, headX: Float, headY: Float,
@@ -3317,10 +3429,8 @@ class GameScene: SKScene {
         rp.head.run(SKAction.move(to: newPos, duration: 0.05))
         rp.head.zRotation = (CGFloat(angle) * 180 / .pi - 90) * .pi / 180
 
-        // Maintain position history (same cap logic as local player)
+        rp.posHistory.setCapacity(historyCapacity(forSegmentCount: segCount))
         rp.posHistory.append(newPos)
-        let maxH = Int(CGFloat(segCount + 5) * segmentPixelSpacing) + 200
-        if rp.posHistory.count > maxH { rp.posHistory.removeFirst(rp.posHistory.count - maxH) }
 
         rp.score      = Int(score)
         rp.bodyLength = segCount
@@ -3336,16 +3446,17 @@ class GameScene: SKScene {
             rp.body.last?.removeFromParent()
             rp.body.removeLast()
         }
+        ensurePointCacheLength(rp.body.count, cache: &rp.bodyPositionCache)
 
-        // ── Position body segments along recorded path ────────────────────
-        let segPositions = arcPositions(history: rp.posHistory, leadPos: newPos,
-                                        count: rp.body.count, spacing: segmentPixelSpacing)
+        fillArcPositions(history: rp.posHistory, leadPos: newPos,
+                         count: rp.body.count, spacing: segmentPixelSpacing,
+                         into: &rp.bodyPositionCache)
         let dist      = hypot(snakeHead.position.x - newPos.x, snakeHead.position.y - newPos.y)
         let isVisible = dist <= visibleRadius
         rp.head.isHidden = !isVisible
 
         for (i, seg) in rp.body.enumerated() {
-            seg.position = segPositions[i]
+            seg.position = rp.bodyPositionCache[i]
             seg.isHidden = !isVisible
             // Taper scale + alpha toward tail (same look as local player)
             let t: CGFloat = segCount > 1 ? CGFloat(i) / CGFloat(segCount - 1) : 0
@@ -3355,16 +3466,16 @@ class GameScene: SKScene {
         }
 
         remotePlayers[actorID] = rp
+        miniLeaderboardNeedsRefresh = true
     }
 
     func checkPlayerCollidesWithRemotePlayers() -> Bool {
         if ghostActive { return false }   // 👻 ghost: pass through bodies
         for (_, rp) in remotePlayers where !rp.head.isHidden {
-            if GameLogic.headCollidesWithBody(
-                head: snakeHead.position,
-                segments: rp.body.map(\.position),
-                combinedRadius: collisionRadius + bodySegmentRadius,
-                skip: 0
+            if headCollidesWithPoints(
+                snakeHead.position,
+                points: rp.bodyPositionCache,
+                combinedRadius: collisionRadius + bodySegmentRadius
             ) { return true }
         }
         return false
@@ -3420,33 +3531,38 @@ class GameScene: SKScene {
     // MARK: - Arc-Length Body Positioning
     /// Returns `count` positions spaced `spacing` pixels apart along the path
     /// stored in `history` (oldest-first), starting from `leadPos` (the head).
-    func arcPositions(history: [CGPoint], leadPos: CGPoint,
-                      count: Int, spacing: CGFloat) -> [CGPoint] {
-        var result = [CGPoint]()
-        result.reserveCapacity(count)
+    func fillArcPositions(history: PointRingBuffer, leadPos: CGPoint,
+                          count: Int, spacing: CGFloat, into result: inout [CGPoint]) {
+        ensurePointCacheLength(count, cache: &result)
+        guard count > 0 else { return }
+
         var accumulated: CGFloat = 0
         var prev       = leadPos
         var targetDist = spacing
 
-        for k in stride(from: history.count - 1, through: 0, by: -1) {
-            guard result.count < count else { break }
-            let p    = history[k]
+        var filled = 0
+        history.forEachNewestToOldest { p in
+            guard filled < count else { return false }
             let d    = hypot(p.x - prev.x, p.y - prev.y)
             let next = accumulated + d
 
-            while result.count < count && targetDist <= next {
+            while filled < count && targetDist <= next {
                 let t = d > 0 ? (targetDist - accumulated) / d : 0
-                result.append(CGPoint(x: prev.x + (p.x - prev.x) * t,
-                                      y: prev.y + (p.y - prev.y) * t))
+                result[filled] = CGPoint(x: prev.x + (p.x - prev.x) * t,
+                                         y: prev.y + (p.y - prev.y) * t)
+                filled += 1
                 targetDist += spacing
             }
             accumulated = next
             prev = p
+            return true
         }
-        // Fill any remaining segments with the oldest known position
-        let fallback = history.first ?? leadPos
-        while result.count < count { result.append(fallback) }
-        return result
+
+        let fallback = history.oldestPoint ?? leadPos
+        while filled < count {
+            result[filled] = fallback
+            filled += 1
+        }
     }
 
     // MARK: - AI / Smooth Rotation
@@ -3473,9 +3589,9 @@ class GameScene: SKScene {
 
     // MARK: - Collision Detection
     func checkSelfCollision() -> Bool {
-        GameLogic.headCollidesWithBody(
-            head: snakeHead.position,
-            segments: bodySegments.map(\.position),
+        headCollidesWithPoints(
+            snakeHead.position,
+            points: bodyPositionCache,
             combinedRadius: collisionRadius + bodySegmentRadius,
             skip: spacingBetweenSegments * 2
         )
@@ -3497,16 +3613,15 @@ class GameScene: SKScene {
 
             for j in (i + 1)..<bots.count {
                 guard bots[j].isActive, !bots[j].isDead, let headJ = bots[j].head else { continue }
+                guard botPairWithinBroadPhase(bots[i], bots[j]) else { continue }
 
                 // Head-to-body collisions (both directions)
                 if bots[i].ghostTimeLeft <= 0 {
-                    let bodyJ = bots[j].body.map(\.position)
-                    if !bodyJ.isEmpty,
-                       GameLogic.headCollidesWithBody(
-                        head: headI.position,
-                        segments: bodyJ,
-                        combinedRadius: collisionRadius + bodySegmentRadius,
-                        skip: 0
+                    if !bots[j].bodyPositionCache.isEmpty,
+                       headCollidesWithPoints(
+                        headI.position,
+                        points: bots[j].bodyPositionCache,
+                        combinedRadius: collisionRadius + bodySegmentRadius
                        ) {
                         if !consumeBotShieldIfAvailable(i) { respawnBot(i) }
                         continue
@@ -3514,13 +3629,11 @@ class GameScene: SKScene {
                 }
 
                 if bots[j].ghostTimeLeft <= 0 {
-                    let bodyI = bots[i].body.map(\.position)
-                    if !bodyI.isEmpty,
-                       GameLogic.headCollidesWithBody(
-                        head: headJ.position,
-                        segments: bodyI,
-                        combinedRadius: collisionRadius + bodySegmentRadius,
-                        skip: 0
+                    if !bots[i].bodyPositionCache.isEmpty,
+                       headCollidesWithPoints(
+                        headJ.position,
+                        points: bots[i].bodyPositionCache,
+                        combinedRadius: collisionRadius + bodySegmentRadius
                        ) {
                         if !consumeBotShieldIfAvailable(j) { respawnBot(j) }
                         continue
@@ -3690,8 +3803,7 @@ class GameScene: SKScene {
         let playerDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
 
         positionHistory.append(snakeHead.position)
-        let maxH = Int(CGFloat(bodySegments.count + 5) * segmentPixelSpacing) + 200
-        if positionHistory.count > maxH { positionHistory.removeFirst(positionHistory.count - maxH) }
+        positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
 
         if isTouching {
             let dynamicTurnSpeed = playerTurnSpeedBase
@@ -3710,8 +3822,9 @@ class GameScene: SKScene {
         snakeHead.zRotation   = (currentAngle * 180.0 / .pi - 90.0) * .pi / 180.0
         lastPlayerPosition    = snakeHead.position
 
-        let segPos = arcPositions(history: positionHistory, leadPos: snakeHead.position,
-                                  count: bodySegments.count, spacing: segmentPixelSpacing)
+        fillArcPositions(history: positionHistory, leadPos: snakeHead.position,
+                         count: bodySegments.count, spacing: segmentPixelSpacing,
+                         into: &bodyPositionCache)
 
         // Shield wiggle: last 30% of body oscillates perpendicular to movement
         let totalSegs   = bodySegments.count
@@ -3719,7 +3832,7 @@ class GameScene: SKScene {
         let dangerStart = totalSegs - dangerCount
         if shieldActive { tailWigglePhase += dt * 8.0 }
         for (i, seg) in bodySegments.enumerated() {
-            var pos = segPos[i]
+            var pos = bodyPositionCache[i]
             let isWiggling = shieldActive && i >= dangerStart
             if isWiggling {
                 // progress: 0.0 at the join, 1.0 at the tail tip
@@ -3738,18 +3851,18 @@ class GameScene: SKScene {
                 // No strokeColor / glowWidth override — keep the body's own colour
             }
             seg.position = pos
+            bodyPositionCache[i] = pos
         }
 
         // Shield tail kills bots on contact
         if shieldActive && dangerCount > 0 && frameCounter % 2 == 0 {
-            let dangerPositions = (dangerStart..<totalSegs).map { bodySegments[$0].position }
             for bi in 0..<bots.count {
                 guard bots[bi].isActive, !bots[bi].isDead, let botHead = bots[bi].head else { continue }
-                if GameLogic.headCollidesWithBody(
-                    head: botHead.position,
-                    segments: dangerPositions,
-                    combinedRadius: collisionRadius + bodySegmentRadius,
-                    skip: 0
+                if headCollidesWithPoints(
+                    botHead.position,
+                    points: bodyPositionCache,
+                    startIndex: dangerStart,
+                    combinedRadius: collisionRadius + bodySegmentRadius
                 ) {
                     respawnBot(bi)
                 }
@@ -3817,12 +3930,21 @@ class GameScene: SKScene {
         }
 
         // --- Minimap (every frame) ---
-        updateMinimap()
-        updateLeaderArrow()
+        minimapUpdateTimer += dt
+        if minimapUpdateTimer >= (1.0 / 15.0) {
+            minimapUpdateTimer = 0
+            updateMinimap()
+        }
 
-        // --- Mini Leaderboard (update ~1 Hz) ---
+        leaderArrowUpdateTimer += dt
+        if leaderArrowUpdateTimer >= 0.1 {
+            leaderArrowUpdateTimer = 0
+            updateLeaderArrow()
+        }
+
+        // --- Mini Leaderboard (refresh on change, with 1 Hz fallback) ---
         leaderboardUpdateTimer += dt
-        if leaderboardUpdateTimer >= 1.0 {
+        if miniLeaderboardNeedsRefresh || leaderboardUpdateTimer >= 1.0 {
             leaderboardUpdateTimer = 0
             updateMiniLeaderboard()
         }
