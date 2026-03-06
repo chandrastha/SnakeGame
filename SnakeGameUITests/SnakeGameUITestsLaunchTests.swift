@@ -1,10 +1,3 @@
-//
-//  SnakeGameUITestsLaunchTests.swift
-//  SnakeGameUITests
-//
-//  Created by Chandra Shrestha on 2026-02-24.
-//
-
 import XCTest
 
 final class SnakeGameUITestsLaunchTests: XCTestCase {
@@ -17,13 +10,12 @@ final class SnakeGameUITestsLaunchTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    // MARK: - UI Tests: Launch Snapshot
+
     @MainActor
-    func testLaunch() throws {
+    func test_givenFreshLaunch_whenCapturingLaunchScreen_thenAttachesScreenshot() throws {
         let app = XCUIApplication()
         app.launch()
-
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Launch Screen"

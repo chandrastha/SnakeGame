@@ -1,14 +1,6 @@
-//
-//  SnakeGameUITests.swift
-//  SnakeGameUITests
-//
-//  Created by Chandra Shrestha on 2026-02-24.
-//
-
 import XCTest
 
 final class SnakeGameUITests: XCTestCase {
-
     var app: XCUIApplication!
 
     override func setUpWithError() throws {
@@ -22,88 +14,73 @@ final class SnakeGameUITests: XCTestCase {
         app = nil
     }
 
-    // MARK: - Start Screen
+    // MARK: - UI Tests: Major User Flows + Navigation
 
-    /// App launches and shows the PLAY button on the start screen.
     @MainActor
-    func testLaunchShowsStartScreen() throws {
-        let playButton = app.buttons["playButton"]
-        XCTAssertTrue(playButton.waitForExistence(timeout: 5))
-    }
-
-    /// Both game mode buttons are visible on the start screen.
-    @MainActor
-    func testAllGameModeButtonsVisible() throws {
-        XCTAssertTrue(app.buttons["modeOnline"].waitForExistence(timeout: 5))
+    func test_givenFreshLaunch_whenViewingStartScreen_thenCoreControlsAreReachable() {
+        XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["modeOnline"].exists)
         XCTAssertTrue(app.buttons["modeOffline"].exists)
+        XCTAssertTrue(app.buttons["leaderboardButton"].exists)
     }
 
-    // MARK: - Mode Selection
-
-    /// Tapping each mode button changes selection (button remains enabled).
     @MainActor
-    func testModeSwitching() throws {
-        app.buttons["modeOnline"].tap()
-        XCTAssertTrue(app.buttons["modeOnline"].isEnabled)
-
-        app.buttons["modeOffline"].tap()
-        XCTAssertTrue(app.buttons["modeOffline"].isEnabled)
-    }
-
-    // MARK: - Leaderboard Sheet
-
-    /// Tapping the leaderboard button presents the leaderboard sheet.
-    @MainActor
-    func testLeaderboardOpens() throws {
+    func test_givenStartScreen_whenOpeningAndClosingLeaderboard_thenReturnsToStartScreen() {
         app.buttons["leaderboardButton"].tap()
-        XCTAssertTrue(
-            app.staticTexts["leaderboardTitle"].waitForExistence(timeout: 5)
-        )
-    }
-
-    /// Tapping the close button dismisses the leaderboard sheet.
-    @MainActor
-    func testLeaderboardCloses() throws {
-        app.buttons["leaderboardButton"].tap()
-        XCTAssertTrue(app.buttons["closeButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["leaderboardTitle"].waitForExistence(timeout: 5))
 
         app.buttons["closeButton"].tap()
-        // After dismissal the start screen PLAY button should be visible again
-        XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 3))
-    }
-
-    // MARK: - Starting the Game (Offline mode)
-
-    /// Tapping PLAY in Offline mode transitions to the game (start screen disappears).
-    @MainActor
-    func testPlayButtonStartsOfflineGame() throws {
-        app.buttons["modeOffline"].tap()
-        let playButton = app.buttons["playButton"]
-        XCTAssertTrue(playButton.waitForExistence(timeout: 5))
-        playButton.tap()
-
-        // The PLAY button should no longer be on screen once the game has started
-        let disappeared = playButton.waitForNonExistence(timeout: 5)
-        XCTAssertTrue(disappeared, "PLAY button should disappear after starting the game")
-    }
-
-    /// After game over / returning to menu, the start screen reappears.
-    @MainActor
-    func testReturnToMenuShowsStartScreen() throws {
-        app.buttons["modeOffline"].tap()
-        app.buttons["playButton"].tap()
-        Thread.sleep(forTimeInterval: 1.0) // wait for countdown
-
-        // Terminate and relaunch simulates "next session" returning to start screen
-        app.terminate()
-        app.launch()
         XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 5))
     }
 
-    // MARK: - Launch Performance
+    @MainActor
+    func test_givenOfflineMode_whenTappingPlay_thenTransitionsToGame() {
+        app.buttons["modeOffline"].tap()
+        let playButton = app.buttons["playButton"]
+        playButton.tap()
+
+        XCTAssertFalse(playButton.waitForExistence(timeout: 1), "PLAY button should disappear after game starts")
+    }
+
+    // MARK: - UI Tests: Interactive Controls + Accessibility IDs
 
     @MainActor
-    func testLaunchPerformance() throws {
+    func test_givenModeButtons_whenTogglingModes_thenControlsRemainInteractable() {
+        let online = app.buttons["modeOnline"]
+        let offline = app.buttons["modeOffline"]
+
+        online.tap()
+        XCTAssertTrue(online.isHittable)
+
+        offline.tap()
+        XCTAssertTrue(offline.isHittable)
+    }
+
+    @MainActor
+    func test_givenLeaderboardWithoutScores_whenPresented_thenShowsEmptyStateMessage() {
+        app.buttons["leaderboardButton"].tap()
+
+        let emptyStateText = app.staticTexts["No scores yet.\nPlay a game to get started!"]
+        XCTAssertTrue(emptyStateText.waitForExistence(timeout: 5))
+    }
+
+    // MARK: - UI Tests: Orientation
+
+    @MainActor
+    func test_givenPortraitAndLandscape_whenRotatingDevice_thenPlayButtonRemainsAccessible() {
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 2))
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 2))
+
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    // MARK: - Performance
+
+    @MainActor
+    func test_givenColdStart_whenLaunchingApp_thenLaunchPerformanceIsMeasured() {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }
