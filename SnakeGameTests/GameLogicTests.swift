@@ -58,7 +58,7 @@ final class GameLogicTests: XCTestCase {
     // MARK: - Unit Tests: Business Logic
 
     func test_givenHighScore_whenCalculateSpeed_thenCapsAtMaximum() {
-        XCTAssertEqual(GameLogic.calculateSpeed(score: 200), 300)
+        XCTAssertEqual(GameLogic.calculateSpeed(score: 200), 130)
     }
 
     func test_givenExistingScores_whenProcessingLeaderboard_thenReturnsSortedTopTen() {

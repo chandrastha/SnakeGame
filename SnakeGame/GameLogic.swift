@@ -190,8 +190,8 @@ enum GameLogic {
     /// Mirrors the formula in GameScene.updateSpeedForScore().
     static func calculateSpeed(
         score: Int,
-        baseMoveSpeed: CGFloat = 150,
-        maxMoveSpeed:  CGFloat = 300
+        baseMoveSpeed: CGFloat = 100,
+        maxMoveSpeed:  CGFloat = 130
     ) -> CGFloat {
         let speed = min(baseMoveSpeed + CGFloat(score) * 2.5, maxMoveSpeed)
         return speed
