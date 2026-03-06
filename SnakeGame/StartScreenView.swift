@@ -295,6 +295,8 @@ struct StartScreenView: View {
                     .accessibilityIdentifier("modeOnline")
                 ModeButton(icon: "🐍", title: "Offline", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
                     .accessibilityIdentifier("modeOffline")
+                ModeButton(icon: "⚔️", title: "Challenge", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
+                    .accessibilityIdentifier("modeChallenge")
             }
         }
     }
@@ -348,6 +350,7 @@ struct StartScreenView: View {
         switch selectedGameMode {
         case .online:  return "100 players · Eat & survive online"
         case .offline: return "99 bots · Practice mode"
+        case .challenge: return "Nemesis snake · 1000 pts · survive the hunt"
         }
     }
 }
