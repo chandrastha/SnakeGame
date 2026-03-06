@@ -3092,7 +3092,8 @@ class GameScene: SKScene {
             if GameLogic.isOutsideArena(point: bots[i].position, radius: headRadius,
                                         arenaMinX: arenaMinX, arenaMaxX: arenaMaxX,
                                         arenaMinY: arenaMinY, arenaMaxY: arenaMaxY) {
-                if consumeBotShieldIfAvailable(i) {
+                if bots[i].shieldCharges > 0 {
+                    bots[i].shieldCharges -= 1
                     bots[i].position = CGPoint(
                         x: min(max(bots[i].position.x, arenaMinX + headRadius + 4), arenaMaxX - headRadius - 4),
                         y: min(max(bots[i].position.y, arenaMinY + headRadius + 4), arenaMaxY - headRadius - 4)
@@ -3223,7 +3224,9 @@ class GameScene: SKScene {
             let dist = hypot(snakeHead.position.x - botHead.position.x,
                              snakeHead.position.y - botHead.position.y)
             if dist < (headRadius + headRadius) {
-                if !consumeBotShieldIfAvailable(i) {
+                if bots[i].shieldCharges > 0 {
+                    bots[i].shieldCharges -= 1
+                } else {
                     respawnBot(i)   // bot dies simultaneously
                 }
                 return true     // player also dies (caller triggers playerGameOver)
@@ -3246,7 +3249,9 @@ class GameScene: SKScene {
                 combinedRadius: collisionRadius + bodySegmentRadius,
                 skip: 0
             ) {
-                if !consumeBotShieldIfAvailable(i) {
+                if bots[i].shieldCharges > 0 {
+                    bots[i].shieldCharges -= 1
+                } else {
                     respawnBot(i)
                 }
             }
