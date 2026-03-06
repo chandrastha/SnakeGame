@@ -54,6 +54,11 @@ struct BotState {
 
     // Trail food
     var trailFoodTimer: CGFloat
+    var shieldCharges: Int
+    var multiplierTimeLeft: CGFloat
+    var magnetTimeLeft: CGFloat
+    var ghostTimeLeft: CGFloat
+    var isNemesis: Bool
 
     init(id: Int, position: CGPoint, colorIndex: Int, name: String) {
         self.id           = id
@@ -81,6 +86,11 @@ struct BotState {
         self.focusTimer    = 0
         self.roamAnchor    = position
         self.trailFoodTimer = 0
+        self.shieldCharges = 0
+        self.multiplierTimeLeft = 0
+        self.magnetTimeLeft = 0
+        self.ghostTimeLeft = 0
+        self.isNemesis = false
     }
 }
 
@@ -270,6 +280,8 @@ class GameScene: SKScene {
     // MARK: - Bots (Offline mode)
     var bots: [BotState] = []
     let totalBots = 30
+    let challengeNemesisScore = 1000
+    var localBotTargetCount: Int { gameMode == .challenge ? totalBots + 1 : totalBots }
     let botActivationRadius:   CGFloat = 800.0
     let botDeactivationRadius: CGFloat = 1000.0
     // Per-tier base speeds (replaces single botMoveSpeed)
@@ -439,7 +451,9 @@ class GameScene: SKScene {
         leaderArrowNode   = nil
         leaderArrowLabel  = nil
 
-        backgroundColor = SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
+        backgroundColor = gameMode == .challenge
+            ? SKColor(red: 0.10, green: 0.03, blue: 0.14, alpha: 1.0)
+            : SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
         arenaMinX = 0; arenaMaxX = worldSize
         arenaMinY = 0; arenaMaxY = worldSize
 
@@ -470,27 +484,27 @@ class GameScene: SKScene {
         createMiniLeaderboard()
         createMinimap()
         createLeaderArrow()
-        if gameMode == .offline { createPauseButton() }
+        if gameMode != .online { createPauseButton() }
         createJoystick()
         createBoostButton()
-        if gameMode == .offline {
-            spawnInitialFood()
-        } else {
+        if gameMode == .online {
             prepareOnlineFoodSlots()
+        } else {
+            spawnInitialFood()
         }
         updateScoreDisplay()
 
-        if gameMode == .offline {
-            spawnBots()
-        } else if gameMode == .online {
+        if gameMode == .online {
             PhotonManager.shared.delegate = self
+        } else {
+            spawnBots()
         }
 
         gameSetupComplete = true
-        if gameMode == .offline {
-            startGameImmediately()
-        } else {
+        if gameMode == .online {
             primeOnlineRoundIfReady()
+        } else {
+            startGameImmediately()
         }
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
@@ -501,7 +515,10 @@ class GameScene: SKScene {
     func createArenaBorder() {
         // Arena background fill
         let arenaBg = SKShapeNode(rect: CGRect(x: 0, y: 0, width: worldSize, height: worldSize))
-        arenaBg.fillColor   = SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
+        let isChallengeMode = gameMode == .challenge
+        arenaBg.fillColor   = isChallengeMode
+            ? SKColor(red: 0.17, green: 0.08, blue: 0.22, alpha: 1.0)
+            : SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
         arenaBg.strokeColor = .clear
         arenaBg.zPosition   = -11
         addChild(arenaBg)
@@ -518,8 +535,8 @@ class GameScene: SKScene {
 
             let band = SKShapeNode(path: path)
             band.fillColor = bandIndex.isMultiple(of: 2)
-                ? SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18)
-                : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16)
+                ? (isChallengeMode ? SKColor(red: 0.42, green: 0.11, blue: 0.36, alpha: 0.22) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
+                : (isChallengeMode ? SKColor(red: 0.20, green: 0.05, blue: 0.20, alpha: 0.20) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
             band.strokeColor = .clear
             band.zPosition = -10.8
             addChild(band)
@@ -535,8 +552,8 @@ class GameScene: SKScene {
             let glow = SKShapeNode(circleOfRadius: index.isMultiple(of: 2) ? 300 : 240)
             glow.position = center
             glow.fillColor = index.isMultiple(of: 2)
-                ? SKColor(red: 0.60, green: 0.78, blue: 0.82, alpha: 0.07)
-                : SKColor(red: 0.15, green: 0.23, blue: 0.31, alpha: 0.10)
+                ? (isChallengeMode ? SKColor(red: 0.90, green: 0.30, blue: 0.82, alpha: 0.10) : SKColor(red: 0.60, green: 0.78, blue: 0.82, alpha: 0.07))
+                : (isChallengeMode ? SKColor(red: 0.35, green: 0.10, blue: 0.36, alpha: 0.14) : SKColor(red: 0.15, green: 0.23, blue: 0.31, alpha: 0.10))
             glow.strokeColor = .clear
             glow.zPosition = -10.7
             addChild(glow)
@@ -1311,7 +1328,7 @@ class GameScene: SKScene {
         container.addChild(playerDot)
         minimapPlayerDot = playerDot
 
-        for _ in 0..<totalBots {
+        for _ in 0..<localBotTargetCount {
             let dot = SKShapeNode(circleOfRadius: 2.0)
             dot.fillColor   = SKColor(white: 0.8, alpha: 0.65)
             dot.strokeColor = .clear
@@ -2165,18 +2182,22 @@ class GameScene: SKScene {
     // MARK: - Bot System (Offline Mode)
     func spawnBots() {
         let namePool = GameScene.botNamePool
-        for i in 0..<totalBots {
+        let botCount = localBotTargetCount
+        let nemesisIndex = gameMode == .challenge ? botCount - 1 : -1
+
+        for i in 0..<botCount {
             var colorIndex = (selectedSnakeColorIndex + 1 + (i % (snakeColorThemes.count - 1))) % snakeColorThemes.count
             if colorIndex == selectedSnakeColorIndex {
                 colorIndex = (colorIndex + 1) % snakeColorThemes.count
             }
-            let name = namePool[i % namePool.count]
+            let isNemesis = i == nemesisIndex
+            let name = isNemesis ? "NEMESIS" : namePool[i % namePool.count]
 
             // First 15 spawn near player for immediate action
             let position: CGPoint
             if i < 15 {
                 let angle = CGFloat.random(in: 0...(2 * .pi))
-                let dist  = CGFloat.random(in: 300...680)
+                let dist  = isNemesis ? CGFloat.random(in: 260...480) : CGFloat.random(in: 300...680)
                 position = CGPoint(
                     x: max(200, min(worldSize - 200, worldSize/2 + cos(angle) * dist)),
                     y: max(200, min(worldSize - 200, worldSize/2 + sin(angle) * dist))
@@ -2188,14 +2209,21 @@ class GameScene: SKScene {
                 )
             }
             bots.append(BotState(id: i, position: position, colorIndex: colorIndex, name: name))
-            // Assign tier: 0–9 easy, 10–21 medium, 22–29 hard
-            switch i {
-            case 0..<10:  bots[i].tier = .easy
-            case 10..<22: bots[i].tier = .medium
-            default:      bots[i].tier = .hard
+
+            if isNemesis {
+                bots[i].isNemesis = true
+                bots[i].tier = .hard
+                bots[i].personality = .nemesis
+            } else {
+                // Assign tier: 0–9 easy, 10–21 medium, 22–29 hard
+                switch min(i, totalBots - 1) {
+                case 0..<10:  bots[i].tier = .easy
+                case 10..<22: bots[i].tier = .medium
+                default:      bots[i].tier = .hard
+                }
+                let personalities = botPersonalities(for: bots[i].tier)
+                bots[i].personality = personalities[i % personalities.count]
             }
-            let personalities = botPersonalities(for: bots[i].tier)
-            bots[i].personality = personalities[i % personalities.count]
             configureBotIdentity(index: i, preservePersonality: true)
         }
     }
@@ -2228,26 +2256,30 @@ class GameScene: SKScene {
     }
 
     private func configureBotIdentity(index: Int, preservePersonality: Bool) {
-        if !preservePersonality {
+        if !preservePersonality && !bots[index].isNemesis {
             let personalities = botPersonalities(for: bots[index].tier)
             bots[index].personality = personalities.randomElement() ?? .opportunist
         }
 
         let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
-        let length = randomBotLength(for: index)
+        let length = bots[index].isNemesis ? 130 : randomBotLength(for: index)
         let bonusScore = Int(CGFloat(length) * (0.35 + profile.aggression * 0.25 + profile.scavengerBias * 0.15))
 
-        bots[index].score = max(4, bonusScore + Int.random(in: 0...10))
+        bots[index].score = bots[index].isNemesis ? challengeNemesisScore : max(4, bonusScore + Int.random(in: 0...10))
         bots[index].bodyLength = length
-        bots[index].intent = .roam
+        bots[index].intent = bots[index].isNemesis ? .hunt : .roam
         bots[index].decisionTimer = 0
         bots[index].boostTimer = 0
-        bots[index].boostCooldown = CGFloat.random(in: 0.15...0.80)
+        bots[index].boostCooldown = bots[index].isNemesis ? 0.08 : CGFloat.random(in: 0.15...0.80)
         bots[index].isBoosting = false
         bots[index].focusPoint = nil
         bots[index].focusTimer = 0
+        bots[index].shieldCharges = 0
+        bots[index].multiplierTimeLeft = 0
+        bots[index].magnetTimeLeft = 0
+        bots[index].ghostTimeLeft = 0
         bots[index].roamAnchor = randomPositionInArena()
-        bots[index].dirChangeTimer = CGFloat.random(in: 1.8...4.6)
+        bots[index].dirChangeTimer = bots[index].isNemesis ? 1.2 : CGFloat.random(in: 1.8...4.6)
         bots[index].trailFoodTimer = CGFloat.random(in: 0...(botTrailInterval * 0.8))
     }
 
@@ -2382,6 +2414,7 @@ class GameScene: SKScene {
         let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
         let scoreFraction = CGFloat(min(bots[index].score, botSpeedScoreCap)) / CGFloat(botSpeedScoreCap * 2)
         var speed = base * (1.0 + scoreFraction) * profile.cruiseSpeedMultiplier
+        if bots[index].isNemesis { speed *= 1.18 }
         if includeBoost && bots[index].isBoosting {
             speed *= botBoostMultiplier
         }
@@ -2391,7 +2424,8 @@ class GameScene: SKScene {
     func botTurnSpeed(for index: Int) -> CGFloat {
         let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
         let boostAdjustment: CGFloat = bots[index].isBoosting ? 0.96 : 1.0
-        return turnSpeed * profile.turnRateMultiplier * boostAdjustment
+        let nemesisBonus: CGFloat = bots[index].isNemesis ? 1.20 : 1.0
+        return turnSpeed * profile.turnRateMultiplier * boostAdjustment * nemesisBonus
     }
 
     private func arenaClearance(at point: CGPoint) -> CGFloat {
@@ -2856,7 +2890,10 @@ class GameScene: SKScene {
         let threats = nearbyThreats(for: i, radius: max(620, profile.foodSearchRadius))
         let foods = interestingFoodTargets(for: i)
         let snapshot = strategicSnapshot(botIndex: i, profile: profile, threats: threats, foods: foods)
-        let intent = GameLogic.chooseBotIntent(snapshot)
+        var intent = GameLogic.chooseBotIntent(snapshot)
+        if bots[i].isNemesis {
+            intent = snapshot.immediateDanger > 0.76 ? .escape : (snapshot.cutOpportunity > 0.42 ? .cutOff : .hunt)
+        }
         let candidates = candidateAngles(botIndex: i, intent: intent, threats: threats, foods: foods)
 
         var best = BotDecision(
@@ -2946,12 +2983,18 @@ class GameScene: SKScene {
             if bots[i].focusTimer <= 0 { bots[i].focusPoint = nil }
         }
 
+        bots[i].multiplierTimeLeft = max(0, bots[i].multiplierTimeLeft - dt)
+        bots[i].magnetTimeLeft = max(0, bots[i].magnetTimeLeft - dt)
+        bots[i].ghostTimeLeft = max(0, bots[i].ghostTimeLeft - dt)
+
         if bots[i].boostTimer > 0 {
             bots[i].boostTimer -= dt
             if bots[i].boostTimer <= 0 {
                 bots[i].boostTimer = 0
                 bots[i].isBoosting = false
-                bots[i].boostCooldown = CGFloat.random(in: botBoostCooldownRange)
+                bots[i].boostCooldown = bots[i].isNemesis
+                    ? CGFloat.random(in: 0.40...1.00)
+                    : CGFloat.random(in: botBoostCooldownRange)
             }
         }
     }
@@ -2971,7 +3014,7 @@ class GameScene: SKScene {
 
         if decision.shouldBoost && !bots[i].isBoosting && bots[i].boostCooldown <= 0 {
             bots[i].isBoosting = true
-            bots[i].boostTimer = CGFloat.random(in: botBoostDurationRange)
+            bots[i].boostTimer = bots[i].isNemesis ? CGFloat.random(in: 0.45...1.20) : CGFloat.random(in: botBoostDurationRange)
         }
 
         let jitter = CGFloat.random(in: -profile.unpredictability...profile.unpredictability) * 0.05
@@ -3020,6 +3063,7 @@ class GameScene: SKScene {
             }
 
             updateBotBoostState(index: i, dt: dt)
+            applyBotMagnetEffect(botIndex: i, dt: dt)
             let distanceToPlayer = hypot(bots[i].position.x - playerPos.x, bots[i].position.y - playerPos.y)
 
             if !bots[i].isActive && distanceToPlayer < botActivationRadius {
@@ -3048,8 +3092,16 @@ class GameScene: SKScene {
             if GameLogic.isOutsideArena(point: bots[i].position, radius: headRadius,
                                         arenaMinX: arenaMinX, arenaMaxX: arenaMaxX,
                                         arenaMinY: arenaMinY, arenaMaxY: arenaMaxY) {
-                respawnBot(i)
-                continue
+                if bots[i].shieldCharges > 0 {
+                    bots[i].shieldCharges -= 1
+                    bots[i].position = CGPoint(
+                        x: min(max(bots[i].position.x, arenaMinX + headRadius + 4), arenaMaxX - headRadius - 4),
+                        y: min(max(bots[i].position.y, arenaMinY + headRadius + 4), arenaMaxY - headRadius - 4)
+                    )
+                } else {
+                    respawnBot(i)
+                    continue
+                }
             }
 
             if bots[i].isActive {
@@ -3071,13 +3123,52 @@ class GameScene: SKScene {
         }
     }
 
-    private func botNutrition(for type: FoodType) -> (segments: Int, score: Int) {
+    private func applyBotPowerUp(type: FoodType, botIndex: Int) {
         switch type {
-        case .regular:                   return (1, 2)
-        case .trail:                     return (1, 1)
-        case .death:                     return (2, 5)
+        case .shield:
+            bots[botIndex].shieldCharges = min(2, bots[botIndex].shieldCharges + 1)
+        case .multiplier:
+            bots[botIndex].multiplierTimeLeft = 10.0
+        case .magnet:
+            bots[botIndex].magnetTimeLeft = 6.0
+        case .ghost:
+            bots[botIndex].ghostTimeLeft = 4.0
+        case .regular, .trail, .death, .shrink:
+            break
+        }
+    }
+
+    private func applyBotMagnetEffect(botIndex: Int, dt: CGFloat) {
+        guard bots[botIndex].magnetTimeLeft > 0 else { return }
+
+        let strength: CGFloat = 560 * dt
+        let headPos = bots[botIndex].position
+        let magnetRadiusSq = magnetRadius * magnetRadius
+
+        for (i, food) in foodItems.enumerated() {
+            guard food.parent != nil else { continue }
+            if foodTypes[i] == .trail || foodTypes[i] == .death { continue }
+
+            let dx = headPos.x - food.position.x
+            let dy = headPos.y - food.position.y
+            let distSq = dx * dx + dy * dy
+            guard distSq > 1, distSq < magnetRadiusSq else { continue }
+
+            let dist = sqrt(distSq)
+            let pull = strength * (1 - dist / magnetRadius)
+            food.position.x += (dx / dist) * pull
+            food.position.y += (dy / dist) * pull
+        }
+    }
+
+    private func botNutrition(for type: FoodType, botIndex: Int) -> (segments: Int, score: Int) {
+        let scoreMultiplier = bots[botIndex].multiplierTimeLeft > 0 ? 2 : 1
+        switch type {
+        case .regular:                   return (1, 2 * scoreMultiplier)
+        case .trail:                     return (1, 1 * scoreMultiplier)
+        case .death:                     return (2, 5 * scoreMultiplier)
         case .shield, .multiplier,
-             .magnet, .ghost:            return (1, 2)
+             .magnet, .ghost:            return (1, 2 * scoreMultiplier)
         case .shrink:                    return (0, 0)
         }
     }
@@ -3090,13 +3181,14 @@ class GameScene: SKScene {
             let dy = headPosition.y - food.position.y
             if dx * dx + dy * dy < thresholdSq {
                 if foodTypes[i] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
-                let nutrition = botNutrition(for: foodTypes[i])
+                let nutrition = botNutrition(for: foodTypes[i], botIndex: botIndex)
                 food.removeFromParent()
                 foodItems.remove(at: i)
                 let type = foodTypes.remove(at: i)
                 spawnFood()
                 for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
                 bots[botIndex].score += nutrition.score
+                applyBotPowerUp(type: type, botIndex: botIndex)
 
                 if type == .shrink, bots[botIndex].bodyLength > 12 {
                     bots[botIndex].bodyLength = max(10, bots[botIndex].bodyLength - 2)
@@ -3113,6 +3205,7 @@ class GameScene: SKScene {
     func checkPlayerCollidesWithBotBodies() -> Bool {
         if ghostActive { return false }   // 👻 ghost: pass through bodies
         for bot in bots where bot.isActive && !bot.isDead {
+            if bot.ghostTimeLeft > 0 { continue }
             if GameLogic.headCollidesWithBody(
                 head: snakeHead.position,
                 segments: bot.body.map(\.position),
@@ -3125,13 +3218,17 @@ class GameScene: SKScene {
 
     /// Offline: player head collides with a bot head → both die (head-to-head).
     func checkPlayerHeadVsBotHeads() -> Bool {
-        guard gameMode == .offline, !ghostActive else { return false }
+        guard gameMode != .online, !ghostActive else { return false }
         for i in 0..<bots.count {
             guard bots[i].isActive, !bots[i].isDead, let botHead = bots[i].head else { continue }
             let dist = hypot(snakeHead.position.x - botHead.position.x,
                              snakeHead.position.y - botHead.position.y)
             if dist < (headRadius + headRadius) {
-                respawnBot(i)   // bot dies simultaneously
+                if bots[i].shieldCharges > 0 {
+                    bots[i].shieldCharges -= 1
+                } else {
+                    respawnBot(i)   // bot dies simultaneously
+                }
                 return true     // player also dies (caller triggers playerGameOver)
             }
         }
@@ -3140,18 +3237,23 @@ class GameScene: SKScene {
 
     /// Offline: any active bot's head hitting the player's body kills that bot.
     func checkBotHeadsHitPlayerBody() {
-        guard gameMode == .offline else { return }
+        guard gameMode != .online else { return }
         let playerBodyPositions = bodySegments.map(\.position)
         guard !playerBodyPositions.isEmpty else { return }
         for i in 0..<bots.count {
             guard bots[i].isActive, !bots[i].isDead, let botHead = bots[i].head else { continue }
+            if bots[i].ghostTimeLeft > 0 { continue }
             if GameLogic.headCollidesWithBody(
                 head: botHead.position,
                 segments: playerBodyPositions,
                 combinedRadius: collisionRadius + bodySegmentRadius,
                 skip: 0
             ) {
-                respawnBot(i)
+                if bots[i].shieldCharges > 0 {
+                    bots[i].shieldCharges -= 1
+                } else {
+                    respawnBot(i)
+                }
             }
         }
     }
@@ -3631,14 +3733,14 @@ class GameScene: SKScene {
         if checkWallCollision() { playerGameOver(); return }
         // Self-collision intentionally disabled: snake passes through its own body
 
-        if gameMode == .offline && checkPlayerCollidesWithBotBodies()    { playerGameOver(); return }
-        if gameMode == .offline && checkPlayerHeadVsBotHeads()           { playerGameOver(); return }
+        if gameMode != .online && checkPlayerCollidesWithBotBodies()    { playerGameOver(); return }
+        if gameMode != .online && checkPlayerHeadVsBotHeads()           { playerGameOver(); return }
         if gameMode == .online  && checkPlayerCollidesWithRemotePlayers() { playerGameOver(); return }
 
         checkFoodCollisions()
 
         // --- Trail food spawning (player) ---
-        if gameMode == .offline, gameStarted, let tailSeg = bodySegments.last {
+        if gameMode != .online, gameStarted, let tailSeg = bodySegments.last {
             trailFoodTimer += dt
             if trailFoodTimer >= playerTrailInterval {
                 spawnTrailFood(at: tailSeg.position,
@@ -3649,7 +3751,7 @@ class GameScene: SKScene {
         }
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
-        if gameMode == .offline && frameCounter % 300 == 0 {
+        if gameMode != .online && frameCounter % 300 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
@@ -3670,7 +3772,7 @@ class GameScene: SKScene {
         if magnetActive && frameCounter % 2 == 0 { applyMagnetEffect() }
 
         // --- Mode-specific ---
-        if gameMode == .offline {
+        if gameMode != .online {
             let updateAI = frameCounter % 2 == 0  // bot AI at ~30 Hz
             updateBots(dt: dt, updateAI: updateAI)
             if frameCounter % 3 == 0 { checkBotVsBotCollisions() }        // bot-vs-bot at ~20 Hz
