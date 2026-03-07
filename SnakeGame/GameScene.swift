@@ -290,6 +290,12 @@ class GameScene: SKScene {
     var isSnakeRaceMode: Bool { gameMode == .snakeRace }
     var isSpecialOfflineMode: Bool { isMazeHuntMode || isSnakeRaceMode }
 
+    // MARK: - Coin System
+    var sessionCoinsEarned: Int = 0
+    var hasUsedRevive:      Bool = false
+    var coinPanel:  SKShapeNode?
+    var coinLabel:  SKLabelNode?
+
     // MARK: - Other UI
     var pauseButton:  SKNode?
     var pauseOverlay: SKNode?
@@ -447,6 +453,8 @@ class GameScene: SKScene {
         onlineRoundPrimed   = false
         isPausedGame        = false
         scoreMultiplier     = 1
+        sessionCoinsEarned  = 0
+        hasUsedRevive       = false
         shieldActive        = false
         multiplierActive    = false
         multiplierTimeLeft  = 0
@@ -1394,6 +1402,10 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
+        // Save session coins to persistent balance now (before revive prompt)
+        CoinManager.shared.earn(sessionCoinsEarned)
+        sessionCoinsEarned = 0
+        updateCoinDisplay()
         spawnDeathFood(at: bodySegments.map(\.position),
                        colorIndex: selectedSnakeColorIndex,
                        patternIndex: selectedSnakePatternIndex)   // body scatters as death food
@@ -1491,6 +1503,7 @@ class GameScene: SKScene {
         gameOverOverlay = nil
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
+        let canRevive = !hasUsedRevive && CoinManager.shared.balance >= CoinManager.reviveCost && gameMode != .online
 
         let overlay = SKNode()
         overlay.zPosition = 1000
@@ -1502,57 +1515,101 @@ class GameScene: SKScene {
         bg.position    = CGPoint(x: cx, y: cy)
         overlay.addChild(bg)
 
-        // Card background for game-over content
-        let card = SKShapeNode(rectOf: CGSize(width: 280, height: 260), cornerRadius: 22)
+        // Card — taller when revive is available
+        let cardH: CGFloat = canRevive ? 330 : 290
+        let card = SKShapeNode(rectOf: CGSize(width: 280, height: cardH), cornerRadius: 22)
         card.fillColor   = SKColor(red: 0.08, green: 0.10, blue: 0.18, alpha: 0.95)
-        card.strokeColor = SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.30)
+        card.strokeColor = canRevive
+            ? SKColor(red: 1.0, green: 0.80, blue: 0.0, alpha: 0.40)
+            : SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.30)
         card.lineWidth   = 1.5
         card.position    = CGPoint(x: cx, y: cy - 10)
         overlay.addChild(card)
 
+        // Title
         let titleLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         titleLabel.text                    = title
-        titleLabel.fontSize                = 42
+        titleLabel.fontSize                = 38
         titleLabel.fontColor               = .white
         titleLabel.horizontalAlignmentMode = .center
         titleLabel.verticalAlignmentMode   = .center
-        titleLabel.position                = CGPoint(x: cx, y: cy + 100)
+        titleLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 118 : 98))
         overlay.addChild(titleLabel)
 
+        // Final score
         let finalScore = SKLabelNode(fontNamed: "Arial-BoldMT")
         finalScore.text                    = "\(playerName.isEmpty ? "You" : playerName): \(score)"
-        finalScore.fontSize                = 28
+        finalScore.fontSize                = 26
         finalScore.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
         finalScore.horizontalAlignmentMode = .center
         finalScore.verticalAlignmentMode   = .center
-        finalScore.position                = CGPoint(x: cx, y: cy + 35)
+        finalScore.position                = CGPoint(x: cx, y: cy + (canRevive ? 58 : 42))
         overlay.addChild(finalScore)
 
-        // Play Again / Rejoin button (primary action)
+        // Coin balance display
+        let coinsLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
+        coinsLabel.text                    = "🪙 \(CoinManager.shared.balance) coins"
+        coinsLabel.fontSize                = 16
+        coinsLabel.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.85)
+        coinsLabel.horizontalAlignmentMode = .center
+        coinsLabel.verticalAlignmentMode   = .center
+        coinsLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 10 : -2))
+        overlay.addChild(coinsLabel)
+
+        // Revive button (only if eligible)
+        let playBtnY: CGFloat
+        let menuBtnY: CGFloat
+        if canRevive {
+            playBtnY = cy - 60
+            menuBtnY = cy - 125
+
+            let reviveBtnY = cy - 2
+            let reviveBg = SKShapeNode(rectOf: CGSize(width: 220, height: 48), cornerRadius: 14)
+            reviveBg.fillColor   = SKColor(red: 0.85, green: 0.60, blue: 0.0, alpha: 1.0)
+            reviveBg.strokeColor = SKColor(red: 1.0, green: 0.90, blue: 0.2, alpha: 0.60)
+            reviveBg.lineWidth   = 1.5
+            reviveBg.glowWidth   = 8
+            reviveBg.position    = CGPoint(x: cx, y: reviveBtnY)
+            reviveBg.name        = "reviveButton"
+            overlay.addChild(reviveBg)
+
+            let reviveLbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+            reviveLbl.text                    = "REVIVE  —  \(CoinManager.reviveCost) 🪙"
+            reviveLbl.fontSize                = 18
+            reviveLbl.fontColor               = .white
+            reviveLbl.horizontalAlignmentMode = .center
+            reviveLbl.verticalAlignmentMode   = .center
+            reviveLbl.position                = CGPoint(x: cx, y: reviveBtnY)
+            reviveLbl.name                    = "reviveButton"
+            overlay.addChild(reviveLbl)
+        } else {
+            playBtnY = cy - 52
+            menuBtnY = cy - 115
+        }
+
+        // Play Again / Rejoin button
         let restartLabel = gameMode == .online ? "Rejoin" : "Play Again"
-        let restartBtnY  = cy - 45
-        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 54), cornerRadius: 14)
+        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
         restartBg.fillColor   = SKColor(red: 0.20, green: 0.78, blue: 0.32, alpha: 1.0)
         restartBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
         restartBg.lineWidth   = 1
         restartBg.glowWidth   = 6
-        restartBg.position    = CGPoint(x: cx, y: restartBtnY)
+        restartBg.position    = CGPoint(x: cx, y: playBtnY)
         restartBg.name        = "restartButton"
         overlay.addChild(restartBg)
 
         let restartLbl = SKLabelNode(fontNamed: "Arial-BoldMT")
         restartLbl.text                    = restartLabel
-        restartLbl.fontSize                = 22
+        restartLbl.fontSize                = 20
         restartLbl.fontColor               = .white
         restartLbl.horizontalAlignmentMode = .center
         restartLbl.verticalAlignmentMode   = .center
-        restartLbl.position                = CGPoint(x: cx, y: restartBtnY)
+        restartLbl.position                = CGPoint(x: cx, y: playBtnY)
         restartLbl.name                    = "restartButton"
         overlay.addChild(restartLbl)
 
-        // Main Menu button (secondary action)
-        let menuBtnY  = cy - 115
-        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 54), cornerRadius: 14)
+        // Main Menu button
+        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
         btnBg.fillColor   = SKColor(red: 0.12, green: 0.14, blue: 0.22, alpha: 0.95)
         btnBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
         btnBg.lineWidth   = 1
@@ -1562,7 +1619,7 @@ class GameScene: SKScene {
 
         let btnLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         btnLabel.text                    = "Main Menu"
-        btnLabel.fontSize                = 20
+        btnLabel.fontSize                = 18
         btnLabel.fontColor               = SKColor(white: 0.90, alpha: 1.0)
         btnLabel.horizontalAlignmentMode = .center
         btnLabel.verticalAlignmentMode   = .center
@@ -1582,6 +1639,71 @@ class GameScene: SKScene {
             PhotonManager.shared.prepareLocalPlayerForNewRound()
         }
         setupNewGame()
+        startBackgroundMusic()
+    }
+
+    // MARK: - Revive
+    func revivePlayer() {
+        guard !hasUsedRevive else { return }
+        guard CoinManager.shared.spend(CoinManager.reviveCost) else { return }
+        hasUsedRevive = true
+
+        // Remove game over overlay
+        gameOverOverlay?.removeFromParent()
+        gameOverOverlay = nil
+
+        // Remove all existing body segments (they scattered as death food)
+        for seg in bodySegments { seg.removeFromParent() }
+        bodySegments.removeAll()
+        bodyPositionCache.removeAll()
+
+        // Rebuild position history and body at arena center
+        let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let reviveBodyCount = max(initialBodyCount, initialBodyCount + score / 20)
+        let historyNeeded = historyCapacity(forSegmentCount: reviveBodyCount)
+        positionHistory.setCapacity(historyNeeded)
+        positionHistory.removeAll()
+        for k in 0..<historyNeeded {
+            positionHistory.append(CGPoint(x: spawnPos.x - CGFloat(k) * 0.5, y: spawnPos.y))
+        }
+        for i in 1...reviveBodyCount {
+            let seg = makePlayerBodySegment(segIndex: i - 1)
+            seg.position = CGPoint(x: spawnPos.x - CGFloat(i) * segmentPixelSpacing, y: spawnPos.y)
+            addChild(seg)
+            bodySegments.append(seg)
+        }
+
+        // Reposition head
+        snakeHead.removeFromParent()
+        snakeHead.position = spawnPos
+        addChild(snakeHead)
+        currentAngle = 0
+        targetAngle  = 0
+        lastPlayerPosition = spawnPos
+
+        // Restore game state
+        isGameOver    = false
+        shieldActive  = false
+        multiplierActive   = false
+        multiplierTimeLeft = 0
+        magnetActive  = false
+        magnetTimeLeft = 0
+        ghostActive   = false
+        ghostTimeLeft  = 0
+        scoreMultiplier = 1
+        refreshPowerUpPanel()
+
+        // 3 seconds invincibility with flashing
+        invincibleTimeLeft = 3.0
+        snakeHead.run(SKAction.repeat(
+            SKAction.sequence([
+                SKAction.fadeAlpha(to: 0.25, duration: 0.18),
+                SKAction.fadeAlpha(to: 1.0,  duration: 0.18)
+            ]),
+            count: 8
+        ))
+
+        updateCoinDisplay()
         startBackgroundMusic()
     }
 
@@ -1611,6 +1733,78 @@ class GameScene: SKScene {
         scoreLabel.position = CGPoint(x: panelW / 2, y: panelH / 2)
         scorePanel.addChild(scoreLabel)
         addChild(scorePanel)
+        createCoinPanel()
+    }
+
+    func createCoinPanel() {
+        let hPad: CGFloat = 12, vPad: CGFloat = 7
+
+        let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+        lbl.text                    = "\(CoinManager.shared.balance)"
+        lbl.fontSize                = 16
+        lbl.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+        lbl.horizontalAlignmentMode = .left
+        lbl.verticalAlignmentMode   = .center
+        coinLabel = lbl
+
+        let iconW: CGFloat = 18
+        let textW = max(lbl.frame.width, 24)
+        let panelW = iconW + textW + hPad * 2 + 4
+        let panelH: CGFloat = lbl.frame.height + vPad * 2
+
+        let panel = SKShapeNode(rect: CGRect(x: 0, y: 0, width: panelW, height: panelH), cornerRadius: 10)
+        panel.fillColor   = SKColor(red: 0.12, green: 0.10, blue: 0.03, alpha: 0.85)
+        panel.strokeColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.35)
+        panel.lineWidth   = 1.0
+        panel.zPosition   = 500
+        coinPanel = panel
+
+        let cx = worldSize / 2
+        let spY = scorePanel.position.y
+        panel.position = CGPoint(x: cx - size.width/2 + 20, y: spY - panelH - 6)
+
+        let icon = SKLabelNode(fontNamed: "Arial")
+        icon.text                    = "🪙"
+        icon.fontSize                = 13
+        icon.horizontalAlignmentMode = .left
+        icon.verticalAlignmentMode   = .center
+        icon.position                = CGPoint(x: hPad, y: panelH / 2)
+        icon.zPosition               = 1
+        panel.addChild(icon)
+
+        lbl.position = CGPoint(x: hPad + iconW, y: panelH / 2)
+        panel.addChild(lbl)
+        addChild(panel)
+    }
+
+    func updateCoinDisplay() {
+        coinLabel?.text = "\(CoinManager.shared.balance)"
+    }
+
+    func awardBotKillCoins(botScore: Int) {
+        let bonus = max(10, min(25, botScore / 5 + 10))
+        sessionCoinsEarned += bonus
+        spawnCoinFloatingText("+\(bonus) 🪙", at: snakeHead.position)
+    }
+
+    func spawnCoinFloatingText(_ text: String, at position: CGPoint) {
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.text                    = text
+        label.fontSize                = 20
+        label.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode   = .center
+        label.position                = CGPoint(x: position.x + 30, y: position.y + 20)
+        label.zPosition               = 700
+        addChild(label)
+        label.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.moveBy(x: 0, y: 50, duration: 0.9),
+                SKAction.sequence([SKAction.wait(forDuration: 0.4),
+                                   SKAction.fadeOut(withDuration: 0.5)])
+            ]),
+            SKAction.removeFromParent()
+        ]))
     }
 
     func updateScoreDisplay() {
@@ -2214,6 +2408,11 @@ class GameScene: SKScene {
              .magnet, .ghost, .shrink:           pts = 0
         }
         score += pts * scoreMultiplier
+        // Earn coins proportional to food value
+        if pts > 0 {
+            let coinsGained = pts >= 5 ? 2 : 1
+            sessionCoinsEarned += coinsGained
+        }
         updateScoreDisplay()
         updateSpeedForScore()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -3724,6 +3923,7 @@ class GameScene: SKScene {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {
+                    awardBotKillCoins(botScore: bots[i].score)
                     respawnBot(i)   // bot dies simultaneously
                 }
                 return true     // player also dies (caller triggers playerGameOver)
@@ -3752,6 +3952,7 @@ class GameScene: SKScene {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {
+                    awardBotKillCoins(botScore: bots[i].score)
                     respawnBot(i)
                 }
             }
@@ -4062,7 +4263,9 @@ class GameScene: SKScene {
 
             if isGameOver {
                 let tappedNames = nodes(at: loc).compactMap { $0.name }
-                if tappedNames.contains("restartButton") {
+                if tappedNames.contains("reviveButton") {
+                    revivePlayer()
+                } else if tappedNames.contains("restartButton") {
                     restartGame()
                 } else if tappedNames.contains("playAgainButton") {
                     shutdown()
