@@ -223,6 +223,10 @@ class GameScene: SKScene {
     let fruitEmojis: [String] = ["🍎","🍊","🍋","🍇","🍓","🍉","🍑","🍌","🫐","🍒"]
     var foodItems: [SKNode] = []
     var foodTypes: [FoodType]   = []
+    // Cluster-bonus cache: avoids O(n²) recomputation every bot-AI tick.
+    // Rebuilt lazily whenever food is added or removed (clusterBonusDirty = true).
+    var cachedClusterBonuses: [CGFloat] = []
+    var clusterBonusDirty: Bool = true
     // Trail food
     var trailFoodTimer: CGFloat = 0
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
@@ -2400,10 +2404,10 @@ class GameScene: SKScene {
         let thresholdSq = combinedRadius * combinedRadius
         for index in skip..<points.count {
             let dx = head.x - points[index].x
+            if abs(dx) >= combinedRadius { continue }
             let dy = head.y - points[index].y
-            if dx * dx + dy * dy < thresholdSq {
-                return true
-            }
+            if abs(dy) >= combinedRadius { continue }
+            if dx * dx + dy * dy < thresholdSq { return true }
         }
         return false
     }
@@ -2413,10 +2417,10 @@ class GameScene: SKScene {
         let thresholdSq = combinedRadius * combinedRadius
         for index in startIndex..<points.count {
             let dx = head.x - points[index].x
+            if abs(dx) >= combinedRadius { continue }
             let dy = head.y - points[index].y
-            if dx * dx + dy * dy < thresholdSq {
-                return true
-            }
+            if abs(dy) >= combinedRadius { continue }
+            if dx * dx + dy * dy < thresholdSq { return true }
         }
         return false
     }
@@ -2739,6 +2743,7 @@ class GameScene: SKScene {
         addChild(food)
         foodItems.append(food)
         foodTypes.append(type)
+        clusterBonusDirty = true
     }
 
     func randomPositionInArena() -> CGPoint {
@@ -2802,6 +2807,8 @@ class GameScene: SKScene {
         foodItems.append(food)
         foodTypes.append(.trail)
         activeTrailFoodCount += 1
+        // Do NOT set clusterBonusDirty here: trail food spawns ~53×/sec and the cluster bonus
+        // cache doesn't need trail-food precision for bot food-targeting decisions.
 
         food.run(SKAction.sequence([
             SKAction.fadeIn(withDuration: 0.25),
@@ -2913,6 +2920,7 @@ class GameScene: SKScene {
             foodItems[index].removeFromParent()
             foodItems.remove(at: index)
             foodTypes.remove(at: index)
+            clusterBonusDirty = true
             spawnFood()
         }
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
@@ -3684,15 +3692,23 @@ class GameScene: SKScene {
         let softLimit = collisionRadius + bodySegmentRadius + 24
         var minClearance = CGFloat.greatestFiniteMagnitude
 
-        for seg in bodySegments {
-            let dist = hypot(point.x - seg.position.x, point.y - seg.position.y) - hardLimit
+        // Use plain CGPoint cache instead of SKNode .position (avoids ObjC runtime overhead).
+        // Bounding-box fast rejection skips ~90% of hypot() calls.
+        for pos in bodyPositionCache {
+            let dx = point.x - pos.x
+            let dy = point.y - pos.y
+            if abs(dx) > hardLimit || abs(dy) > hardLimit { continue }
+            let dist = hypot(dx, dy) - hardLimit
             minClearance = min(minClearance, dist)
             if dist < 0 { return (dist, true) }
         }
 
         for j in bots.indices where j != i && bots[j].isActive && !bots[j].isDead {
-            for seg in bots[j].body {
-                let dist = hypot(point.x - seg.position.x, point.y - seg.position.y) - hardLimit
+            for pos in bots[j].bodyPositionCache {
+                let dx = point.x - pos.x
+                let dy = point.y - pos.y
+                if abs(dx) > hardLimit || abs(dy) > hardLimit { continue }
+                let dist = hypot(dx, dy) - hardLimit
                 minClearance = min(minClearance, dist)
                 if dist < 0 { return (dist, true) }
             }
@@ -3733,18 +3749,28 @@ class GameScene: SKScene {
         return threats
     }
 
-    private func clusterBonus(around position: CGPoint, excluding foodIndex: Int) -> CGFloat {
-        var bonus: CGFloat = 0
-        for (i, food) in foodItems.enumerated() where i != foodIndex && food.parent != nil {
-            let distance = hypot(food.position.x - position.x, food.position.y - position.y)
-            guard distance < 110 else { continue }
-            switch foodTypes[i] {
-            case .death: bonus += 0.55
-            case .trail: bonus += 0.18
-            default:     bonus += 0.10
+    /// Rebuilds per-food cluster bonuses when the food set changes (lazy, O(n²) once per change).
+    private func rebuildClusterBonusesIfNeeded() {
+        guard clusterBonusDirty else { return }
+        cachedClusterBonuses = Array(repeating: 0, count: foodItems.count)
+        for i in foodItems.indices where foodItems[i].parent != nil {
+            var bonus: CGFloat = 0
+            let px = foodItems[i].position.x
+            let py = foodItems[i].position.y
+            for j in foodItems.indices where j != i && foodItems[j].parent != nil {
+                let dx = foodItems[j].position.x - px
+                let dy = foodItems[j].position.y - py
+                if abs(dx) > 110 || abs(dy) > 110 { continue }
+                guard hypot(dx, dy) < 110 else { continue }
+                switch foodTypes[j] {
+                case .death: bonus += 0.55
+                case .trail: bonus += 0.18
+                default:     bonus += 0.10
+                }
             }
+            cachedClusterBonuses[i] = min(2.4, bonus)
         }
-        return min(2.4, bonus)
+        clusterBonusDirty = false
     }
 
     private func interestingFoodTargets(for i: Int, limit: Int = 8) -> [BotFoodTarget] {
@@ -3752,13 +3778,16 @@ class GameScene: SKScene {
         let position = bots[i].position
         var targets: [BotFoodTarget] = []
 
+        rebuildClusterBonusesIfNeeded()
+
         for (index, food) in foodItems.enumerated() where food.parent != nil {
             let distance = hypot(food.position.x - position.x, food.position.y - position.y)
             guard distance < profile.foodSearchRadius else { continue }
 
+            let bonus = index < cachedClusterBonuses.count ? cachedClusterBonuses[index] : 0
             let utility = GameLogic.botFoodValue(
                 type: foodTypes[index],
-                clusterBonus: clusterBonus(around: food.position, excluding: index),
+                clusterBonus: bonus,
                 greed: profile.greed,
                 scavengerBias: profile.scavengerBias
             ) * max(0.18, 1.0 - distance / profile.foodSearchRadius)
@@ -4270,8 +4299,11 @@ class GameScene: SKScene {
 
         head.position = bots[index].position
         head.zRotation = (bots[index].angle * 180 / .pi - 90) * .pi / 180
-        head.glowWidth = bots[index].isBoosting ? 10 : 5
-        head.setScale(bots[index].isBoosting ? 1.04 : 1.0)
+        // Guard SpriteKit property writes: setting unchanged values still triggers internal state dirty.
+        let targetGlow: CGFloat = bots[index].isBoosting ? 10 : 5
+        if head.glowWidth != targetGlow { head.glowWidth = targetGlow }
+        let targetScale: CGFloat = bots[index].isBoosting ? 1.04 : 1.0
+        if head.xScale != targetScale { head.setScale(targetScale) }
 
         fillArcPositions(
             history: bots[index].posHistory,
@@ -4416,6 +4448,7 @@ class GameScene: SKScene {
                 food.removeFromParent()
                 foodItems.remove(at: i)
                 let type = foodTypes.remove(at: i)
+                clusterBonusDirty = true
                 spawnFood()
                 for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
                 bots[botIndex].score += nutrition.score
@@ -4974,6 +5007,13 @@ class GameScene: SKScene {
         let dangerCount = shieldActive ? max(1, Int(CGFloat(totalSegs) * 0.30)) : 0
         let dangerStart = totalSegs - dangerCount
         if shieldActive { tailWigglePhase += dt * 8.0 }
+
+        // Viewport bounds for culling off-screen segment writes (cache computed once per frame).
+        // bodyPositionCache is always updated fully — only the SKNode write is skipped off-screen.
+        let camPos   = cameraNode.position
+        let viewHalfW = (size.width  * 0.5) / cameraNode.xScale + bodySegmentRadius * 2
+        let viewHalfH = (size.height * 0.5) / cameraNode.yScale + bodySegmentRadius * 2
+
         for (i, seg) in bodySegments.enumerated() {
             var pos = bodyPositionCache[i]
             let isWiggling = shieldActive && i >= dangerStart
@@ -4993,8 +5033,12 @@ class GameScene: SKScene {
                 seg.setScale(baseTaper * (1.0 - progress * 0.45))
                 // No strokeColor / glowWidth override — keep the body's own colour
             }
-            seg.position = pos
             bodyPositionCache[i] = pos
+            // Only push position to the SKNode when it is within the visible viewport.
+            // The cache above is always authoritative for AI collision checks.
+            if abs(pos.x - camPos.x) < viewHalfW && abs(pos.y - camPos.y) < viewHalfH {
+                seg.position = pos
+            }
         }
 
         // Shield tail kills bots on contact
