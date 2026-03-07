@@ -291,11 +291,19 @@ struct StartScreenView: View {
                 .foregroundStyle(Color.white.opacity(0.55))
                 .kerning(2)
 
-            HStack(spacing: 8) {
-                ModeButton(icon: "🐍", title: "Casual", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
-                    .accessibilityIdentifier("modeCasual")
-                ModeButton(icon: "⚔️", title: "Expert", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
-                    .accessibilityIdentifier("modeExpert")
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    ModeButton(icon: "🐍", title: "Casual", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
+                        .accessibilityIdentifier("modeCasual")
+                    ModeButton(icon: "⚔️", title: "Expert", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
+                        .accessibilityIdentifier("modeExpert")
+                }
+                HStack(spacing: 8) {
+                    ModeButton(icon: "🐭", title: "Maze Hunt", isSelected: selectedGameMode == .mazeHunt) { selectedGameMode = .mazeHunt }
+                        .accessibilityIdentifier("modeMazeHunt")
+                    ModeButton(icon: "🏁", title: "Snake Race", isSelected: selectedGameMode == .snakeRace) { selectedGameMode = .snakeRace }
+                        .accessibilityIdentifier("modeSnakeRace")
+                }
             }
         }
     }
@@ -350,6 +358,8 @@ struct StartScreenView: View {
         case .online:  return "Offline-first build · Online mode is temporarily unavailable"
         case .offline: return "99 bots · Casual mode"
         case .challenge: return "Expert mode · delayed nemesis · survive the hunt"
+        case .mazeHunt: return "Maze Hunt · catch the mouse before it escapes"
+        case .snakeRace: return "Snake Race · clear checkpoints through moving hazards"
         }
     }
 }
