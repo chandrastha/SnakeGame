@@ -328,7 +328,6 @@ class GameScene: SKScene {
     let botDeactivationDistance: CGFloat = 1120.0
     var botVisibilityUpdateTimer: CGFloat = 0
     var frameCounter = 0
-    var botBodyUpdateFrame: Int = 0
 
     // MARK: - Remote Players (Online mode)
     var remotePlayers: [Int: RemotePlayer] = [:]
@@ -3534,21 +3533,19 @@ class GameScene: SKScene {
         head.glowWidth = bots[index].isBoosting ? 10 : 5
         head.setScale(bots[index].isBoosting ? 1.04 : 1.0)
 
-        if botBodyUpdateFrame == 0 {
-            fillArcPositions(
-                history: bots[index].posHistory,
-                leadPos: bots[index].position,
-                count: bots[index].body.count,
-                spacing: segmentPixelSpacing,
-                into: &bots[index].bodyPositionCache
-            )
-            for (segmentIndex, segment) in bots[index].body.enumerated() {
-                segment.position = bots[index].bodyPositionCache[segmentIndex]
-                let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? CGFloat(3) : 0
-                segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
-                    ? 6
-                    : baseGlow
-            }
+        fillArcPositions(
+            history: bots[index].posHistory,
+            leadPos: bots[index].position,
+            count: bots[index].body.count,
+            spacing: segmentPixelSpacing,
+            into: &bots[index].bodyPositionCache
+        )
+        for (segmentIndex, segment) in bots[index].body.enumerated() {
+            segment.position = bots[index].bodyPositionCache[segmentIndex]
+            let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? CGFloat(3) : 0
+            segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
+                ? 6
+                : baseGlow
         }
     }
 
@@ -4171,7 +4168,6 @@ class GameScene: SKScene {
 
         updatePowerUps(dt: dt)
         frameCounter += 1
-        botBodyUpdateFrame = (botBodyUpdateFrame + 1) % 2
 
         // --- Boost Score Drain (1 pt per 200ms) ---
         if isBoostHeld {
