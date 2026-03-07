@@ -3,13 +3,14 @@
 import SwiftUI
 
 struct SnakeCustomizeView: View {
-    @AppStorage("selectedSnakeColorIndex")   var selectedIndex: Int = 0
-    @AppStorage("selectedSnakePatternIndex") var selectedPatternIndex: Int = 0
-    @Environment(\.dismiss) var dismiss
+    @AppStorage("selectedSnakeColorIndex")   private var selectedIndex: Int = 0
+    @AppStorage("selectedSnakePatternIndex") private var selectedPatternIndex: Int = 0
+    @Environment(\.dismiss) private var dismiss
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 4)
 
-    private var selected: SnakeColorTheme { snakeColorThemes[selectedIndex] }
+    private var safeSelectedIndex: Int { normalizedSnakeColorIndex(selectedIndex) }
+    private var selected: SnakeColorTheme { snakeColorThemes[safeSelectedIndex] }
     private var selectedPattern: SnakePattern { SnakePattern(rawValue: selectedPatternIndex) ?? .solid }
 
     var body: some View {
@@ -71,7 +72,7 @@ struct SnakeCustomizeView: View {
                                 isSelected: selectedIndex == theme.id
                             ) {
                                 withAnimation(.spring(response: 0.25, dampingFraction: 0.68)) {
-                                    selectedIndex = theme.id
+                                    selectedIndex = normalizedSnakeColorIndex(theme.id)
                                 }
                             }
                         }

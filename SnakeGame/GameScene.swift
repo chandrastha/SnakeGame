@@ -4792,34 +4792,49 @@ class GameScene: SKScene {
 
     // MARK: - Power-up Updates
     func updatePowerUps(dt: CGFloat) {
-        var changed = false
+        let priorMultiplierSeconds = Int(ceil(max(0, multiplierTimeLeft)))
+        let priorMagnetSeconds = Int(ceil(max(0, magnetTimeLeft)))
+        let priorGhostSeconds = Int(ceil(max(0, ghostTimeLeft)))
 
-        if invincibleTimeLeft > 0 { invincibleTimeLeft = max(0, invincibleTimeLeft - dt) }
+        var shouldRefreshPowerUpPanel = false
+
+        if invincibleTimeLeft > 0 {
+            invincibleTimeLeft = max(0, invincibleTimeLeft - dt)
+        }
 
         if multiplierActive {
-            multiplierTimeLeft -= dt
-            if multiplierTimeLeft <= 0 {
-                multiplierActive = false; multiplierTimeLeft = 0; scoreMultiplier = 1
+            multiplierTimeLeft = max(0, multiplierTimeLeft - dt)
+            if multiplierTimeLeft == 0 {
+                multiplierActive = false
+                scoreMultiplier = 1
+                shouldRefreshPowerUpPanel = true
             }
-            changed = true
         }
 
         if magnetActive {
-            magnetTimeLeft -= dt
-            if magnetTimeLeft <= 0 { magnetActive = false; magnetTimeLeft = 0 }
-            changed = true
+            magnetTimeLeft = max(0, magnetTimeLeft - dt)
+            if magnetTimeLeft == 0 {
+                magnetActive = false
+                shouldRefreshPowerUpPanel = true
+            }
         }
 
         if ghostActive {
-            ghostTimeLeft -= dt
-            if ghostTimeLeft <= 0 {
-                ghostActive = false; ghostTimeLeft = 0
+            ghostTimeLeft = max(0, ghostTimeLeft - dt)
+            if ghostTimeLeft == 0 {
+                ghostActive = false
                 hideGhostEffect()
+                shouldRefreshPowerUpPanel = true
             }
-            changed = true
         }
 
-        if changed { refreshPowerUpPanel() }
+        let multiplierSecondsChanged = multiplierActive && Int(ceil(multiplierTimeLeft)) != priorMultiplierSeconds
+        let magnetSecondsChanged = magnetActive && Int(ceil(magnetTimeLeft)) != priorMagnetSeconds
+        let ghostSecondsChanged = ghostActive && Int(ceil(ghostTimeLeft)) != priorGhostSeconds
+
+        if shouldRefreshPowerUpPanel || multiplierSecondsChanged || magnetSecondsChanged || ghostSecondsChanged {
+            refreshPowerUpPanel()
+        }
     }
 
     // MARK: - Game Loop
@@ -4850,11 +4865,17 @@ class GameScene: SKScene {
                 setBoostButtonActive(false)
             } else {
                 boostScoreDrainTimer += dt
-                if boostScoreDrainTimer >= 0.2 {
-                    boostScoreDrainTimer = 0
+                while boostScoreDrainTimer >= 0.2 {
+                    boostScoreDrainTimer -= 0.2
                     score = max(0, score - 1)
                     updateScoreDisplay()
                     updateSpeedForScore()
+                    if score == 0 {
+                        isBoostHeld = false
+                        boostTouch = nil
+                        setBoostButtonActive(false)
+                        break
+                    }
                 }
             }
         } else {

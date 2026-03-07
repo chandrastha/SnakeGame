@@ -14,7 +14,7 @@ struct OnlineMatchView: View {
     let onCancel:     () -> Void
 
     // MARK: - Observed network state
-    @ObservedObject private var photon = PhotonManager.shared
+    @StateObject private var photon = PhotonManager.shared
 
     // MARK: - Local UI state
     @State private var didStartConnect = false
