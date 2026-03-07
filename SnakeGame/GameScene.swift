@@ -329,6 +329,10 @@ class GameScene: SKScene {
             spawnMazeMice(using: plan)
         }
 
+        mazeModeLabel?.removeFromParent()
+        mazeObjectiveLabel?.removeFromParent()
+        mazePickupStatusLabel?.removeFromParent()
+
         let label = SKLabelNode(fontNamed: "Arial-BoldMT")
         label.fontSize = 18
         label.fontColor = SKColor(red: 1.0, green: 0.9, blue: 0.65, alpha: 1)
@@ -639,8 +643,10 @@ class GameScene: SKScene {
     }
 
     func mazeRoundIsFair() -> Bool {
-        guard let target = mazeMice.first?.position else { return false }
+        guard !mazeMice.isEmpty else { return false }
+
         let start = snakeHead.position
+        let targets = mazeMice.map(\.position)
         let step: CGFloat = 48
         let cols = 26
         let rows = 22
@@ -671,13 +677,11 @@ class GameScene: SKScene {
         }
 
         let startCell = nearestCell(to: start)
-        let goalCell = nearestCell(to: target)
         var queue: [(Int, Int)] = [startCell]
         var seen: Set<String> = ["\(startCell.0)-\(startCell.1)"]
 
         while !queue.isEmpty {
             let cell = queue.removeFirst()
-            if cell == goalCell { return true }
             for delta in [(-1,0),(1,0),(0,-1),(0,1)] {
                 let nc = cell.0 + delta.0
                 let nr = cell.1 + delta.1
@@ -690,7 +694,15 @@ class GameScene: SKScene {
                 queue.append((nc, nr))
             }
         }
-        return false
+
+        for target in targets {
+            let goal = nearestCell(to: target)
+            if !seen.contains("\(goal.0)-\(goal.1)") {
+                return false
+            }
+        }
+
+        return true
     }
 
     // MARK: - Snake Race Mode
@@ -1934,6 +1946,12 @@ class GameScene: SKScene {
         mazePickups.removeAll()
         mazePickupKinds.removeAll()
         mazeMouseNode = nil
+        mazeModeLabel?.removeFromParent()
+        mazeObjectiveLabel?.removeFromParent()
+        mazePickupStatusLabel?.removeFromParent()
+        mazeModeLabel = nil
+        mazeObjectiveLabel = nil
+        mazePickupStatusLabel = nil
 
         if mazeRoundInBand == 1 {
             runModeImpactVFX(color: .green)
