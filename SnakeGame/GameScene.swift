@@ -180,6 +180,10 @@ class GameScene: SKScene {
     let segmentPixelSpacing:     CGFloat = 14.0
     let foodCount:               Int     = 200
     let maxDeltaTime:            Double  = 1.0 / 30.0
+    let minimumGameplayFPS:      Double  = 30.0
+    var botUpdateAccumulator:    CGFloat = 0
+    var botCollisionAccumulator: CGFloat = 0
+    var botHeadCheckAccumulator: CGFloat = 0
 
     // MARK: - Speed & Boost
     var currentMoveSpeed: CGFloat = 100.0
@@ -457,6 +461,9 @@ class GameScene: SKScene {
         joystickThumbOffset = .zero
         joystickEngagement  = 0
         frameCounter        = 0
+        botUpdateAccumulator = 0
+        botCollisionAccumulator = 0
+        botHeadCheckAccumulator = 0
         leaderboardUpdateTimer = 0
         minimapUpdateTimer     = 0
         leaderArrowUpdateTimer = 0
@@ -4280,10 +4287,25 @@ class GameScene: SKScene {
         } else if isSnakeRaceMode {
             updateSnakeRaceMode(dt: dt)
         } else if gameMode != .online {
-            let updateAI = frameCounter % 2 == 0  // bot AI at ~30 Hz
-            updateBots(dt: dt, updateAI: updateAI)
-            if frameCounter % 3 == 0 { checkBotVsBotCollisions() }        // bot-vs-bot at ~20 Hz
-            if frameCounter % 3 == 0 { checkBotHeadsHitPlayerBody() }    // bot head → player body
+            let simulationStep = CGFloat(1.0 / minimumGameplayFPS)
+            botUpdateAccumulator += dt
+            botCollisionAccumulator += dt
+            botHeadCheckAccumulator += dt
+
+            while botUpdateAccumulator >= simulationStep {
+                updateBots(dt: simulationStep, updateAI: true)
+                botUpdateAccumulator -= simulationStep
+            }
+
+            while botCollisionAccumulator >= simulationStep {
+                checkBotVsBotCollisions()
+                botCollisionAccumulator -= simulationStep
+            }
+
+            while botHeadCheckAccumulator >= simulationStep {
+                checkBotHeadsHitPlayerBody()
+                botHeadCheckAccumulator -= simulationStep
+            }
         } else if gameMode == .online {
             if frameCounter % 4 == 0 {
                 PhotonManager.shared.sendPlayerState(
