@@ -251,6 +251,22 @@ class GameScene: SKScene {
     var isPausedGame:       Bool    = false
     var lastPlayerPosition: CGPoint = .zero
 
+    // MARK: - Maze Hunt Mode
+    var mazeWalls: [SKShapeNode] = []
+    var mazeExits: [SKShapeNode] = []
+    var mazeMouseNode: SKLabelNode?
+    var mazeModeLabel: SKLabelNode?
+    var mazeEscapeTimer: CGFloat = 45
+    var mazeEscapeTarget: CGPoint = .zero
+
+    // MARK: - Snake Race Mode
+    var raceObstacles: [SKShapeNode] = []
+    var raceCheckpoints: [SKShapeNode] = []
+    var raceModeLabel: SKLabelNode?
+    var raceCurrentCheckpoint: Int = 0
+    var raceTimeRemaining: CGFloat = 75
+    var raceIsFinished: Bool = false
+
     // MARK: - Power-ups
     var shieldActive:        Bool    = false
     var multiplierActive:    Bool    = false
@@ -266,6 +282,9 @@ class GameScene: SKScene {
     /// Target body segment count derived directly from score.
     /// initialBodyCount + 1 segment per 10 score points.
     var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 10) }
+    var isMazeHuntMode: Bool { gameMode == .mazeHunt }
+    var isSnakeRaceMode: Bool { gameMode == .snakeRace }
+    var isSpecialOfflineMode: Bool { isMazeHuntMode || isSnakeRaceMode }
 
     // MARK: - Other UI
     var pauseButton:  SKNode?
@@ -445,6 +464,11 @@ class GameScene: SKScene {
         trailFoodTimer       = 0
         activeTrailFoodCount = 0
         tailWigglePhase      = 0
+        mazeEscapeTimer      = 45
+        mazeEscapeTarget     = .zero
+        raceCurrentCheckpoint = 0
+        raceTimeRemaining    = 75
+        raceIsFinished       = false
 
         removeAllChildren()
         bodySegments.removeAll()
@@ -466,10 +490,23 @@ class GameScene: SKScene {
         miniLeaderboard   = nil
         leaderArrowNode   = nil
         leaderArrowLabel  = nil
+        mazeWalls.removeAll()
+        mazeExits.removeAll()
+        mazeMouseNode = nil
+        mazeModeLabel = nil
+        raceObstacles.removeAll()
+        raceCheckpoints.removeAll()
+        raceModeLabel = nil
 
-        backgroundColor = gameMode == .challenge
-            ? SKColor(red: 0.11, green: 0.03, blue: 0.03, alpha: 1.0)
-            : SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
+        if gameMode == .challenge {
+            backgroundColor = SKColor(red: 0.11, green: 0.03, blue: 0.03, alpha: 1.0)
+        } else if isMazeHuntMode {
+            backgroundColor = SKColor(red: 0.07, green: 0.08, blue: 0.16, alpha: 1.0)
+        } else if isSnakeRaceMode {
+            backgroundColor = SKColor(red: 0.03, green: 0.10, blue: 0.12, alpha: 1.0)
+        } else {
+            backgroundColor = SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
+        }
         arenaMinX = 0; arenaMaxX = worldSize
         arenaMinY = 0; arenaMaxY = worldSize
 
@@ -500,19 +537,26 @@ class GameScene: SKScene {
         createMiniLeaderboard()
         createMinimap()
         createLeaderArrow()
+        if isMazeHuntMode {
+            createMazeHuntModeContent()
+        } else if isSnakeRaceMode {
+            createSnakeRaceModeContent()
+        }
         if gameMode != .online { createPauseButton() }
         createJoystick()
         createBoostButton()
         if gameMode == .online {
             prepareOnlineFoodSlots()
-        } else {
+        } else if !isSpecialOfflineMode {
             spawnInitialFood()
+        } else {
+            boostButtonNode?.alpha = 0.5
         }
         updateScoreDisplay()
 
         if gameMode == .online {
             PhotonManager.shared.delegate = self
-        } else {
+        } else if !isSpecialOfflineMode {
             spawnBots()
         }
 
@@ -532,9 +576,15 @@ class GameScene: SKScene {
         // Arena background fill
         let arenaBg = SKShapeNode(rect: CGRect(x: 0, y: 0, width: worldSize, height: worldSize))
         let isChallengeMode = gameMode == .challenge
-        arenaBg.fillColor   = isChallengeMode
-            ? SKColor(red: 0.22, green: 0.06, blue: 0.07, alpha: 1.0)
-            : SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
+        if isMazeHuntMode {
+            arenaBg.fillColor = SKColor(red: 0.12, green: 0.15, blue: 0.30, alpha: 1.0)
+        } else if isSnakeRaceMode {
+            arenaBg.fillColor = SKColor(red: 0.08, green: 0.26, blue: 0.28, alpha: 1.0)
+        } else {
+            arenaBg.fillColor = isChallengeMode
+                ? SKColor(red: 0.22, green: 0.06, blue: 0.07, alpha: 1.0)
+                : SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
+        }
         arenaBg.strokeColor = .clear
         arenaBg.zPosition   = -11
         addChild(arenaBg)
@@ -550,9 +600,19 @@ class GameScene: SKScene {
             path.closeSubpath()
 
             let band = SKShapeNode(path: path)
-            band.fillColor = bandIndex.isMultiple(of: 2)
-                ? (isChallengeMode ? SKColor(red: 0.52, green: 0.14, blue: 0.12, alpha: 0.24) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
-                : (isChallengeMode ? SKColor(red: 0.16, green: 0.04, blue: 0.04, alpha: 0.22) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
+            if isMazeHuntMode {
+                band.fillColor = bandIndex.isMultiple(of: 2)
+                    ? SKColor(red: 0.32, green: 0.40, blue: 0.82, alpha: 0.15)
+                    : SKColor(red: 0.18, green: 0.22, blue: 0.50, alpha: 0.14)
+            } else if isSnakeRaceMode {
+                band.fillColor = bandIndex.isMultiple(of: 2)
+                    ? SKColor(red: 0.16, green: 0.62, blue: 0.62, alpha: 0.16)
+                    : SKColor(red: 0.07, green: 0.34, blue: 0.38, alpha: 0.14)
+            } else {
+                band.fillColor = bandIndex.isMultiple(of: 2)
+                    ? (isChallengeMode ? SKColor(red: 0.52, green: 0.14, blue: 0.12, alpha: 0.24) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
+                    : (isChallengeMode ? SKColor(red: 0.16, green: 0.04, blue: 0.04, alpha: 0.22) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
+            }
             band.strokeColor = .clear
             band.zPosition = -10.8
             addChild(band)
@@ -695,6 +755,145 @@ class GameScene: SKScene {
         dots.strokeColor = .clear
         dots.zPosition   = -10
         addChild(dots)
+    }
+
+    // MARK: - Maze Hunt
+    func createMazeHuntModeContent() {
+        mazeEscapeTimer = 55
+        createMazeWalls()
+        createMazeExitNodes()
+
+        let mouse = SKLabelNode(text: "🐭")
+        mouse.fontSize = 30
+        mouse.position = CGPoint(x: worldSize / 2 + 420, y: worldSize / 2 + 340)
+        mouse.zPosition = 220
+        addChild(mouse)
+        mazeMouseNode = mouse
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize = 18
+        label.fontColor = SKColor(red: 1.0, green: 0.9, blue: 0.65, alpha: 1)
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 540)
+        label.zPosition = 610
+        addChild(label)
+        mazeModeLabel = label
+        updateMazeHUD()
+    }
+
+    func createMazeWalls() {
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let walls: [CGRect] = [
+            CGRect(x: center.x - 520, y: center.y + 420, width: 1040, height: 36),
+            CGRect(x: center.x - 520, y: center.y - 456, width: 1040, height: 36),
+            CGRect(x: center.x - 520, y: center.y - 456, width: 36, height: 912),
+            CGRect(x: center.x + 484, y: center.y - 456, width: 36, height: 912),
+
+            CGRect(x: center.x - 420, y: center.y + 220, width: 840, height: 26),
+            CGRect(x: center.x - 420, y: center.y - 30, width: 320, height: 26),
+            CGRect(x: center.x + 80, y: center.y - 30, width: 340, height: 26),
+            CGRect(x: center.x - 240, y: center.y - 280, width: 520, height: 26),
+
+            CGRect(x: center.x - 180, y: center.y - 280, width: 26, height: 510),
+            CGRect(x: center.x + 170, y: center.y - 210, width: 26, height: 430),
+            CGRect(x: center.x - 410, y: center.y - 120, width: 26, height: 360)
+        ]
+
+        mazeWalls = walls.map { rect in
+            let wall = SKShapeNode(rect: rect, cornerRadius: 8)
+            wall.fillColor = SKColor(red: 0.25, green: 0.35, blue: 0.82, alpha: 0.75)
+            wall.strokeColor = SKColor(red: 0.7, green: 0.85, blue: 1.0, alpha: 0.9)
+            wall.glowWidth = 5
+            wall.lineWidth = 2
+            wall.zPosition = 120
+            addChild(wall)
+            return wall
+        }
+    }
+
+    func createMazeExitNodes() {
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let exitRects = [
+            CGRect(x: center.x - 56, y: center.y + 430, width: 112, height: 24),
+            CGRect(x: center.x + 486, y: center.y - 40, width: 24, height: 112)
+        ]
+
+        mazeExits = exitRects.map { rect in
+            let exitNode = SKShapeNode(rect: rect, cornerRadius: 6)
+            exitNode.fillColor = SKColor(red: 0.95, green: 0.35, blue: 0.35, alpha: 0.88)
+            exitNode.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.72, alpha: 1.0)
+            exitNode.glowWidth = 8
+            exitNode.zPosition = 130
+            let pulse = SKAction.sequence([SKAction.fadeAlpha(to: 0.45, duration: 0.55), SKAction.fadeAlpha(to: 0.95, duration: 0.55)])
+            exitNode.run(SKAction.repeatForever(pulse))
+            addChild(exitNode)
+            return exitNode
+        }
+    }
+
+    func updateMazeHUD() {
+        mazeModeLabel?.text = "Maze Hunt · Catch the mouse · Time: \(Int(max(0, mazeEscapeTimer)))"
+    }
+
+    // MARK: - Snake Race
+    func createSnakeRaceModeContent() {
+        raceTimeRemaining = 80
+        createRaceObstaclesAndCheckpoints()
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize = 18
+        label.fontColor = SKColor(red: 0.60, green: 0.95, blue: 0.95, alpha: 1)
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 540)
+        label.zPosition = 610
+        addChild(label)
+        raceModeLabel = label
+        updateRaceHUD()
+    }
+
+    func createRaceObstaclesAndCheckpoints() {
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let obstacleRects: [CGRect] = [
+            CGRect(x: center.x - 320, y: center.y + 320, width: 640, height: 34),
+            CGRect(x: center.x - 500, y: center.y + 100, width: 420, height: 34),
+            CGRect(x: center.x + 80, y: center.y + 100, width: 420, height: 34),
+            CGRect(x: center.x - 380, y: center.y - 120, width: 760, height: 34),
+            CGRect(x: center.x - 500, y: center.y - 340, width: 400, height: 34),
+            CGRect(x: center.x + 120, y: center.y - 340, width: 400, height: 34)
+        ]
+
+        raceObstacles = obstacleRects.map { rect in
+            let obstacle = SKShapeNode(rect: rect, cornerRadius: 10)
+            obstacle.fillColor = SKColor(red: 0.06, green: 0.75, blue: 0.75, alpha: 0.75)
+            obstacle.strokeColor = SKColor(red: 0.6, green: 1.0, blue: 1.0, alpha: 0.9)
+            obstacle.glowWidth = 7
+            obstacle.zPosition = 120
+            addChild(obstacle)
+            return obstacle
+        }
+
+        let checkpoints: [CGPoint] = [
+            CGPoint(x: center.x, y: center.y + 470),
+            CGPoint(x: center.x - 470, y: center.y + 10),
+            CGPoint(x: center.x + 470, y: center.y - 210),
+            CGPoint(x: center.x, y: center.y - 470)
+        ]
+
+        raceCheckpoints = checkpoints.enumerated().map { index, point in
+            let ring = SKShapeNode(circleOfRadius: 54)
+            ring.position = point
+            ring.fillColor = .clear
+            ring.strokeColor = index == 0 ? SKColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 1) : SKColor(red: 0.55, green: 0.65, blue: 0.65, alpha: 0.6)
+            ring.lineWidth = 6
+            ring.glowWidth = index == 0 ? 12 : 0
+            ring.zPosition = 115
+            addChild(ring)
+            return ring
+        }
+    }
+
+    func updateRaceHUD() {
+        raceModeLabel?.text = "Snake Race · CP \(min(raceCurrentCheckpoint + 1, raceCheckpoints.count))/\(max(1, raceCheckpoints.count)) · Time: \(Int(max(0, raceTimeRemaining)))"
     }
 
     // MARK: - Countdown
@@ -945,10 +1144,15 @@ class GameScene: SKScene {
         )
 
         if normalized > 0 {
-            targetAngle = angle
+            let blendedAngle = isSnakeRaceMode
+                ? shortestAngleLerp(from: currentAngle, to: angle, blend: 0.55 + 0.35 * normalized)
+                : angle
+            targetAngle = blendedAngle
             isTouching  = true
+            joystickThumbNode?.alpha = 0.92
         } else {
             isTouching = false
+            joystickThumbNode?.alpha = 0.72
         }
     }
 
@@ -958,6 +1162,11 @@ class GameScene: SKScene {
         joystickThumbNode?.run(SKAction.move(to: joystickCenter, duration: 0.12))
         isTouching    = false
         joystickTouch = nil
+    }
+
+    func shortestAngleLerp(from: CGFloat, to: CGFloat, blend: CGFloat) -> CGFloat {
+        let delta = atan2(sin(to - from), cos(to - from))
+        return from + delta * max(0, min(1, blend))
     }
 
     // MARK: - Boost Button
@@ -1041,6 +1250,125 @@ class GameScene: SKScene {
         )
     }
 
+    func collidesWithShapeWalls(_ walls: [SKShapeNode], padding: CGFloat = 8) -> Bool {
+        walls.contains { wall in
+            wall.frame.insetBy(dx: -padding, dy: -padding).contains(snakeHead.position)
+        }
+    }
+
+    func runModeImpactVFX(color: SKColor) {
+        let ring = SKShapeNode(circleOfRadius: 14)
+        ring.position = snakeHead.position
+        ring.strokeColor = color
+        ring.lineWidth = 4
+        ring.glowWidth = 10
+        ring.zPosition = 700
+        addChild(ring)
+        ring.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.scale(to: 5.0, duration: 0.28),
+                SKAction.fadeOut(withDuration: 0.28)
+            ]),
+            SKAction.removeFromParent()
+        ]))
+    }
+
+    func updateMazeMode(dt: CGFloat) {
+        guard isMazeHuntMode else { return }
+        mazeEscapeTimer -= dt
+        updateMazeHUD()
+
+        guard let mouse = mazeMouseNode else { return }
+
+        if collidesWithShapeWalls(mazeWalls, padding: 14) {
+            playerGameOver()
+            return
+        }
+
+        let nearestExit = mazeExits.min { a, b in
+            hypot(mouse.position.x - a.position.x, mouse.position.y - a.position.y)
+            < hypot(mouse.position.x - b.position.x, mouse.position.y - b.position.y)
+        }
+        mazeEscapeTarget = nearestExit?.position ?? CGPoint(x: worldSize / 2, y: worldSize / 2 + 440)
+
+        let fleeX = mouse.position.x - snakeHead.position.x
+        let fleeY = mouse.position.y - snakeHead.position.y
+        let fleeDist = max(1, hypot(fleeX, fleeY))
+        let exitX = mazeEscapeTarget.x - mouse.position.x
+        let exitY = mazeEscapeTarget.y - mouse.position.y
+        let exitDist = max(1, hypot(exitX, exitY))
+        let step: CGFloat = dt * 108
+        mouse.position.x += (exitX / exitDist * 0.75 + fleeX / fleeDist * 0.5) * step
+        mouse.position.y += (exitY / exitDist * 0.75 + fleeY / fleeDist * 0.5) * step
+
+        if mazeWalls.contains(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(mouse.position) }) {
+            mouse.position.x -= (exitX / exitDist) * step * 1.25
+            mouse.position.y -= (exitY / exitDist) * step * 1.25
+        }
+
+        let catchDistance = hypot(mouse.position.x - snakeHead.position.x, mouse.position.y - snakeHead.position.y)
+        if catchDistance < 32 {
+            score += Int(max(10, mazeEscapeTimer * 3))
+            updateScoreDisplay()
+            runModeImpactVFX(color: .yellow)
+            mouse.removeFromParent()
+            mazeMouseNode = nil
+            completeSpecialMode(success: true)
+            return
+        }
+
+        if let exitNode = nearestExit, exitNode.frame.insetBy(dx: -8, dy: -8).contains(mouse.position) {
+            runModeImpactVFX(color: .red)
+            completeSpecialMode(success: false)
+            return
+        }
+
+        if mazeEscapeTimer <= 0 {
+            completeSpecialMode(success: false)
+        }
+    }
+
+    func updateSnakeRaceMode(dt: CGFloat) {
+        guard isSnakeRaceMode, !raceIsFinished else { return }
+        raceTimeRemaining -= dt
+        updateRaceHUD()
+
+        if collidesWithShapeWalls(raceObstacles, padding: 16) {
+            score = max(0, score - 3)
+            updateScoreDisplay()
+            runModeImpactVFX(color: .cyan)
+            snakeHead.position.x -= cos(currentAngle) * 26
+            snakeHead.position.y -= sin(currentAngle) * 26
+        }
+
+        if raceCurrentCheckpoint < raceCheckpoints.count {
+            let checkpoint = raceCheckpoints[raceCurrentCheckpoint]
+            let distance = hypot(snakeHead.position.x - checkpoint.position.x, snakeHead.position.y - checkpoint.position.y)
+            if distance < 70 {
+                checkpoint.strokeColor = SKColor(red: 0.22, green: 0.95, blue: 0.45, alpha: 1)
+                checkpoint.glowWidth = 16
+                score += 20
+                updateScoreDisplay()
+                raceCurrentCheckpoint += 1
+                if raceCurrentCheckpoint < raceCheckpoints.count {
+                    raceCheckpoints[raceCurrentCheckpoint].strokeColor = SKColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 1)
+                    raceCheckpoints[raceCurrentCheckpoint].glowWidth = 12
+                } else {
+                    raceIsFinished = true
+                    score += Int(max(0, raceTimeRemaining) * 2)
+                    updateScoreDisplay()
+                    runModeImpactVFX(color: .green)
+                    completeSpecialMode(success: true)
+                }
+                updateRaceHUD()
+            }
+        }
+
+        if raceTimeRemaining <= 0 {
+            completeSpecialMode(success: false)
+        }
+    }
+
     // MARK: - Player Death
     func playerGameOver() {
         guard !isGameOver else { return }
@@ -1069,6 +1397,22 @@ class GameScene: SKScene {
 
         run(deathAction) { [weak self] in
             self?.stopBackgroundMusic()
+            self?.showGameOverScreen()
+        }
+    }
+
+    func completeSpecialMode(success: Bool) {
+        guard !isGameOver else { return }
+        isGameOver = true
+        isBoostHeld = false
+        boostTouch = nil
+        setBoostButtonActive(false)
+        if success {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        }
+        run(SKAction.wait(forDuration: 0.25)) { [weak self] in
             self?.showGameOverScreen()
         }
     }
@@ -3817,7 +4161,9 @@ class GameScene: SKScene {
         }
 
         // --- Player Movement ---
-        let playerDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
+        let baseDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
+        let raceControlSpeedFactor: CGFloat = isSnakeRaceMode ? (0.72 + joystickEngagement * 0.72) : 1.0
+        let playerDist = baseDist * raceControlSpeedFactor
 
         positionHistory.append(snakeHead.position)
         positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
@@ -3890,14 +4236,14 @@ class GameScene: SKScene {
         if checkWallCollision() { playerGameOver(); return }
         // Self-collision intentionally disabled: snake passes through its own body
 
-        if gameMode != .online && checkPlayerCollidesWithBotBodies()    { playerGameOver(); return }
-        if gameMode != .online && checkPlayerHeadVsBotHeads()           { playerGameOver(); return }
+        if gameMode != .online && !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
+        if gameMode != .online && !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { playerGameOver(); return }
         if gameMode == .online  && checkPlayerCollidesWithRemotePlayers() { playerGameOver(); return }
 
-        checkFoodCollisions()
+        if !isSpecialOfflineMode { checkFoodCollisions() }
 
         // --- Trail food spawning (player) ---
-        if gameMode != .online, gameStarted, let tailSeg = bodySegments.last {
+        if gameMode != .online, !isSpecialOfflineMode, gameStarted, let tailSeg = bodySegments.last {
             trailFoodTimer += dt
             if trailFoodTimer >= playerTrailInterval {
                 spawnTrailFood(at: tailSeg.position,
@@ -3908,7 +4254,7 @@ class GameScene: SKScene {
         }
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
-        if gameMode != .online && frameCounter % 300 == 0 {
+        if gameMode != .online && !isSpecialOfflineMode && frameCounter % 300 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
@@ -3929,7 +4275,11 @@ class GameScene: SKScene {
         if magnetActive && frameCounter % 2 == 0 { applyMagnetEffect() }
 
         // --- Mode-specific ---
-        if gameMode != .online {
+        if isMazeHuntMode {
+            updateMazeMode(dt: dt)
+        } else if isSnakeRaceMode {
+            updateSnakeRaceMode(dt: dt)
+        } else if gameMode != .online {
             let updateAI = frameCounter % 2 == 0  // bot AI at ~30 Hz
             updateBots(dt: dt, updateAI: updateAI)
             if frameCounter % 3 == 0 { checkBotVsBotCollisions() }        // bot-vs-bot at ~20 Hz
