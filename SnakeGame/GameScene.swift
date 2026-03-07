@@ -736,11 +736,7 @@ class GameScene: SKScene {
     var isSnakeRaceMode: Bool { false }
     var isSpecialOfflineMode: Bool { false }
 
-    // MARK: - Coin System
-    var sessionCoinsEarned: Int = 0
-    var hasUsedRevive:      Bool = false
-    var coinPanel:  SKShapeNode?
-    var coinLabel:  SKLabelNode?
+    var hasUsedRevive: Bool = false
 
     // MARK: - Other UI
     var pauseButton:  SKNode?
@@ -899,7 +895,6 @@ class GameScene: SKScene {
         onlineRoundPrimed   = false
         isPausedGame        = false
         scoreMultiplier     = 1
-        sessionCoinsEarned  = 0
         hasUsedRevive       = false
         shieldActive        = false
         multiplierActive    = false
@@ -1896,7 +1891,6 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
-        sessionCoinsEarned = 0
         spawnDeathFood(at: bodySegments.map(\.position),
                        colorIndex: selectedSnakeColorIndex,
                        patternIndex: selectedSnakePatternIndex)   // body scatters as death food
@@ -2043,7 +2037,7 @@ class GameScene: SKScene {
         gameOverOverlay = nil
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
-        let canRevive = false
+        let canRevive = !hasUsedRevive && gameMode != .online
 
         let overlay = SKNode()
         overlay.zPosition = 1000
@@ -2222,7 +2216,6 @@ class GameScene: SKScene {
             count: 8
         ))
 
-        updateCoinDisplay()
         startBackgroundMusic()
     }
 
@@ -2254,13 +2247,6 @@ class GameScene: SKScene {
         addChild(scorePanel)
     }
 
-    func createCoinPanel() {}
-
-    func updateCoinDisplay() {}
-
-    func awardBotKillCoins(botScore: Int) {}
-
-    func spawnCoinFloatingText(_ text: String, at position: CGPoint) {}
 
     func updateScoreDisplay() {
         guard scoreLabel != nil, scorePanel != nil else { return }
@@ -4401,7 +4387,6 @@ class GameScene: SKScene {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {
-                    awardBotKillCoins(botScore: bots[i].score)
                     respawnBot(i)   // bot dies simultaneously
                 }
                 return true     // player also dies (caller triggers playerGameOver)
@@ -4430,7 +4415,6 @@ class GameScene: SKScene {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {
-                    awardBotKillCoins(botScore: bots[i].score)
                     respawnBot(i)
                 }
             }
