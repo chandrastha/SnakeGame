@@ -69,6 +69,41 @@ final class GameLogicTests: XCTestCase {
         XCTAssertEqual(output, output.sorted(by: >))
     }
 
+    func test_givenFoodRewardEvents_whenResolvingReward_thenReturnsExpectedScoreAndCoinDeltas() {
+        XCTAssertEqual(GameLogic.reward(for: .food(.regular)), RunReward(scoreDelta: 2, coinDelta: 1))
+        XCTAssertEqual(GameLogic.reward(for: .food(.trail)), RunReward(scoreDelta: 1, coinDelta: 1))
+        XCTAssertEqual(GameLogic.reward(for: .food(.death)), RunReward(scoreDelta: 5, coinDelta: 2))
+        XCTAssertEqual(GameLogic.reward(for: .food(.shield)), .zero)
+        XCTAssertEqual(GameLogic.reward(for: .food(.multiplier)), .zero)
+        XCTAssertEqual(GameLogic.reward(for: .food(.magnet)), .zero)
+        XCTAssertEqual(GameLogic.reward(for: .food(.ghost)), .zero)
+        XCTAssertEqual(GameLogic.reward(for: .food(.shrink)), .zero)
+    }
+
+    func test_givenNonFoodRewardEvents_whenResolvingReward_thenReturnsExpectedDeltas() {
+        XCTAssertEqual(
+            GameLogic.reward(for: .mazeMouseCapture(timeRemaining: 12, bodySegmentCount: 14, isHighScoreBonus: false)),
+            RunReward(scoreDelta: 58, coinDelta: 2)
+        )
+        XCTAssertEqual(
+            GameLogic.reward(for: .mazeMouseCapture(timeRemaining: 12, bodySegmentCount: 14, isHighScoreBonus: true)),
+            RunReward(scoreDelta: 82, coinDelta: 3)
+        )
+        XCTAssertEqual(GameLogic.reward(for: .snakeRaceWallCollision), RunReward(scoreDelta: -3, coinDelta: 0))
+        XCTAssertEqual(GameLogic.reward(for: .snakeRaceCheckpoint), RunReward(scoreDelta: 20, coinDelta: 2))
+        XCTAssertEqual(GameLogic.reward(for: .snakeRaceFinish(timeRemaining: 9.9)), RunReward(scoreDelta: 19, coinDelta: 8))
+        XCTAssertEqual(GameLogic.reward(for: .boostDrainTick), RunReward(scoreDelta: -1, coinDelta: 0))
+        XCTAssertEqual(GameLogic.reward(for: .botKill(botScore: 40)), RunReward(scoreDelta: 0, coinDelta: 18))
+        XCTAssertEqual(GameLogic.reward(for: .botKill(botScore: 200)), RunReward(scoreDelta: 0, coinDelta: 25))
+        XCTAssertEqual(GameLogic.reward(for: .shrink(currentScore: 95)), RunReward(scoreDelta: -9, coinDelta: 0))
+        XCTAssertEqual(GameLogic.reward(for: .shrink(currentScore: 0)), .zero)
+    }
+
+    func test_givenNegativeReward_whenApplyingToScore_thenClampsToZero() {
+        let updatedScore = GameLogic.apply(RunReward(scoreDelta: -10, coinDelta: 0), to: 4)
+        XCTAssertEqual(updatedScore, 0)
+    }
+
     func test_givenBodySegmentsBeyondSkip_whenHeadTouchesTail_thenDetectsCollision() {
         var segments = Array(repeating: CGPoint(x: 999, y: 999), count: 20)
         segments[19] = CGPoint(x: 1, y: 1)

@@ -133,6 +133,11 @@ struct RemotePlayer {
     var playerName: String
 }
 
+private enum RunEndState {
+    case defeat
+    case success
+}
+
 // MARK: - GameScene
 class GameScene: SKScene {
 
@@ -244,6 +249,7 @@ class GameScene: SKScene {
     // MARK: - Score & HUD
     var scorePanel:       SKShapeNode!
     var scoreLabel:       SKLabelNode!
+    var scorePanelWidth:  CGFloat = 72
     var scorePanelHeight: CGFloat = 40
     var miniLeaderboard:  SKNode?
     var leaderboardUpdateTimer: CGFloat = 0
@@ -729,6 +735,7 @@ class GameScene: SKScene {
     var ghostTimeLeft:       CGFloat = 0
     var score:          Int = 0
     var scoreMultiplier: Int = 1
+    var runEndState: RunEndState = .defeat
     /// Target body segment count derived directly from score.
     /// initialBodyCount + 1 segment per 10 score points.
     var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 10) }
@@ -738,6 +745,7 @@ class GameScene: SKScene {
 
     // MARK: - Coin System
     var sessionCoinsEarned: Int = 0
+    var lastRunCoinsAwarded: Int = 0
     var hasUsedRevive:      Bool = false
     var coinPanel:  SKShapeNode?
     var coinLabel:  SKLabelNode?
@@ -899,7 +907,9 @@ class GameScene: SKScene {
         onlineRoundPrimed   = false
         isPausedGame        = false
         scoreMultiplier     = 1
+        runEndState         = .defeat
         sessionCoinsEarned  = 0
+        lastRunCoinsAwarded = 0
         hasUsedRevive       = false
         shieldActive        = false
         multiplierActive    = false
@@ -1799,11 +1809,16 @@ class GameScene: SKScene {
 
             let catchDistance = hypot(mouse.position.x - snakeHead.position.x, mouse.position.y - snakeHead.position.y)
             if catchDistance < 32 {
-                let urgencyBonus = max(10, mazeEscapeTimer * 3)
-                let efficiencyBonus = max(0, 36 - CGFloat(bodySegments.count))
-                let styleBonus = mazeCurrentSpecialRound == .highScoreBonus ? 24 : 0
-                score += Int(urgencyBonus + efficiencyBonus + CGFloat(styleBonus))
-                updateScoreDisplay()
+                let reward = GameLogic.reward(for: .mazeMouseCapture(
+                    timeRemaining: mazeEscapeTimer,
+                    bodySegmentCount: bodySegments.count,
+                    isHighScoreBonus: mazeCurrentSpecialRound == .highScoreBonus
+                ))
+                let mousePosition = mouse.position
+                applyRunReward(reward)
+                if reward.coinDelta > 0 {
+                    spawnCoinFloatingText("+\(reward.coinDelta) 🪙", at: mousePosition)
+                }
                 runModeImpactVFX(color: .yellow)
                 mouse.removeFromParent()
                 mazeMice.remove(at: idx)
@@ -1848,8 +1863,7 @@ class GameScene: SKScene {
         updateRaceHUD()
 
         if collidesWithShapeWalls(raceObstacles, padding: 16) {
-            score = max(0, score - 3)
-            updateScoreDisplay()
+            applyRunReward(GameLogic.reward(for: .snakeRaceWallCollision))
             runModeImpactVFX(color: .cyan)
             snakeHead.position.x -= cos(currentAngle) * 26
             snakeHead.position.y -= sin(currentAngle) * 26
@@ -1861,16 +1875,22 @@ class GameScene: SKScene {
             if distance < 70 {
                 checkpoint.strokeColor = SKColor(red: 0.22, green: 0.95, blue: 0.45, alpha: 1)
                 checkpoint.glowWidth = 16
-                score += 20
-                updateScoreDisplay()
+                let checkpointReward = GameLogic.reward(for: .snakeRaceCheckpoint)
+                applyRunReward(checkpointReward)
+                if checkpointReward.coinDelta > 0 {
+                    spawnCoinFloatingText("+\(checkpointReward.coinDelta) 🪙", at: checkpoint.position)
+                }
                 raceCurrentCheckpoint += 1
                 if raceCurrentCheckpoint < raceCheckpoints.count {
                     raceCheckpoints[raceCurrentCheckpoint].strokeColor = SKColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 1)
                     raceCheckpoints[raceCurrentCheckpoint].glowWidth = 12
                 } else {
                     raceIsFinished = true
-                    score += Int(max(0, raceTimeRemaining) * 2)
-                    updateScoreDisplay()
+                    let finishReward = GameLogic.reward(for: .snakeRaceFinish(timeRemaining: raceTimeRemaining))
+                    applyRunReward(finishReward)
+                    if finishReward.coinDelta > 0 {
+                        spawnCoinFloatingText("+\(finishReward.coinDelta) 🪙", at: snakeHead.position)
+                    }
                     runModeImpactVFX(color: .green)
                     completeSpecialMode(success: true)
                 }
@@ -1898,10 +1918,8 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
-        // Save session coins to persistent balance now (before revive prompt)
-        CoinManager.shared.earn(sessionCoinsEarned)
-        sessionCoinsEarned = 0
-        updateCoinDisplay()
+        runEndState        = .defeat
+        finalizeRunEconomy()
         spawnDeathFood(at: bodySegments.map(\.position),
                        colorIndex: selectedSnakeColorIndex,
                        patternIndex: selectedSnakePatternIndex)   // body scatters as death food
@@ -1922,9 +1940,11 @@ class GameScene: SKScene {
     func completeSpecialMode(success: Bool) {
         guard !isGameOver else { return }
         isGameOver = true
+        runEndState = success ? .success : .defeat
         isBoostHeld = false
         boostTouch = nil
         setBoostButtonActive(false)
+        finalizeRunEconomy()
         if success {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } else {
@@ -2043,12 +2063,16 @@ class GameScene: SKScene {
     }
 
     // MARK: - Game Over Screen
-    func showGameOverScreen(title: String = "GAME OVER") {
+    func showGameOverScreen(title: String? = nil) {
         gameOverOverlay?.removeFromParent()
         gameOverOverlay = nil
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
-        let canRevive = !hasUsedRevive && CoinManager.shared.balance >= CoinManager.reviveCost && gameMode != .online
+        let overlayTitle = title ?? (runEndState == .success ? "VICTORY" : "GAME OVER")
+        let canRevive = runEndState != .success
+            && !hasUsedRevive
+            && CoinManager.shared.balance >= CoinManager.reviveCost
+            && gameMode != .online
 
         let overlay = SKNode()
         overlay.zPosition = 1000
@@ -2060,8 +2084,9 @@ class GameScene: SKScene {
         bg.position    = CGPoint(x: cx, y: cy)
         overlay.addChild(bg)
 
-        // Card — taller when revive is available
-        let cardH: CGFloat = canRevive ? 330 : 290
+        let bankBalance = CoinManager.shared.balance
+        let reviveCost = CoinManager.reviveCost
+        let cardH: CGFloat = canRevive ? 366 : 334
         let card = SKShapeNode(rectOf: CGSize(width: 280, height: cardH), cornerRadius: 22)
         card.fillColor   = SKColor(red: 0.08, green: 0.10, blue: 0.18, alpha: 0.95)
         card.strokeColor = canRevive
@@ -2073,12 +2098,12 @@ class GameScene: SKScene {
 
         // Title
         let titleLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        titleLabel.text                    = title
+        titleLabel.text                    = overlayTitle
         titleLabel.fontSize                = 38
         titleLabel.fontColor               = .white
         titleLabel.horizontalAlignmentMode = .center
         titleLabel.verticalAlignmentMode   = .center
-        titleLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 118 : 98))
+        titleLabel.position                = CGPoint(x: cx, y: cy + 126)
         overlay.addChild(titleLabel)
 
         // Final score
@@ -2088,27 +2113,54 @@ class GameScene: SKScene {
         finalScore.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
         finalScore.horizontalAlignmentMode = .center
         finalScore.verticalAlignmentMode   = .center
-        finalScore.position                = CGPoint(x: cx, y: cy + (canRevive ? 58 : 42))
+        finalScore.position                = CGPoint(x: cx, y: cy + 76)
         overlay.addChild(finalScore)
 
-        // Coin balance display
-        let coinsLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        coinsLabel.text                    = "🪙 \(CoinManager.shared.balance) coins"
-        coinsLabel.fontSize                = 16
-        coinsLabel.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.85)
-        coinsLabel.horizontalAlignmentMode = .center
-        coinsLabel.verticalAlignmentMode   = .center
-        coinsLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 10 : -2))
-        overlay.addChild(coinsLabel)
+        let runCoinsLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
+        runCoinsLabel.text                    = "Run coins  +\(lastRunCoinsAwarded)"
+        runCoinsLabel.fontSize                = 18
+        runCoinsLabel.fontColor               = SKColor(red: 1.0, green: 0.90, blue: 0.25, alpha: 1.0)
+        runCoinsLabel.horizontalAlignmentMode = .center
+        runCoinsLabel.verticalAlignmentMode   = .center
+        runCoinsLabel.position                = CGPoint(x: cx, y: cy + 36)
+        overlay.addChild(runCoinsLabel)
+
+        let bankLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
+        bankLabel.text                    = "Bank total  \(bankBalance)"
+        bankLabel.fontSize                = 17
+        bankLabel.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.85)
+        bankLabel.horizontalAlignmentMode = .center
+        bankLabel.verticalAlignmentMode   = .center
+        bankLabel.position                = CGPoint(x: cx, y: cy + 6)
+        overlay.addChild(bankLabel)
+
+        let reviveInfoLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
+        reviveInfoLabel.fontSize                = 14
+        reviveInfoLabel.fontColor               = SKColor(white: 0.86, alpha: 1.0)
+        reviveInfoLabel.horizontalAlignmentMode = .center
+        reviveInfoLabel.verticalAlignmentMode   = .center
+        if runEndState == .success {
+            reviveInfoLabel.text = "Run completed successfully"
+        } else if gameMode == .online {
+            reviveInfoLabel.text = "Revive unavailable in online mode"
+        } else if hasUsedRevive {
+            reviveInfoLabel.text = "Revive already used this run"
+        } else if bankBalance >= reviveCost {
+            reviveInfoLabel.text = "Revive \(reviveCost) 🪙  •  After revive \(bankBalance - reviveCost)"
+        } else {
+            reviveInfoLabel.text = "Revive \(reviveCost) 🪙  •  Need \(reviveCost - bankBalance) more"
+        }
+        reviveInfoLabel.position = CGPoint(x: cx, y: cy - 24)
+        overlay.addChild(reviveInfoLabel)
 
         // Revive button (only if eligible)
         let playBtnY: CGFloat
         let menuBtnY: CGFloat
         if canRevive {
-            playBtnY = cy - 60
-            menuBtnY = cy - 125
+            playBtnY = cy - 80
+            menuBtnY = cy - 145
 
-            let reviveBtnY = cy - 2
+            let reviveBtnY = cy - 44
             let reviveBg = SKShapeNode(rectOf: CGSize(width: 220, height: 48), cornerRadius: 14)
             reviveBg.fillColor   = SKColor(red: 0.85, green: 0.60, blue: 0.0, alpha: 1.0)
             reviveBg.strokeColor = SKColor(red: 1.0, green: 0.90, blue: 0.2, alpha: 0.60)
@@ -2128,8 +2180,8 @@ class GameScene: SKScene {
             reviveLbl.name                    = "reviveButton"
             overlay.addChild(reviveLbl)
         } else {
-            playBtnY = cy - 52
-            menuBtnY = cy - 115
+            playBtnY = cy - 92
+            menuBtnY = cy - 155
         }
 
         // Play Again / Rejoin button
@@ -2189,6 +2241,7 @@ class GameScene: SKScene {
 
     // MARK: - Revive
     func revivePlayer() {
+        guard runEndState != .success else { return }
         guard !hasUsedRevive else { return }
         guard CoinManager.shared.spend(CoinManager.reviveCost) else { return }
         hasUsedRevive = true
@@ -2264,6 +2317,7 @@ class GameScene: SKScene {
         let hPad: CGFloat = 16, vPad: CGFloat = 10
         let panelW = max(scoreLabel.frame.width + hPad * 2, 72)
         let panelH = scoreLabel.frame.height + vPad * 2
+        scorePanelWidth = panelW
         scorePanelHeight = panelH
 
         scorePanel = SKShapeNode(rect: CGRect(x: 0, y: 0, width: panelW, height: panelH), cornerRadius: 12)
@@ -2285,7 +2339,7 @@ class GameScene: SKScene {
         let hPad: CGFloat = 12, vPad: CGFloat = 7
 
         let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
-        lbl.text                    = "\(CoinManager.shared.balance)"
+        lbl.text                    = "+\(sessionCoinsEarned)"
         lbl.fontSize                = 16
         lbl.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
         lbl.horizontalAlignmentMode = .left
@@ -2323,13 +2377,53 @@ class GameScene: SKScene {
     }
 
     func updateCoinDisplay() {
-        coinLabel?.text = "\(CoinManager.shared.balance)"
+        guard let coinLabel, let coinPanel else { return }
+        coinLabel.text = "+\(sessionCoinsEarned)"
+
+        let hPad: CGFloat = 12, vPad: CGFloat = 7
+        let iconW: CGFloat = 18
+        let textW = max(coinLabel.frame.width, 24)
+        let panelW = iconW + textW + hPad * 2 + 4
+        let panelH = coinLabel.frame.height + vPad * 2
+        coinPanel.path = CGPath(
+            roundedRect: CGRect(x: 0, y: 0, width: panelW, height: panelH),
+            cornerWidth: 10,
+            cornerHeight: 10,
+            transform: nil
+        )
+        coinLabel.position = CGPoint(x: hPad + iconW, y: panelH / 2)
+    }
+
+    func finalizeRunEconomy() {
+        lastRunCoinsAwarded = sessionCoinsEarned
+        CoinManager.shared.earn(sessionCoinsEarned)
+        sessionCoinsEarned = 0
+        updateCoinDisplay()
+    }
+
+    func applyRunReward(_ reward: RunReward) {
+        if reward.scoreDelta != 0 {
+            let previousScore = score
+            let updatedScore = GameLogic.apply(reward, to: score)
+            if updatedScore != previousScore {
+                score = updatedScore
+                updateScoreDisplay()
+                updateSpeedForScore(previousScore: previousScore)
+            }
+        }
+
+        if reward.coinDelta != 0 {
+            sessionCoinsEarned = max(0, sessionCoinsEarned + reward.coinDelta)
+            updateCoinDisplay()
+        }
     }
 
     func awardBotKillCoins(botScore: Int) {
-        let bonus = max(10, min(25, botScore / 5 + 10))
-        sessionCoinsEarned += bonus
-        spawnCoinFloatingText("+\(bonus) 🪙", at: snakeHead.position)
+        let reward = GameLogic.reward(for: .botKill(botScore: botScore))
+        applyRunReward(reward)
+        if reward.coinDelta > 0 {
+            spawnCoinFloatingText("+\(reward.coinDelta) 🪙", at: snakeHead.position)
+        }
     }
 
     func spawnCoinFloatingText(_ text: String, at position: CGPoint) {
@@ -2358,12 +2452,15 @@ class GameScene: SKScene {
         let hPad: CGFloat = 16, vPad: CGFloat = 10
         let panelW = max(scoreLabel.frame.width + hPad * 2, 72)
         let panelH = scoreLabel.frame.height + vPad * 2
-        scorePanelHeight = panelH
-        scorePanel.path = CGPath(
-            roundedRect: CGRect(x: 0, y: 0, width: panelW, height: panelH),
-            cornerWidth: 12, cornerHeight: 12, transform: nil
-        )
-        scoreLabel.position = CGPoint(x: panelW / 2, y: panelH / 2)
+        if panelW != scorePanelWidth || panelH != scorePanelHeight {
+            scorePanelWidth = panelW
+            scorePanelHeight = panelH
+            scorePanel.path = CGPath(
+                roundedRect: CGRect(x: 0, y: 0, width: panelW, height: panelH),
+                cornerWidth: 12, cornerHeight: 12, transform: nil
+            )
+        }
+        scoreLabel.position = CGPoint(x: scorePanelWidth / 2, y: scorePanelHeight / 2)
         miniLeaderboardNeedsRefresh = true
     }
 
@@ -2947,37 +3044,28 @@ class GameScene: SKScene {
             applyShrink()
         }
 
-        // Per-type point values — power-ups are pure utility (0 pts)
-        let pts: Int
-        switch type {
-        case .regular:                           pts = 2
-        case .trail:                             pts = 1
-        case .death:                             pts = 5
-        case .shield, .multiplier,
-             .magnet, .ghost, .shrink:           pts = 0
+        var reward = GameLogic.reward(for: type == .shrink ? .shrink(currentScore: score) : .food(type))
+        if reward.scoreDelta > 0 {
+            reward = RunReward(scoreDelta: reward.scoreDelta * scoreMultiplier, coinDelta: reward.coinDelta)
         }
-        score += pts * scoreMultiplier
-        // Earn coins proportional to food value
-        if pts > 0 {
-            let coinsGained = pts >= 5 ? 2 : 1
-            sessionCoinsEarned += coinsGained
-        }
-        updateScoreDisplay()
-        updateSpeedForScore()
+        applyRunReward(reward)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         run(eatFoodAction)
-        if pts > 0 { spawnFloatingText("+\(pts * scoreMultiplier)", at: foodPos) }
+        if reward.scoreDelta > 0 { spawnFloatingText("+\(reward.scoreDelta)", at: foodPos) }
         spawnEatParticles(at: foodPos)
         refreshPowerUpPanel()
     }
 
-    func updateSpeedForScore() {
+    func updateSpeedForScore(previousScore: Int? = nil) {
         currentMoveSpeed = GameLogic.calculateSpeed(
             score: score,
             baseMoveSpeed: baseMoveSpeed,
             maxMoveSpeed: maxMoveSpeed
         )
-        syncSnakeLength()
+        let previousTargetBodyCount = previousScore.map { max(initialBodyCount, initialBodyCount + $0 / 10) }
+        if previousTargetBodyCount == nil || previousTargetBodyCount != targetBodyCount {
+            syncSnakeLength()
+        }
     }
 
     // MARK: - Floating Score Text
@@ -4431,7 +4519,7 @@ class GameScene: SKScene {
         case .trail:                     return (1, 1 * scoreMultiplier)
         case .death:                     return (2, 5 * scoreMultiplier)
         case .shield, .multiplier,
-             .magnet, .ghost:            return (1, 2 * scoreMultiplier)
+             .magnet, .ghost:            return (0, 0)
         case .shrink:                    return (0, 0)
         }
     }
@@ -4664,13 +4752,8 @@ class GameScene: SKScene {
         }
     }
 
-    /// ✂️ Shrink — reduce score by ~10% so that syncSnakeLength() contracts the body accordingly.
+    /// ✂️ Shrink — feedback and brief invulnerability after the centralized score reduction is applied.
     func applyShrink() {
-        guard score > 0 else { return }
-        let reduction  = max(1, score * 10 / 100)
-        score          = max(0, score - reduction)
-        updateScoreDisplay()
-        updateSpeedForScore()   // calls syncSnakeLength() → body contracts
         invincibleTimeLeft = 0.8   // brief safety window after shrink
         spawnFloatingText("✂️ Shrink!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 60))
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -4964,9 +5047,7 @@ class GameScene: SKScene {
                 boostScoreDrainTimer += dt
                 if boostScoreDrainTimer >= 0.2 {
                     boostScoreDrainTimer = 0
-                    score = max(0, score - 1)
-                    updateScoreDisplay()
-                    updateSpeedForScore()
+                    applyRunReward(GameLogic.reward(for: .boostDrainTick))
                 }
             }
         } else {

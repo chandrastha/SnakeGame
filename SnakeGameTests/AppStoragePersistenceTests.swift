@@ -7,10 +7,10 @@ final class AppStoragePersistenceTests: XCTestCase {
     private var suiteName: String!
 
     private final class TestSettings {
-        @AppStorage("bestScore", store: UserDefaults(suiteName: "placeholder")) var bestScore: Int = 0
+        @AppStorage("bestScore.offline", store: UserDefaults(suiteName: "placeholder")) var bestScore: Int = 0
 
         init(store: UserDefaults) {
-            _bestScore = AppStorage(wrappedValue: 0, "bestScore", store: store)
+            _bestScore = AppStorage(wrappedValue: 0, GameMode.offline.bestScoreKey, store: store)
         }
     }
 
@@ -34,17 +34,42 @@ final class AppStoragePersistenceTests: XCTestCase {
 
         settings.bestScore = 42
 
-        XCTAssertEqual(defaults.integer(forKey: "bestScore"), 42)
-        XCTAssertNotEqual(UserDefaults.standard.integer(forKey: "bestScore"), 42)
+        XCTAssertEqual(defaults.integer(forKey: GameMode.offline.bestScoreKey), 42)
+        XCTAssertNotEqual(UserDefaults.standard.integer(forKey: GameMode.offline.bestScoreKey), 42)
     }
 
-    func test_givenExistingUserDefaultsHistory_whenProcessingLeaderboard_thenStoresTopEntries() {
-        defaults.set([10, 70, 30], forKey: "scoreHistory")
-        let existing = defaults.array(forKey: "scoreHistory") as? [Int] ?? []
+    func test_givenModeSpecificScores_whenRecordingScore_thenStoresBestAndLeaderboardForThatModeOnly() {
+        GameLogic.recordScore(40, for: .offline, defaults: defaults)
+        GameLogic.recordScore(85, for: .challenge, defaults: defaults)
+        GameLogic.recordScore(70, for: .offline, defaults: defaults)
 
-        let updated = GameLogic.processLeaderboardEntry(score: 40, existing: existing)
-        defaults.set(updated, forKey: "scoreHistory")
+        XCTAssertEqual(GameLogic.bestScore(for: .offline, defaults: defaults), 70)
+        XCTAssertEqual(GameLogic.bestScore(for: .challenge, defaults: defaults), 85)
+        XCTAssertEqual(GameLogic.leaderboardScores(for: .offline, defaults: defaults), [70, 40])
+        XCTAssertEqual(GameLogic.leaderboardScores(for: .challenge, defaults: defaults), [85])
+    }
 
-        XCTAssertEqual(defaults.array(forKey: "scoreHistory") as? [Int], [70, 40, 30, 10])
+    func test_givenLegacyGlobalScoreStorage_whenMigrating_thenMovesValuesIntoOfflineOnly() {
+        defaults.set(55, forKey: GameLogic.legacyBestScoreKey)
+        defaults.set([70, 40, 30], forKey: GameLogic.legacyScoreHistoryKey)
+
+        GameLogic.migrateLegacyScoreStorageIfNeeded(defaults: defaults)
+
+        XCTAssertEqual(defaults.integer(forKey: GameMode.offline.bestScoreKey), 55)
+        XCTAssertEqual(defaults.array(forKey: GameMode.offline.leaderboardKey) as? [Int], [70, 40, 30])
+        XCTAssertNil(defaults.object(forKey: GameMode.challenge.bestScoreKey))
+        XCTAssertNil(defaults.array(forKey: GameMode.challenge.leaderboardKey))
+    }
+
+    func test_givenOfflineModeAlreadyStored_whenMigrating_thenDoesNotOverwriteExistingModeSpecificValues() {
+        defaults.set(99, forKey: GameMode.offline.bestScoreKey)
+        defaults.set([99, 88], forKey: GameMode.offline.leaderboardKey)
+        defaults.set(12, forKey: GameLogic.legacyBestScoreKey)
+        defaults.set([12], forKey: GameLogic.legacyScoreHistoryKey)
+
+        GameLogic.migrateLegacyScoreStorageIfNeeded(defaults: defaults)
+
+        XCTAssertEqual(defaults.integer(forKey: GameMode.offline.bestScoreKey), 99)
+        XCTAssertEqual(defaults.array(forKey: GameMode.offline.leaderboardKey) as? [Int], [99, 88])
     }
 }

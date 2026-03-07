@@ -43,13 +43,14 @@ class CoinManager: ObservableObject {
     // MARK: - Transactions
 
     func earn(_ coins: Int) {
+        guard coins > 0 else { return }
         balance += coins
     }
 
     /// Deducts coins if balance is sufficient. Returns false if not enough coins.
     @discardableResult
     func spend(_ coins: Int) -> Bool {
-        guard balance >= coins else { return false }
+        guard coins > 0, balance >= coins else { return false }
         balance -= coins
         return true
     }

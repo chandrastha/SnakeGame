@@ -2,7 +2,26 @@
 // Pure helper functions with no SpriteKit or UIKit dependencies.
 // Extracted from GameScene so they can be unit tested.
 
+import Foundation
 import CoreGraphics
+
+struct RunReward: Equatable {
+    let scoreDelta: Int
+    let coinDelta: Int
+
+    static let zero = RunReward(scoreDelta: 0, coinDelta: 0)
+}
+
+enum RunRewardEvent: Equatable {
+    case food(FoodType)
+    case mazeMouseCapture(timeRemaining: CGFloat, bodySegmentCount: Int, isHighScoreBonus: Bool)
+    case snakeRaceWallCollision
+    case snakeRaceCheckpoint
+    case snakeRaceFinish(timeRemaining: CGFloat)
+    case boostDrainTick
+    case botKill(botScore: Int)
+    case shrink(currentScore: Int)
+}
 
 // MARK: - Bot Enums
 
@@ -114,6 +133,103 @@ struct BotFoodContestSnapshot {
 // MARK: - GameLogic
 
 enum GameLogic {
+    static let legacyBestScoreKey = "bestScore"
+    static let legacyScoreHistoryKey = "scoreHistory"
+    static let scoreStorageMigrationKey = "didMigrateScoreStorageByMode"
+
+    // MARK: - Run Rewards
+
+    static func reward(for event: RunRewardEvent) -> RunReward {
+        switch event {
+        case .food(let type):
+            switch type {
+            case .regular:
+                return RunReward(scoreDelta: 2, coinDelta: 1)
+            case .trail:
+                return RunReward(scoreDelta: 1, coinDelta: 1)
+            case .death:
+                return RunReward(scoreDelta: 5, coinDelta: 2)
+            case .shield, .multiplier, .magnet, .ghost, .shrink:
+                return .zero
+            }
+
+        case .mazeMouseCapture(let timeRemaining, let bodySegmentCount, let isHighScoreBonus):
+            let urgencyBonus = max(10, timeRemaining * 3)
+            let efficiencyBonus = max(0, 36 - CGFloat(bodySegmentCount))
+            let styleBonus = isHighScoreBonus ? 24 : 0
+            let scoreDelta = Int(urgencyBonus + efficiencyBonus + CGFloat(styleBonus))
+            let coinDelta = isHighScoreBonus ? 3 : 2
+            return RunReward(scoreDelta: scoreDelta, coinDelta: coinDelta)
+
+        case .snakeRaceWallCollision:
+            return RunReward(scoreDelta: -3, coinDelta: 0)
+
+        case .snakeRaceCheckpoint:
+            return RunReward(scoreDelta: 20, coinDelta: 2)
+
+        case .snakeRaceFinish(let timeRemaining):
+            return RunReward(scoreDelta: Int(max(0, timeRemaining) * 2), coinDelta: 8)
+
+        case .boostDrainTick:
+            return RunReward(scoreDelta: -1, coinDelta: 0)
+
+        case .botKill(let botScore):
+            let bonus = max(10, min(25, botScore / 5 + 10))
+            return RunReward(scoreDelta: 0, coinDelta: bonus)
+
+        case .shrink(let currentScore):
+            guard currentScore > 0 else { return .zero }
+            let reduction = max(1, currentScore * 10 / 100)
+            return RunReward(scoreDelta: -reduction, coinDelta: 0)
+        }
+    }
+
+    static func apply(_ reward: RunReward, to score: Int) -> Int {
+        max(0, score + reward.scoreDelta)
+    }
+
+    // MARK: - Score Persistence
+
+    static func migrateLegacyScoreStorageIfNeeded(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: scoreStorageMigrationKey) else { return }
+
+        let offlineBestKey = GameMode.offline.bestScoreKey
+        let offlineLeaderboardKey = GameMode.offline.leaderboardKey
+
+        if defaults.object(forKey: offlineBestKey) == nil,
+           let legacyBest = defaults.object(forKey: legacyBestScoreKey) as? Int {
+            defaults.set(legacyBest, forKey: offlineBestKey)
+        }
+
+        if defaults.array(forKey: offlineLeaderboardKey) == nil,
+           let legacyHistory = defaults.array(forKey: legacyScoreHistoryKey) as? [Int] {
+            defaults.set(legacyHistory, forKey: offlineLeaderboardKey)
+        }
+
+        defaults.set(true, forKey: scoreStorageMigrationKey)
+    }
+
+    static func bestScore(for mode: GameMode, defaults: UserDefaults = .standard) -> Int {
+        migrateLegacyScoreStorageIfNeeded(defaults: defaults)
+        return defaults.integer(forKey: mode.bestScoreKey)
+    }
+
+    static func leaderboardScores(for mode: GameMode, defaults: UserDefaults = .standard) -> [Int] {
+        migrateLegacyScoreStorageIfNeeded(defaults: defaults)
+        return (defaults.array(forKey: mode.leaderboardKey) as? [Int]) ?? []
+    }
+
+    static func recordScore(_ score: Int, for mode: GameMode, defaults: UserDefaults = .standard) {
+        migrateLegacyScoreStorageIfNeeded(defaults: defaults)
+
+        if score > defaults.integer(forKey: mode.bestScoreKey) {
+            defaults.set(score, forKey: mode.bestScoreKey)
+        }
+
+        let existing = leaderboardScores(for: mode, defaults: defaults)
+        let updated = processLeaderboardEntry(score: score, existing: existing)
+        defaults.set(updated, forKey: mode.leaderboardKey)
+    }
 
     // MARK: - Maze Hunt Progression
 

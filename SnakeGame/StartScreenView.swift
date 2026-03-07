@@ -11,7 +11,6 @@ struct StartScreenView: View {
     @Binding var playerImage:      UIImage?
     var onPlayTapped: () -> Void
 
-    @AppStorage("bestScore")               private var bestScore: Int = 0
     @AppStorage("selectedSnakeColorIndex") private var selectedColorIndex: Int = 0
     @AppStorage("playerName")             private var playerName: String = "Player"
 
@@ -29,8 +28,9 @@ struct StartScreenView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     private var leaderboardScores: [Int] {
-        (UserDefaults.standard.array(forKey: "scoreHistory") as? [Int]) ?? []
+        GameLogic.leaderboardScores(for: selectedGameMode)
     }
+    private var bestScore: Int { GameLogic.bestScore(for: selectedGameMode) }
     private var normalizedSelectedColorIndex: Int { normalizedSnakeColorIndex(selectedColorIndex) }
     private var currentTheme: SnakeColorTheme { snakeColorThemes[normalizedSelectedColorIndex] }
     private var isLandscape: Bool { verticalSizeClass == .compact }
@@ -85,7 +85,7 @@ struct StartScreenView: View {
                 playerImage = AvatarStore.save(image) ?? image
             }
         }
-        .sheet(isPresented: $showLeaderboard) { LeaderboardView(scores: leaderboardScores) }
+        .sheet(isPresented: $showLeaderboard) { LeaderboardView(scores: leaderboardScores, mode: selectedGameMode) }
         .sheet(isPresented: $showCustomize)   { SnakeCustomizeView() }
         .sheet(isPresented: $showShop)        { ShopView() }
     }

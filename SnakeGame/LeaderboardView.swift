@@ -4,6 +4,7 @@ import SwiftUI
 
 struct LeaderboardView: View {
     let scores: [Int]
+    let mode: GameMode
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -34,7 +35,7 @@ struct LeaderboardView: View {
                         }
                         .accessibilityIdentifier("closeButton")
                         Spacer()
-                        Text("🏆 LEADERBOARD")
+                        Text("🏆 \(mode.leaderboardTitle)")
                             .accessibilityIdentifier("leaderboardTitle")
                             .font(.system(size: 24, weight: .black))
                             .foregroundStyle(
