@@ -255,13 +255,443 @@ class GameScene: SKScene {
     var isPausedGame:       Bool    = false
     var lastPlayerPosition: CGPoint = .zero
 
-    // MARK: - Maze Hunt Mode
+    // MARK: - Maze Hunt Mode State
+    enum MazeSpecialRoundType: CaseIterable {
+        case none
+        case twoMouse
+        case pickupRich
+        case highScoreBonus
+        case largeMazePressure
+    }
+
+    enum MazePickupKind: CaseIterable {
+        case boost
+        case time
+        case reveal
+        case slow
+    }
+
     var mazeWalls: [SKShapeNode] = []
     var mazeExits: [SKShapeNode] = []
+    var mazeSafeSpaces: [SKShapeNode] = []
     var mazeMouseNode: SKLabelNode?
+    var mazeMice: [SKLabelNode] = []
+    var mazePickups: [SKLabelNode] = []
+    var mazePickupKinds: [MazePickupKind] = []
+    var mazeRevealTimer: CGFloat = 0
+    var mazeSlowFieldTimer: CGFloat = 0
+    var mazePickupSpawnTimer: CGFloat = 0
+    var mazeNearMissTimer: CGFloat = 0
+    var mazeBoostEnergy: CGFloat = 100
+    let mazeBoostEnergyMax: CGFloat = 100
     var mazeModeLabel: SKLabelNode?
+    var mazeObjectiveLabel: SKLabelNode?
+    var mazePickupStatusLabel: SKLabelNode?
     var mazeEscapeTimer: CGFloat = 45
     var mazeEscapeTarget: CGPoint = .zero
+    var mazeBand: Int = 1
+    var mazeRoundInBand: Int = 1
+    var mazeMouseSpeedMultiplier: CGFloat = 1
+    var mazeCurrentSpecialRound: MazeSpecialRoundType = .none
+    var mazeSpecialRoundIndex: Int? = nil
+    var mazeBandsWithoutSpecial: Int = 0
+    var mazeTutorialActive: Bool = false
+    var mazeTutorialStep: Int = 0
+    var mazeTutorialProgress: CGFloat = 0
+    static var hasSeenMazeTutorial = false
+
+    // MARK: - Maze Hunt
+    func createMazeHuntModeContent() {
+        let plan = GameLogic.mazeHuntRoundPlan(band: mazeBand, roundInBand: mazeRoundInBand)
+        mazeEscapeTimer = CGFloat(plan.timerSeconds)
+        mazeMouseSpeedMultiplier = plan.mouseSpeedMultiplier
+        mazeBoostEnergy = mazeBoostEnergyMax
+        mazeRevealTimer = 0
+        mazeSlowFieldTimer = 0
+        mazePickupSpawnTimer = 0
+        mazeNearMissTimer = 0
+
+        configureSpecialRoundIfNeeded()
+        createMazeWalls()
+        createMazeExitNodes()
+        createMazeSafeSpaces()
+        createMazePickups(fixedOnly: true)
+        spawnMazeMice(using: plan)
+        var fairnessAttempts = 0
+        while !mazeRoundIsFair() && fairnessAttempts < 4 {
+            fairnessAttempts += 1
+            createMazeWalls()
+            createMazeExitNodes()
+            createMazeSafeSpaces()
+            mazePickups.forEach { $0.removeFromParent() }
+            mazePickups.removeAll(); mazePickupKinds.removeAll()
+            createMazePickups(fixedOnly: true)
+            spawnMazeMice(using: plan)
+        }
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize = 18
+        label.fontColor = SKColor(red: 1.0, green: 0.9, blue: 0.65, alpha: 1)
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 540)
+        label.zPosition = 610
+        addChild(label)
+        mazeModeLabel = label
+
+        let objective = SKLabelNode(fontNamed: "Arial-BoldMT")
+        objective.fontSize = 15
+        objective.fontColor = SKColor(red: 0.88, green: 0.98, blue: 1.0, alpha: 1.0)
+        objective.horizontalAlignmentMode = .center
+        objective.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 512)
+        objective.zPosition = 610
+        addChild(objective)
+        mazeObjectiveLabel = objective
+
+        let pickupStatus = SKLabelNode(fontNamed: "Arial-BoldMT")
+        pickupStatus.fontSize = 14
+        pickupStatus.fontColor = SKColor(red: 0.65, green: 1.0, blue: 0.85, alpha: 1.0)
+        pickupStatus.horizontalAlignmentMode = .center
+        pickupStatus.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 486)
+        pickupStatus.zPosition = 610
+        addChild(pickupStatus)
+        mazePickupStatusLabel = pickupStatus
+
+        maybeShowMazeTutorial()
+        updateMazeHUD()
+    }
+
+    func configureSpecialRoundIfNeeded() {
+        if mazeRoundInBand == 1 {
+            mazeCurrentSpecialRound = .none
+            mazeSpecialRoundIndex = nil
+            if mazeBand > 4 { mazeBandsWithoutSpecial += 1 }
+            let plan = GameLogic.mazeSpecialRoundPlan(
+                band: mazeBand,
+                bandsWithoutSpecial: mazeBandsWithoutSpecial,
+                randomRoll: CGFloat.random(in: 0...1),
+                randomRoundIndex: Int.random(in: 1...3)
+            )
+            if plan.shouldSchedule {
+                mazeSpecialRoundIndex = plan.scheduledRoundIndex
+                mazeBandsWithoutSpecial = 0
+            }
+        }
+
+        if mazeBand >= 4, mazeSpecialRoundIndex == mazeRoundInBand {
+            let pool: [MazeSpecialRoundType] = [.twoMouse, .pickupRich, .highScoreBonus, .largeMazePressure]
+            mazeCurrentSpecialRound = pool.randomElement() ?? .twoMouse
+        } else {
+            mazeCurrentSpecialRound = .none
+        }
+    }
+
+    func createMazeWalls() {
+        // Pure random generation every round, then fairness checks by spawn/path validation.
+        mazeWalls.forEach { $0.removeFromParent() }
+        mazeWalls.removeAll()
+
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let baseHalfWidth: CGFloat = mazeCurrentSpecialRound == .largeMazePressure ? 680 : 560
+        let baseHalfHeight: CGFloat = mazeCurrentSpecialRound == .largeMazePressure ? 620 : 500
+        let corridor: CGFloat = max(72, 110 - CGFloat(mazeBand) * 3)
+
+        var walls: [CGRect] = [
+            CGRect(x: center.x - baseHalfWidth, y: center.y + baseHalfHeight - 20, width: baseHalfWidth * 2, height: 40),
+            CGRect(x: center.x - baseHalfWidth, y: center.y - baseHalfHeight, width: baseHalfWidth * 2, height: 40),
+            CGRect(x: center.x - baseHalfWidth, y: center.y - baseHalfHeight, width: 40, height: baseHalfHeight * 2),
+            CGRect(x: center.x + baseHalfWidth - 40, y: center.y - baseHalfHeight, width: 40, height: baseHalfHeight * 2)
+        ]
+
+        let segments = 8 + mazeBand + (mazeCurrentSpecialRound == .largeMazePressure ? 4 : 0)
+        for _ in 0..<segments {
+            let vertical = Bool.random()
+            if vertical {
+                let x = CGFloat.random(in: (center.x - baseHalfWidth + 90)...(center.x + baseHalfWidth - 120))
+                let y = CGFloat.random(in: (center.y - baseHalfHeight + 90)...(center.y + baseHalfHeight - 220))
+                let h = CGFloat.random(in: 180...420)
+                walls.append(CGRect(x: x, y: y, width: 26, height: h))
+            } else {
+                let x = CGFloat.random(in: (center.x - baseHalfWidth + 90)...(center.x + baseHalfWidth - 320))
+                let y = CGFloat.random(in: (center.y - baseHalfHeight + 90)...(center.y + baseHalfHeight - 120))
+                let w = CGFloat.random(in: 180...460)
+                walls.append(CGRect(x: x, y: y, width: w, height: 26))
+            }
+        }
+
+        // Carve a guaranteed central chase lane so both sides keep valid movement space.
+        walls.removeAll { $0.intersects(CGRect(x: center.x - corridor / 2, y: center.y - baseHalfHeight + 60, width: corridor, height: baseHalfHeight * 2 - 120)) }
+
+        mazeWalls = walls.map { rect in
+            let wall = SKShapeNode(rect: rect, cornerRadius: 8)
+            wall.fillColor = SKColor(red: 0.25, green: 0.35, blue: 0.82, alpha: 0.75)
+            wall.strokeColor = SKColor(red: 0.7, green: 0.85, blue: 1.0, alpha: 0.9)
+            wall.glowWidth = 5
+            wall.lineWidth = 2
+            wall.zPosition = 120
+            addChild(wall)
+            return wall
+        }
+    }
+
+    func createMazeExitNodes() {
+        mazeExits.forEach { $0.removeFromParent() }
+        mazeExits.removeAll()
+
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let exitRects = [
+            CGRect(x: center.x - 56, y: center.y + 470, width: 112, height: 24),
+            CGRect(x: center.x - 56, y: center.y - 494, width: 112, height: 24),
+            CGRect(x: center.x + 520, y: center.y - 40, width: 24, height: 112)
+        ]
+
+        mazeExits = exitRects.map { rect in
+            let exitNode = SKShapeNode(rect: rect, cornerRadius: 6)
+            exitNode.fillColor = SKColor(red: 0.95, green: 0.35, blue: 0.35, alpha: 0.88)
+            exitNode.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.72, alpha: 1.0)
+            exitNode.glowWidth = 8
+            exitNode.zPosition = 130
+            let pulse = SKAction.sequence([SKAction.fadeAlpha(to: 0.45, duration: 0.55), SKAction.fadeAlpha(to: 0.95, duration: 0.55)])
+            exitNode.run(SKAction.repeatForever(pulse))
+            addChild(exitNode)
+            return exitNode
+        }
+    }
+
+    func createMazeSafeSpaces() {
+        mazeSafeSpaces.forEach { $0.removeFromParent() }
+        mazeSafeSpaces.removeAll()
+
+        let count = min(4, 1 + mazeBand / 3)
+        for i in 0..<count {
+            let node = SKShapeNode(circleOfRadius: 34)
+            node.fillColor = SKColor(red: 0.40, green: 0.30, blue: 0.92, alpha: 0.30)
+            node.strokeColor = SKColor(red: 0.72, green: 0.62, blue: 1.0, alpha: 0.82)
+            node.lineWidth = 2
+            node.glowWidth = 6
+            node.zPosition = 125
+            let x = worldSize / 2 + CGFloat((i % 2 == 0 ? -1 : 1)) * CGFloat.random(in: 140...420)
+            let y = worldSize / 2 + CGFloat(i < 2 ? 1 : -1) * CGFloat.random(in: 120...360)
+            node.position = CGPoint(x: x, y: y)
+            addChild(node)
+            mazeSafeSpaces.append(node)
+        }
+    }
+
+    func spawnMazeMice(using plan: GameLogic.MazeHuntRoundPlan) {
+        mazeMice.forEach { $0.removeFromParent() }
+        mazeMice.removeAll()
+        mazeMouseNode = nil
+
+        let wantsTwoMice = mazeCurrentSpecialRound == .twoMouse
+        let mouseCount = wantsTwoMice ? 2 : 1
+        for idx in 0..<mouseCount {
+            let mouse = SKLabelNode(text: "🐭")
+            mouse.fontSize = 30
+            mouse.zPosition = 220
+            let x = worldSize / 2 + CGFloat(idx == 0 ? 1 : -1) * CGFloat.random(in: 280...460)
+            let y = worldSize / 2 + CGFloat.random(in: -340...360)
+            mouse.position = mazeValidMouseSpawn(preferred: CGPoint(x: x, y: y))
+            if plan.hasHeadStart { mouse.alpha = 0.35 }
+            addChild(mouse)
+            mazeMice.append(mouse)
+        }
+        mazeMouseNode = mazeMice.first
+
+        if plan.hasHeadStart {
+            run(SKAction.wait(forDuration: 0.9)) { [weak self] in
+                self?.mazeMice.forEach { $0.alpha = 1.0 }
+            }
+        }
+    }
+
+    func mazeValidMouseSpawn(preferred: CGPoint) -> CGPoint {
+        var candidate = preferred
+        for _ in 0..<24 {
+            let farEnough = hypot(candidate.x - snakeHead.position.x, candidate.y - snakeHead.position.y) > 260
+            let blocked = mazeWalls.contains { $0.frame.insetBy(dx: -16, dy: -16).contains(candidate) }
+            if farEnough && !blocked { return candidate }
+            candidate = CGPoint(
+                x: worldSize / 2 + CGFloat.random(in: -480...480),
+                y: worldSize / 2 + CGFloat.random(in: -420...420)
+            )
+        }
+        return CGPoint(x: worldSize / 2 + 360, y: worldSize / 2 + 220)
+    }
+
+    func createMazePickups(fixedOnly: Bool) {
+        if !fixedOnly {
+            if mazeCurrentSpecialRound == .pickupRich || CGFloat.random(in: 0...1) < 0.35 {
+                spawnSingleMazePickup(at: CGPoint(
+                    x: worldSize / 2 + CGFloat.random(in: -450...450),
+                    y: worldSize / 2 + CGFloat.random(in: -400...400)
+                ), forcedKind: nil)
+            }
+            return
+        }
+
+        for dx in [-300.0, 0.0, 300.0] {
+            spawnSingleMazePickup(at: CGPoint(x: worldSize / 2 + dx, y: worldSize / 2 - 220), forcedKind: .boost)
+        }
+    }
+
+    func spawnSingleMazePickup(at position: CGPoint, forcedKind: MazePickupKind?) {
+        guard !mazeWalls.contains(where: { $0.frame.insetBy(dx: -20, dy: -20).contains(position) }) else { return }
+        let kind = forcedKind ?? MazePickupKind.allCases.randomElement() ?? .boost
+        let emoji: String
+        switch kind {
+        case .boost: emoji = "⚡️"
+        case .time: emoji = "⏱"
+        case .reveal: emoji = "📡"
+        case .slow: emoji = "🧊"
+        }
+
+        let node = SKLabelNode(text: emoji)
+        node.fontSize = 24
+        node.zPosition = 226
+        node.position = position
+        addChild(node)
+        mazePickups.append(node)
+        mazePickupKinds.append(kind)
+    }
+
+    func updateMazeHUD() {
+        let miceRemaining = mazeMice.count
+        let target = (mazeCurrentSpecialRound == .twoMouse && mazeBand >= 7) ? "Catch both mice" : "Catch 1 mouse"
+        mazeModeLabel?.text = "Snake Hunt Maze · B\(mazeBand)-R\(mazeRoundInBand) · Time: \(Int(max(0, mazeEscapeTimer)))"
+        mazeObjectiveLabel?.text = "Objective: \(target) · Mice Left: \(miceRemaining)"
+        let revealText = mazeRevealTimer > 0 ? "Reveal \(Int(ceil(mazeRevealTimer)))s" : "Reveal ready"
+        let slowText = mazeSlowFieldTimer > 0 ? "Slow \(Int(ceil(mazeSlowFieldTimer)))s" : "Slow ready"
+        mazePickupStatusLabel?.text = "Boost \(Int(mazeBoostEnergy))/\(Int(mazeBoostEnergyMax)) · \(revealText) · \(slowText)"
+    }
+
+    func mapMazeSpecialRoundForLogic() -> GameLogic.MazeSpecialRoundType {
+        switch mazeCurrentSpecialRound {
+        case .none: return .none
+        case .twoMouse: return .twoMouse
+        case .pickupRich: return .pickupRich
+        case .highScoreBonus: return .highScoreBonus
+        case .largeMazePressure: return .largeMazePressure
+        }
+    }
+
+    func maybeShowMazeTutorial() {
+        guard isMazeHuntMode, !GameScene.hasSeenMazeTutorial else { return }
+        mazeTutorialActive = true
+        mazeTutorialStep = 1
+        mazeTutorialProgress = 0
+
+        let panel = SKShapeNode(rectOf: CGSize(width: 520, height: 120), cornerRadius: 14)
+        panel.name = "mazeTutorialPanel"
+        panel.fillColor = SKColor(red: 0.05, green: 0.09, blue: 0.18, alpha: 0.88)
+        panel.strokeColor = SKColor(red: 0.58, green: 0.82, blue: 1.0, alpha: 0.95)
+        panel.lineWidth = 2
+        panel.zPosition = 700
+        panel.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 340)
+
+        let text = SKLabelNode(fontNamed: "Arial-BoldMT")
+        text.name = "mazeTutorialText"
+        text.fontSize = 20
+        text.zPosition = 701
+        text.position = CGPoint(x: 0, y: -10)
+        text.text = "Tutorial: Move the joystick to steer"
+        panel.addChild(text)
+
+        addChild(panel)
+    }
+
+    func updateMazeTutorial(dt: CGFloat) {
+        guard mazeTutorialActive else { return }
+        guard let panel = childNode(withName: "mazeTutorialPanel"), let text = panel.childNode(withName: "mazeTutorialText") as? SKLabelNode else { return }
+
+        if mazeTutorialStep == 1 {
+            if joystickEngagement > 0.45 { mazeTutorialProgress += dt }
+            text.text = "Tutorial: Move joystick (\(Int(min(100, mazeTutorialProgress * 120)))%)"
+            if mazeTutorialProgress >= 0.8 {
+                mazeTutorialStep = 2
+                mazeTutorialProgress = 0
+                text.text = "Tutorial: Hold BOOST to sprint"
+            }
+        } else {
+            if isBoostHeld { mazeTutorialProgress += dt }
+            text.text = "Tutorial: Hold boost (\(Int(min(100, mazeTutorialProgress * 120)))%)"
+            if mazeTutorialProgress >= 0.8 {
+                mazeTutorialActive = false
+                GameScene.hasSeenMazeTutorial = true
+                panel.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.25), SKAction.removeFromParent()]))
+            }
+        }
+    }
+
+    func hasMazeLineOfSight(from: CGPoint, to: CGPoint) -> Bool {
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let dist = max(1, hypot(dx, dy))
+        let steps = Int(dist / 16)
+        if steps <= 1 { return true }
+        for i in 1...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let point = CGPoint(x: from.x + dx * t, y: from.y + dy * t)
+            if mazeWalls.contains(where: { $0.frame.insetBy(dx: -3, dy: -3).contains(point) }) {
+                return false
+            }
+        }
+        return true
+    }
+
+    func mazeRoundIsFair() -> Bool {
+        guard let target = mazeMice.first?.position else { return false }
+        let start = snakeHead.position
+        let step: CGFloat = 48
+        let cols = 26
+        let rows = 22
+
+        func nodePoint(_ c: Int, _ r: Int) -> CGPoint {
+            CGPoint(x: worldSize / 2 - CGFloat(cols / 2) * step + CGFloat(c) * step,
+                    y: worldSize / 2 - CGFloat(rows / 2) * step + CGFloat(r) * step)
+        }
+
+        func nearestCell(to point: CGPoint) -> (Int, Int) {
+            var best = (0, 0)
+            var bestDist = CGFloat.greatestFiniteMagnitude
+            for c in 0..<cols {
+                for r in 0..<rows {
+                    let p = nodePoint(c, r)
+                    let d = hypot(p.x - point.x, p.y - point.y)
+                    if d < bestDist {
+                        bestDist = d
+                        best = (c, r)
+                    }
+                }
+            }
+            return best
+        }
+
+        func blocked(_ p: CGPoint) -> Bool {
+            mazeWalls.contains(where: { $0.frame.insetBy(dx: -8, dy: -8).contains(p) })
+        }
+
+        let startCell = nearestCell(to: start)
+        let goalCell = nearestCell(to: target)
+        var queue: [(Int, Int)] = [startCell]
+        var seen: Set<String> = ["\(startCell.0)-\(startCell.1)"]
+
+        while !queue.isEmpty {
+            let cell = queue.removeFirst()
+            if cell == goalCell { return true }
+            for delta in [(-1,0),(1,0),(0,-1),(0,1)] {
+                let nc = cell.0 + delta.0
+                let nr = cell.1 + delta.1
+                guard nc >= 0, nr >= 0, nc < cols, nr < rows else { continue }
+                let key = "\(nc)-\(nr)"
+                if seen.contains(key) { continue }
+                let point = nodePoint(nc, nr)
+                if blocked(point) { continue }
+                seen.insert(key)
+                queue.append((nc, nr))
+            }
+        }
+        return false
+    }
 
     // MARK: - Snake Race Mode
     var raceObstacles: [SKShapeNode] = []
@@ -476,6 +906,20 @@ class GameScene: SKScene {
         tailWigglePhase      = 0
         mazeEscapeTimer      = 45
         mazeEscapeTarget     = .zero
+        mazeBand             = 1
+        mazeRoundInBand      = 1
+        mazeMouseSpeedMultiplier = 1
+        mazeRevealTimer      = 0
+        mazeSlowFieldTimer   = 0
+        mazePickupSpawnTimer = 0
+        mazeNearMissTimer    = 0
+        mazeBoostEnergy      = mazeBoostEnergyMax
+        mazeCurrentSpecialRound = .none
+        mazeSpecialRoundIndex = nil
+        mazeBandsWithoutSpecial = 0
+        mazeTutorialActive   = false
+        mazeTutorialStep     = 0
+        mazeTutorialProgress = 0
         raceCurrentCheckpoint = 0
         raceTimeRemaining    = 75
         raceIsFinished       = false
@@ -502,8 +946,14 @@ class GameScene: SKScene {
         leaderArrowLabel  = nil
         mazeWalls.removeAll()
         mazeExits.removeAll()
+        mazeSafeSpaces.removeAll()
+        mazeMice.removeAll()
+        mazePickups.removeAll()
+        mazePickupKinds.removeAll()
         mazeMouseNode = nil
         mazeModeLabel = nil
+        mazeObjectiveLabel = nil
+        mazePickupStatusLabel = nil
         raceObstacles.removeAll()
         raceCheckpoints.removeAll()
         raceModeLabel = nil
@@ -767,84 +1217,6 @@ class GameScene: SKScene {
         addChild(dots)
     }
 
-    // MARK: - Maze Hunt
-    func createMazeHuntModeContent() {
-        mazeEscapeTimer = 55
-        createMazeWalls()
-        createMazeExitNodes()
-
-        let mouse = SKLabelNode(text: "🐭")
-        mouse.fontSize = 30
-        mouse.position = CGPoint(x: worldSize / 2 + 420, y: worldSize / 2 + 340)
-        mouse.zPosition = 220
-        addChild(mouse)
-        mazeMouseNode = mouse
-
-        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
-        label.fontSize = 18
-        label.fontColor = SKColor(red: 1.0, green: 0.9, blue: 0.65, alpha: 1)
-        label.horizontalAlignmentMode = .center
-        label.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 540)
-        label.zPosition = 610
-        addChild(label)
-        mazeModeLabel = label
-        updateMazeHUD()
-    }
-
-    func createMazeWalls() {
-        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
-        let walls: [CGRect] = [
-            CGRect(x: center.x - 520, y: center.y + 420, width: 1040, height: 36),
-            CGRect(x: center.x - 520, y: center.y - 456, width: 1040, height: 36),
-            CGRect(x: center.x - 520, y: center.y - 456, width: 36, height: 912),
-            CGRect(x: center.x + 484, y: center.y - 456, width: 36, height: 912),
-
-            CGRect(x: center.x - 420, y: center.y + 220, width: 840, height: 26),
-            CGRect(x: center.x - 420, y: center.y - 30, width: 320, height: 26),
-            CGRect(x: center.x + 80, y: center.y - 30, width: 340, height: 26),
-            CGRect(x: center.x - 240, y: center.y - 280, width: 520, height: 26),
-
-            CGRect(x: center.x - 180, y: center.y - 280, width: 26, height: 510),
-            CGRect(x: center.x + 170, y: center.y - 210, width: 26, height: 430),
-            CGRect(x: center.x - 410, y: center.y - 120, width: 26, height: 360)
-        ]
-
-        mazeWalls = walls.map { rect in
-            let wall = SKShapeNode(rect: rect, cornerRadius: 8)
-            wall.fillColor = SKColor(red: 0.25, green: 0.35, blue: 0.82, alpha: 0.75)
-            wall.strokeColor = SKColor(red: 0.7, green: 0.85, blue: 1.0, alpha: 0.9)
-            wall.glowWidth = 5
-            wall.lineWidth = 2
-            wall.zPosition = 120
-            addChild(wall)
-            return wall
-        }
-    }
-
-    func createMazeExitNodes() {
-        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
-        let exitRects = [
-            CGRect(x: center.x - 56, y: center.y + 430, width: 112, height: 24),
-            CGRect(x: center.x + 486, y: center.y - 40, width: 24, height: 112)
-        ]
-
-        mazeExits = exitRects.map { rect in
-            let exitNode = SKShapeNode(rect: rect, cornerRadius: 6)
-            exitNode.fillColor = SKColor(red: 0.95, green: 0.35, blue: 0.35, alpha: 0.88)
-            exitNode.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.72, alpha: 1.0)
-            exitNode.glowWidth = 8
-            exitNode.zPosition = 130
-            let pulse = SKAction.sequence([SKAction.fadeAlpha(to: 0.45, duration: 0.55), SKAction.fadeAlpha(to: 0.95, duration: 0.55)])
-            exitNode.run(SKAction.repeatForever(pulse))
-            addChild(exitNode)
-            return exitNode
-        }
-    }
-
-    func updateMazeHUD() {
-        mazeModeLabel?.text = "Maze Hunt · Catch the mouse · Time: \(Int(max(0, mazeEscapeTimer)))"
-    }
-
     // MARK: - Snake Race
     func createSnakeRaceModeContent() {
         raceTimeRemaining = 80
@@ -956,6 +1328,12 @@ class GameScene: SKScene {
 
     // MARK: - Camera Follow
     func updateCamera() {
+        if isMazeHuntMode {
+            cameraNode.setScale(1.22)
+            cameraNode.position = CGPoint(x: worldSize / 2, y: worldSize / 2)
+            return
+        }
+
         let desiredScale = desiredCameraScale()
         let newScale = cameraNode.xScale + (desiredScale - cameraNode.xScale) * 0.08
         cameraNode.setScale(newScale)
@@ -1285,53 +1663,155 @@ class GameScene: SKScene {
 
     func updateMazeMode(dt: CGFloat) {
         guard isMazeHuntMode else { return }
-        mazeEscapeTimer -= dt
-        updateMazeHUD()
 
-        guard let mouse = mazeMouseNode else { return }
+        if mazeTutorialActive {
+            updateMazeTutorial(dt: dt)
+            updateMazeHUD()
+            return
+        }
+
+        mazeEscapeTimer -= dt
+        mazeRevealTimer = max(0, mazeRevealTimer - dt)
+        mazeSlowFieldTimer = max(0, mazeSlowFieldTimer - dt)
+
+        // Boost energy system for Maze Hunt (hold-to-boost drains, passive refill).
+        let refillRate: CGFloat = isBoostHeld ? 7 : 16
+        let drainRate: CGFloat = isBoostHeld ? 34 : 0
+        mazeBoostEnergy = min(mazeBoostEnergyMax, max(0, mazeBoostEnergy + (refillRate - drainRate) * dt))
+        if mazeBoostEnergy <= 0.5, isBoostHeld {
+            isBoostHeld = false
+            boostTouch = nil
+            setBoostButtonActive(false)
+        }
 
         if collidesWithShapeWalls(mazeWalls, padding: 14) {
             playerGameOver()
             return
         }
 
-        let nearestExit = mazeExits.min { a, b in
-            hypot(mouse.position.x - a.position.x, mouse.position.y - a.position.y)
-            < hypot(mouse.position.x - b.position.x, mouse.position.y - b.position.y)
-        }
-        mazeEscapeTarget = nearestExit?.position ?? CGPoint(x: worldSize / 2, y: worldSize / 2 + 440)
-
-        let fleeX = mouse.position.x - snakeHead.position.x
-        let fleeY = mouse.position.y - snakeHead.position.y
-        let fleeDist = max(1, hypot(fleeX, fleeY))
-        let exitX = mazeEscapeTarget.x - mouse.position.x
-        let exitY = mazeEscapeTarget.y - mouse.position.y
-        let exitDist = max(1, hypot(exitX, exitY))
-        let step: CGFloat = dt * 108
-        mouse.position.x += (exitX / exitDist * 0.75 + fleeX / fleeDist * 0.5) * step
-        mouse.position.y += (exitY / exitDist * 0.75 + fleeY / fleeDist * 0.5) * step
-
-        if mazeWalls.contains(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(mouse.position) }) {
-            mouse.position.x -= (exitX / exitDist) * step * 1.25
-            mouse.position.y -= (exitY / exitDist) * step * 1.25
+        mazePickupSpawnTimer += dt
+        if mazePickupSpawnTimer >= (mazeCurrentSpecialRound == .pickupRich ? 2.4 : 4.2) {
+            mazePickupSpawnTimer = 0
+            createMazePickups(fixedOnly: false)
         }
 
-        let catchDistance = hypot(mouse.position.x - snakeHead.position.x, mouse.position.y - snakeHead.position.y)
-        if catchDistance < 32 {
-            score += Int(max(10, mazeEscapeTimer * 3))
-            updateScoreDisplay()
-            runModeImpactVFX(color: .yellow)
-            mouse.removeFromParent()
-            mazeMouseNode = nil
-            completeSpecialMode(success: true)
-            return
+        for (index, pickup) in mazePickups.enumerated().reversed() {
+            let dist = hypot(snakeHead.position.x - pickup.position.x, snakeHead.position.y - pickup.position.y)
+            if dist < 42 {
+                let kind = mazePickupKinds[index]
+                switch kind {
+                case .boost:
+                    mazeBoostEnergy = min(mazeBoostEnergyMax, mazeBoostEnergy + 36)
+                case .time:
+                    mazeEscapeTimer += 4
+                case .reveal:
+                    mazeRevealTimer = max(mazeRevealTimer, 5)
+                case .slow:
+                    mazeSlowFieldTimer = max(mazeSlowFieldTimer, 4)
+                }
+                runModeImpactVFX(color: .green)
+                pickup.removeFromParent()
+                mazePickups.remove(at: index)
+                mazePickupKinds.remove(at: index)
+            }
         }
 
-        if let exitNode = nearestExit, exitNode.frame.insetBy(dx: -8, dy: -8).contains(mouse.position) {
-            runModeImpactVFX(color: .red)
-            completeSpecialMode(success: false)
-            return
+        var capturedThisFrame = 0
+        for (idx, mouse) in mazeMice.enumerated().reversed() {
+            let nearestExit = mazeExits.min { a, b in
+                hypot(mouse.position.x - a.position.x, mouse.position.y - a.position.y)
+                < hypot(mouse.position.x - b.position.x, mouse.position.y - b.position.y)
+            }
+            mazeEscapeTarget = nearestExit?.position ?? CGPoint(x: worldSize / 2, y: worldSize / 2 + 440)
+
+            let fleeX = mouse.position.x - snakeHead.position.x
+            let fleeY = mouse.position.y - snakeHead.position.y
+            let fleeDist = max(1, hypot(fleeX, fleeY))
+            let exitX = mazeEscapeTarget.x - mouse.position.x
+            let exitY = mazeEscapeTarget.y - mouse.position.y
+            let exitDist = max(1, hypot(exitX, exitY))
+            let lineOfSight = hasMazeLineOfSight(from: snakeHead.position, to: mouse.position)
+
+            // Step-based behavior scaling: speed first, then route deception and safe-space usage.
+            let panicBias: CGFloat = fleeDist < 260 ? 0.95 : 0.55
+            let deceptionBias: CGFloat = mazeBand >= 6 ? 0.35 : 0.10
+            let safeBias: CGFloat = mazeBand >= 5 ? 0.45 : 0.15
+            let slowScale: CGFloat = mazeSlowFieldTimer > 0 ? 0.70 : 1.0
+            let aiJitter = CGFloat.random(in: -deceptionBias...deceptionBias)
+            let step: CGFloat = dt * 108 * mazeMouseSpeedMultiplier * slowScale
+
+            var vx = (exitX / exitDist * 0.62 + fleeX / fleeDist * panicBias)
+            var vy = (exitY / exitDist * 0.62 + fleeY / fleeDist * panicBias)
+
+            if !lineOfSight {
+                vx += aiJitter
+                vy -= aiJitter
+                mouse.alpha = mazeRevealTimer > 0 ? 1.0 : 0.52
+            } else {
+                mouse.alpha = 1.0
+            }
+
+            if let safeSpace = mazeSafeSpaces.min(by: {
+                hypot($0.position.x - mouse.position.x, $0.position.y - mouse.position.y) <
+                hypot($1.position.x - mouse.position.x, $1.position.y - mouse.position.y)
+            }), mazeBand >= 4 {
+                let safeDist = hypot(safeSpace.position.x - mouse.position.x, safeSpace.position.y - mouse.position.y)
+                if safeDist < 170 && CGFloat.random(in: 0...1) < safeBias {
+                    let toSafeX = safeSpace.position.x - mouse.position.x
+                    let toSafeY = safeSpace.position.y - mouse.position.y
+                    let toSafeDist = max(1, hypot(toSafeX, toSafeY))
+                    vx = vx * 0.55 + (toSafeX / toSafeDist) * 0.8
+                    vy = vy * 0.55 + (toSafeY / toSafeDist) * 0.8
+                }
+            }
+
+            mouse.position.x += vx * step
+            mouse.position.y += vy * step
+
+            if mazeWalls.contains(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(mouse.position) }) {
+                mouse.position.x -= (exitX / exitDist) * step * 1.2
+                mouse.position.y -= (exitY / exitDist) * step * 1.2
+            }
+
+            let catchDistance = hypot(mouse.position.x - snakeHead.position.x, mouse.position.y - snakeHead.position.y)
+            if catchDistance < 32 {
+                let urgencyBonus = max(10, mazeEscapeTimer * 3)
+                let efficiencyBonus = max(0, 36 - CGFloat(bodySegments.count))
+                let styleBonus = mazeCurrentSpecialRound == .highScoreBonus ? 24 : 0
+                score += Int(urgencyBonus + efficiencyBonus + CGFloat(styleBonus))
+                updateScoreDisplay()
+                runModeImpactVFX(color: .yellow)
+                mouse.removeFromParent()
+                mazeMice.remove(at: idx)
+                capturedThisFrame += 1
+                continue
+            }
+
+            if catchDistance < 70 {
+                mazeNearMissTimer += dt
+                if mazeNearMissTimer > 1.2 {
+                    mazeNearMissTimer = 0
+                    spawnSingleMazePickup(at: CGPoint(x: mouse.position.x + CGFloat.random(in: -40...40), y: mouse.position.y + CGFloat.random(in: -40...40)), forcedKind: nil)
+                }
+            }
+
+            if let exitNode = nearestExit, exitNode.frame.insetBy(dx: -8, dy: -8).contains(mouse.position) {
+                runModeImpactVFX(color: .red)
+                completeSpecialMode(success: false)
+                return
+            }
         }
+
+        mazeMouseNode = mazeMice.first
+        if capturedThisFrame > 0 {
+            let requiredCaptures = GameLogic.mazeRequiredCaptures(band: mazeBand, specialRound: mapMazeSpecialRoundForLogic())
+            if requiredCaptures == 1 || mazeMice.isEmpty {
+                advanceMazeRound()
+                return
+            }
+        }
+
+        updateMazeHUD()
 
         if mazeEscapeTimer <= 0 {
             completeSpecialMode(success: false)
@@ -1425,6 +1905,49 @@ class GameScene: SKScene {
         run(SKAction.wait(forDuration: 0.25)) { [weak self] in
             self?.showGameOverScreen()
         }
+    }
+
+
+    func advanceMazeRound() {
+        guard isMazeHuntMode else {
+            completeSpecialMode(success: true)
+            return
+        }
+
+        let nextRound = mazeRoundInBand + 1
+        if nextRound <= 3 {
+            mazeRoundInBand = nextRound
+        } else {
+            mazeBand += 1
+            mazeRoundInBand = 1
+        }
+
+        mazeWalls.forEach { $0.removeFromParent() }
+        mazeExits.forEach { $0.removeFromParent() }
+        mazeSafeSpaces.forEach { $0.removeFromParent() }
+        mazeMice.forEach { $0.removeFromParent() }
+        mazePickups.forEach { $0.removeFromParent() }
+        mazeWalls.removeAll()
+        mazeExits.removeAll()
+        mazeSafeSpaces.removeAll()
+        mazeMice.removeAll()
+        mazePickups.removeAll()
+        mazePickupKinds.removeAll()
+        mazeMouseNode = nil
+
+        if mazeRoundInBand == 1 {
+            runModeImpactVFX(color: .green)
+            let summary = SKLabelNode(fontNamed: "Arial-BoldMT")
+            summary.fontSize = 20
+            summary.fontColor = .white
+            summary.zPosition = 720
+            summary.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 280)
+            summary.text = "Band \(mazeBand) · Score \(score)"
+            addChild(summary)
+            summary.run(SKAction.sequence([SKAction.wait(forDuration: 0.75), SKAction.fadeOut(withDuration: 0.2), SKAction.removeFromParent()]))
+        }
+
+        createMazeHuntModeContent()
     }
 
     // MARK: - Shield Visuals
@@ -4079,7 +4602,8 @@ class GameScene: SKScene {
 
             let controlScale = hudControlScale()
             let boostDist = hypot(loc.x - boostButtonCenter.x, loc.y - boostButtonCenter.y)
-            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 * controlScale && score > 0 {
+            let canBoost = isMazeHuntMode ? mazeBoostEnergy > 1 : score > 0
+            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 * controlScale && canBoost {
                 boostTouch  = touch
                 isBoostHeld = true
                 setBoostButtonActive(true)
@@ -4169,9 +4693,15 @@ class GameScene: SKScene {
         updatePowerUps(dt: dt)
         frameCounter += 1
 
-        // --- Boost Score Drain (1 pt per 200ms) ---
+        // --- Boost Drain ---
         if isBoostHeld {
-            if score <= 0 {
+            if isMazeHuntMode {
+                if mazeBoostEnergy <= 0.5 {
+                    isBoostHeld = false
+                    boostTouch  = nil
+                    setBoostButtonActive(false)
+                }
+            } else if score <= 0 {
                 // No score left — disengage boost
                 isBoostHeld = false
                 boostTouch  = nil
