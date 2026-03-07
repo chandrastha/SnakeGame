@@ -292,10 +292,10 @@ struct StartScreenView: View {
                 .kerning(2)
 
             HStack(spacing: 8) {
-                ModeButton(icon: "🐍", title: "Offline", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
-                    .accessibilityIdentifier("modeOffline")
-                ModeButton(icon: "⚔️", title: "Challenge", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
-                    .accessibilityIdentifier("modeChallenge")
+                ModeButton(icon: "🐍", title: "Casual", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
+                    .accessibilityIdentifier("modeCasual")
+                ModeButton(icon: "⚔️", title: "Expert", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
+                    .accessibilityIdentifier("modeExpert")
             }
         }
     }
@@ -348,8 +348,8 @@ struct StartScreenView: View {
     private var instructionText: String {
         switch selectedGameMode {
         case .online:  return "Offline-first build · Online mode is temporarily unavailable"
-        case .offline: return "99 bots · Practice mode"
-        case .challenge: return "Nemesis snake · 1000 pts · survive the hunt"
+        case .offline: return "99 bots · Casual mode"
+        case .challenge: return "Expert mode · delayed nemesis · survive the hunt"
         }
     }
 }

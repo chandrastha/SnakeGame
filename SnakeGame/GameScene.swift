@@ -163,7 +163,7 @@ class GameScene: SKScene {
 
     // MARK: - Constants
     let baseMoveSpeed:           CGFloat = 100.0
-    let maxMoveSpeed:            CGFloat = 200.0
+    let maxMoveSpeed:            CGFloat = 130.0
     let turnSpeed:               CGFloat = 280.0
     let playerTurnSpeedBase:     CGFloat = 340.0
     let playerTurnSpeedBoost:    CGFloat = 170.0
@@ -288,9 +288,9 @@ class GameScene: SKScene {
     var bots: [BotState] = []
     let totalBots = 30
     let challengeNemesisScore = 1000
+    let expertNemesisInitialDelay: CGFloat = 60.0
+    let expertNemesisRespawnDelay: CGFloat = 120.0
     var localBotTargetCount: Int { gameMode == .challenge ? totalBots + 1 : totalBots }
-    let botActivationRadius:   CGFloat = 800.0
-    let botDeactivationRadius: CGFloat = 1000.0
     // Per-tier base speeds (replaces single botMoveSpeed)
     let botSpeedEasy:   CGFloat = 95.0
     let botSpeedMedium: CGFloat = 120.0
@@ -468,7 +468,7 @@ class GameScene: SKScene {
         leaderArrowLabel  = nil
 
         backgroundColor = gameMode == .challenge
-            ? SKColor(red: 0.10, green: 0.03, blue: 0.14, alpha: 1.0)
+            ? SKColor(red: 0.11, green: 0.03, blue: 0.03, alpha: 1.0)
             : SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
         arenaMinX = 0; arenaMaxX = worldSize
         arenaMinY = 0; arenaMaxY = worldSize
@@ -533,7 +533,7 @@ class GameScene: SKScene {
         let arenaBg = SKShapeNode(rect: CGRect(x: 0, y: 0, width: worldSize, height: worldSize))
         let isChallengeMode = gameMode == .challenge
         arenaBg.fillColor   = isChallengeMode
-            ? SKColor(red: 0.17, green: 0.08, blue: 0.22, alpha: 1.0)
+            ? SKColor(red: 0.22, green: 0.06, blue: 0.07, alpha: 1.0)
             : SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
         arenaBg.strokeColor = .clear
         arenaBg.zPosition   = -11
@@ -551,8 +551,8 @@ class GameScene: SKScene {
 
             let band = SKShapeNode(path: path)
             band.fillColor = bandIndex.isMultiple(of: 2)
-                ? (isChallengeMode ? SKColor(red: 0.42, green: 0.11, blue: 0.36, alpha: 0.22) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
-                : (isChallengeMode ? SKColor(red: 0.20, green: 0.05, blue: 0.20, alpha: 0.20) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
+                ? (isChallengeMode ? SKColor(red: 0.52, green: 0.14, blue: 0.12, alpha: 0.24) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
+                : (isChallengeMode ? SKColor(red: 0.16, green: 0.04, blue: 0.04, alpha: 0.22) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
             band.strokeColor = .clear
             band.zPosition = -10.8
             addChild(band)
@@ -568,8 +568,8 @@ class GameScene: SKScene {
             let glow = SKShapeNode(circleOfRadius: index.isMultiple(of: 2) ? 300 : 240)
             glow.position = center
             glow.fillColor = index.isMultiple(of: 2)
-                ? (isChallengeMode ? SKColor(red: 0.90, green: 0.30, blue: 0.82, alpha: 0.10) : SKColor(red: 0.60, green: 0.78, blue: 0.82, alpha: 0.07))
-                : (isChallengeMode ? SKColor(red: 0.35, green: 0.10, blue: 0.36, alpha: 0.14) : SKColor(red: 0.15, green: 0.23, blue: 0.31, alpha: 0.10))
+                ? (isChallengeMode ? SKColor(red: 0.95, green: 0.32, blue: 0.22, alpha: 0.12) : SKColor(red: 0.60, green: 0.78, blue: 0.82, alpha: 0.07))
+                : (isChallengeMode ? SKColor(red: 0.38, green: 0.09, blue: 0.10, alpha: 0.16) : SKColor(red: 0.15, green: 0.23, blue: 0.31, alpha: 0.10))
             glow.strokeColor = .clear
             glow.zPosition = -10.7
             addChild(glow)
@@ -641,8 +641,12 @@ class GameScene: SKScene {
             y += step
         }
 
+        let isChallengeMode = gameMode == .challenge
+
         let grid = SKShapeNode(path: path)
-        grid.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.10)
+        grid.strokeColor = isChallengeMode
+            ? SKColor(red: 0.96, green: 0.50, blue: 0.42, alpha: 0.11)
+            : SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.10)
         grid.lineWidth   = 1
         grid.fillColor   = .clear
         grid.zPosition   = -10
@@ -665,7 +669,9 @@ class GameScene: SKScene {
         }
 
         let accentGrid = SKShapeNode(path: accentPath)
-        accentGrid.strokeColor = SKColor(red: 0.10, green: 0.18, blue: 0.24, alpha: 0.22)
+        accentGrid.strokeColor = isChallengeMode
+            ? SKColor(red: 0.35, green: 0.08, blue: 0.07, alpha: 0.30)
+            : SKColor(red: 0.10, green: 0.18, blue: 0.24, alpha: 0.22)
         accentGrid.lineWidth = 2
         accentGrid.fillColor = .clear
         accentGrid.zPosition = -9.95
@@ -2322,6 +2328,13 @@ class GameScene: SKScene {
                 bots[i].personality = personalities[i % personalities.count]
             }
             configureBotIdentity(index: i, preservePersonality: true)
+
+            if bots[i].isNemesis && gameMode == .challenge {
+                bots[i].isDead = true
+                bots[i].respawnTimer = expertNemesisInitialDelay
+            } else {
+                activateBot(i)
+            }
         }
     }
 
@@ -2489,10 +2502,14 @@ class GameScene: SKScene {
         bots[index].focusPoint = nil
         bots[index].focusTimer = 0
         bots[index].intent = .roam
-        switch bots[index].tier {
-        case .easy:   bots[index].respawnTimer = 4.0
-        case .medium: bots[index].respawnTimer = 3.0
-        case .hard:   bots[index].respawnTimer = 2.0
+        if bots[index].isNemesis && gameMode == .challenge {
+            bots[index].respawnTimer = expertNemesisRespawnDelay
+        } else {
+            switch bots[index].tier {
+            case .easy:   bots[index].respawnTimer = 4.0
+            case .medium: bots[index].respawnTimer = 3.0
+            case .hard:   bots[index].respawnTimer = 2.0
+            }
         }
         miniLeaderboardNeedsRefresh = true
     }
@@ -2507,6 +2524,10 @@ class GameScene: SKScene {
         bots[index].angle = CGFloat.random(in: 0...(2 * .pi))
         bots[index].targetAngle = bots[index].angle
         configureBotIdentity(index: index, preservePersonality: true)
+        activateBot(index)
+        if bots[index].isNemesis && gameMode == .challenge {
+            spawnFloatingText("⚠️ Nemesis has entered!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 90))
+        }
         miniLeaderboardNeedsRefresh = true
     }
 
@@ -3169,14 +3190,8 @@ class GameScene: SKScene {
             applyBotMagnetEffect(botIndex: i, dt: dt)
             let distanceToPlayer = hypot(bots[i].position.x - playerPos.x, bots[i].position.y - playerPos.y)
 
-            if !bots[i].isActive && distanceToPlayer < botActivationRadius {
-                activateBot(i)
-            } else if bots[i].isActive && distanceToPlayer > botDeactivationRadius {
-                deactivateBot(i)
-            }
-
             if updateAI && bots[i].decisionTimer <= 0 {
-                let decision = distanceToPlayer < botDetailedAIRadius || bots[i].isActive
+                let decision = distanceToPlayer < botDetailedAIRadius
                     ? chooseBestHeading(for: i)
                     : chooseAmbientDecision(for: i)
                 applyBotDecision(decision, index: i)
