@@ -12,7 +12,6 @@ struct ContentView: View {
 
     @State private var playerImage: UIImage? = AvatarStore.load()
 
-    @AppStorage("bestScore")                private var bestScore: Int = 0
     @AppStorage("selectedSnakeColorIndex")  private var selectedSnakeColorIndex: Int = 0
     @AppStorage("selectedSnakePatternIndex") private var selectedSnakePatternIndex: Int = 0
     @AppStorage("playerName")              private var playerName: String = "Player"
@@ -31,8 +30,6 @@ struct ContentView: View {
                     playerName:   playerName,
                     playerImage:  playerImage,
                     onGameOver: { finalScore in
-                        if finalScore > bestScore { bestScore = finalScore }
-                        saveToLeaderboard(finalScore)
                         if AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
                             PhotonManager.shared.disconnect()
                         }
@@ -70,11 +67,6 @@ struct ContentView: View {
         }
     }
 
-    private func saveToLeaderboard(_ score: Int) {
-        let history = (UserDefaults.standard.array(forKey: "scoreHistory") as? [Int]) ?? []
-        let updated = GameLogic.processLeaderboardEntry(score: score, existing: history)
-        UserDefaults.standard.set(updated, forKey: "scoreHistory")
-    }
 
     static func shouldDisconnectPhotonOnModeChange(mode: GameMode, isOnlineModeEnabled: Bool) -> Bool {
         isOnlineModeEnabled && mode != .online

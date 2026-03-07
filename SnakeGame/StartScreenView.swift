@@ -11,26 +11,19 @@ struct StartScreenView: View {
     @Binding var playerImage:      UIImage?
     var onPlayTapped: () -> Void
 
-    @AppStorage("bestScore")               private var bestScore: Int = 0
     @AppStorage("selectedSnakeColorIndex") private var selectedColorIndex: Int = 0
     @AppStorage("playerName")             private var playerName: String = "Player"
 
-    @ObservedObject private var coins = CoinManager.shared
 
     @State private var showImagePicker:   Bool = false
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showSourcePicker:  Bool = false
-    @State private var showLeaderboard:   Bool = false
     @State private var showCustomize:     Bool = false
-    @State private var showShop:          Bool = false
     @State private var pulsePlay:         Bool = false
 
     // Detect compact vertical class = iPhone landscape
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    private var leaderboardScores: [Int] {
-        (UserDefaults.standard.array(forKey: "scoreHistory") as? [Int]) ?? []
-    }
     private var normalizedSelectedColorIndex: Int { normalizedSnakeColorIndex(selectedColorIndex) }
     private var currentTheme: SnakeColorTheme { snakeColorThemes[normalizedSelectedColorIndex] }
     private var isLandscape: Bool { verticalSizeClass == .compact }
@@ -85,9 +78,7 @@ struct StartScreenView: View {
                 playerImage = AvatarStore.save(image) ?? image
             }
         }
-        .sheet(isPresented: $showLeaderboard) { LeaderboardView(scores: leaderboardScores) }
         .sheet(isPresented: $showCustomize)   { SnakeCustomizeView() }
-        .sheet(isPresented: $showShop)        { ShopView() }
     }
 
     // ─────────────────────────────────────────────
@@ -111,7 +102,7 @@ struct StartScreenView: View {
                 .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.55), radius: 14, x: 0, y: 0)
                 .padding(.bottom, 20)
 
-            scoreRow.padding(.bottom, 22)
+            profileRow.padding(.bottom, 22)
 
             modeSelector.padding(.bottom, 30)
 
@@ -148,7 +139,7 @@ struct StartScreenView: View {
                     .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.5), radius: 10, x: 0, y: 0)
                     .padding(.bottom, 12)
 
-                scoreRow
+                profileRow
 
                 Spacer(minLength: 0)
 
@@ -249,69 +240,17 @@ struct StartScreenView: View {
         )
     }
 
-    private var scoreRow: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Text("🏆").font(.system(size: 17))
-                    Text("Best: \(bestScore)")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color.white)
+    private var profileRow: some View {
+        HStack(spacing: 8) {
+            Button(action: { showCustomize = true }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "paintpalette.fill").font(.system(size: 12, weight: .bold))
+                    Text("Skins").font(.system(size: 12, weight: .bold))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(Color.white.opacity(0.10))
+                .foregroundStyle(Color(red: 0.75, green: 0.52, blue: 1.0))
+                .padding(.horizontal, 11).padding(.vertical, 9)
+                .background(Color(red: 0.75, green: 0.52, blue: 1.0).opacity(0.14))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(red: 1.0, green: 0.85, blue: 0.0).opacity(0.25), lineWidth: 1))
-
-                // Coin balance badge
-                HStack(spacing: 4) {
-                    Text("🪙").font(.system(size: 14))
-                    Text("\(coins.balance)")
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundStyle(Color.yellow)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .background(Color.yellow.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.yellow.opacity(0.30), lineWidth: 1))
-            }
-
-            HStack(spacing: 8) {
-                Button(action: { showLeaderboard = true }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "list.number").font(.system(size: 12, weight: .bold))
-                        Text("Board").font(.system(size: 12, weight: .bold))
-                    }
-                    .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.0))
-                    .padding(.horizontal, 11).padding(.vertical, 9)
-                    .background(Color(red: 1.0, green: 0.85, blue: 0.0).opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .accessibilityIdentifier("leaderboardButton")
-
-                Button(action: { showCustomize = true }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "paintpalette.fill").font(.system(size: 12, weight: .bold))
-                        Text("Skins").font(.system(size: 12, weight: .bold))
-                    }
-                    .foregroundStyle(Color(red: 0.75, green: 0.52, blue: 1.0))
-                    .padding(.horizontal, 11).padding(.vertical, 9)
-                    .background(Color(red: 0.75, green: 0.52, blue: 1.0).opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-
-                Button(action: { showShop = true }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "bag.fill").font(.system(size: 12, weight: .bold))
-                        Text("Shop").font(.system(size: 12, weight: .bold))
-                    }
-                    .foregroundStyle(Color.yellow)
-                    .padding(.horizontal, 11).padding(.vertical, 9)
-                    .background(Color.yellow.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
             }
         }
     }
@@ -329,12 +268,6 @@ struct StartScreenView: View {
                         .accessibilityIdentifier("modeCasual")
                     ModeButton(icon: "⚔️", title: "Expert", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
                         .accessibilityIdentifier("modeExpert")
-                }
-                HStack(spacing: 8) {
-                    ModeButton(icon: "🐭", title: "Snake Hunt Maze", isSelected: selectedGameMode == .mazeHunt) { selectedGameMode = .mazeHunt }
-                        .accessibilityIdentifier("modeMazeHunt")
-                    ModeButton(icon: "🏁", title: "Snake Race", isSelected: selectedGameMode == .snakeRace) { selectedGameMode = .snakeRace }
-                        .accessibilityIdentifier("modeSnakeRace")
                 }
             }
         }
@@ -390,8 +323,6 @@ struct StartScreenView: View {
         case .online:  return "Offline-first build · Online mode is temporarily unavailable"
         case .offline: return "99 bots · Casual mode"
         case .challenge: return "Expert mode · delayed nemesis · survive the hunt"
-        case .mazeHunt: return "Snake Hunt Maze · endless 3-round bands · hunt mice before the timer ends"
-        case .snakeRace: return "Snake Race · clear checkpoints through moving hazards"
         }
     }
 }
