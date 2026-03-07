@@ -180,6 +180,10 @@ class GameScene: SKScene {
     let segmentPixelSpacing:     CGFloat = 14.0
     let foodCount:               Int     = 200
     let maxDeltaTime:            Double  = 1.0 / 30.0
+    let minimumGameplayFPS:      Double  = 30.0
+    var botUpdateAccumulator:    CGFloat = 0
+    var botCollisionAccumulator: CGFloat = 0
+    var botHeadCheckAccumulator: CGFloat = 0
 
     // MARK: - Speed & Boost
     var currentMoveSpeed: CGFloat = 100.0
@@ -320,6 +324,9 @@ class GameScene: SKScene {
     let botBoostCooldownRange: ClosedRange<CGFloat> = 1.10...2.40
     let botDetailedAIRadius: CGFloat = 1200.0
     let botCollisionBroadPhaseRadius: CGFloat = 260.0
+    let botActivationDistance: CGFloat = 920.0
+    let botDeactivationDistance: CGFloat = 1120.0
+    var botVisibilityUpdateTimer: CGFloat = 0
     var frameCounter = 0
     var botBodyUpdateFrame: Int = 0
 
@@ -457,6 +464,10 @@ class GameScene: SKScene {
         joystickThumbOffset = .zero
         joystickEngagement  = 0
         frameCounter        = 0
+        botUpdateAccumulator = 0
+        botCollisionAccumulator = 0
+        botHeadCheckAccumulator = 0
+        botVisibilityUpdateTimer = 0
         leaderboardUpdateTimer = 0
         minimapUpdateTimer     = 0
         leaderArrowUpdateTimer = 0
@@ -2682,6 +2693,27 @@ class GameScene: SKScene {
         }
     }
 
+    private func updateBotVisibilityLOD() {
+        guard gameMode != .online, !isSpecialOfflineMode else { return }
+
+        let playerPos = snakeHead.position
+        let activateSq = botActivationDistance * botActivationDistance
+        let deactivateSq = botDeactivationDistance * botDeactivationDistance
+
+        for i in bots.indices {
+            guard !bots[i].isDead else { continue }
+            let dx = bots[i].position.x - playerPos.x
+            let dy = bots[i].position.y - playerPos.y
+            let distSq = dx * dx + dy * dy
+
+            if bots[i].isActive {
+                if distSq > deactivateSq { deactivateBot(i) }
+            } else {
+                if distSq < activateSq { activateBot(i) }
+            }
+        }
+    }
+
     private func botPersonalities(for tier: BotTier) -> [BotPersonalityKind] {
         switch tier {
         case .easy:
@@ -4131,9 +4163,10 @@ class GameScene: SKScene {
     override func update(_ currentTime: TimeInterval) {
         guard !isGameOver, gameSetupComplete, gameStarted, !isPausedGame else { return }
 
-        let dt: CGFloat = lastUpdateTime == 0
+        let frameDelta: CGFloat = lastUpdateTime == 0
             ? CGFloat(1.0 / 60.0)
-            : CGFloat(min(currentTime - lastUpdateTime, maxDeltaTime))
+            : CGFloat(max(0, currentTime - lastUpdateTime))
+        let dt: CGFloat = min(frameDelta, CGFloat(maxDeltaTime))
         lastUpdateTime = currentTime
 
         updatePowerUps(dt: dt)
@@ -4271,6 +4304,14 @@ class GameScene: SKScene {
         updateCamera()
         updateHUDPositions()
 
+        if gameMode != .online && !isSpecialOfflineMode {
+            botVisibilityUpdateTimer += dt
+            if botVisibilityUpdateTimer >= 0.20 {
+                botVisibilityUpdateTimer = 0
+                updateBotVisibilityLOD()
+            }
+        }
+
         // --- Magnet power-up: pull food every other frame ---
         if magnetActive && frameCounter % 2 == 0 { applyMagnetEffect() }
 
@@ -4280,10 +4321,26 @@ class GameScene: SKScene {
         } else if isSnakeRaceMode {
             updateSnakeRaceMode(dt: dt)
         } else if gameMode != .online {
-            let updateAI = frameCounter % 2 == 0  // bot AI at ~30 Hz
-            updateBots(dt: dt, updateAI: updateAI)
-            if frameCounter % 3 == 0 { checkBotVsBotCollisions() }        // bot-vs-bot at ~20 Hz
-            if frameCounter % 3 == 0 { checkBotHeadsHitPlayerBody() }    // bot head → player body
+            let simulationStep = CGFloat(1.0 / minimumGameplayFPS)
+            let botDelta = min(frameDelta, 0.2)
+            botUpdateAccumulator += botDelta
+            botCollisionAccumulator += botDelta
+            botHeadCheckAccumulator += botDelta
+
+            while botUpdateAccumulator >= simulationStep {
+                updateBots(dt: simulationStep, updateAI: true)
+                botUpdateAccumulator -= simulationStep
+            }
+
+            while botCollisionAccumulator >= simulationStep {
+                checkBotVsBotCollisions()
+                botCollisionAccumulator -= simulationStep
+            }
+
+            while botHeadCheckAccumulator >= simulationStep {
+                checkBotHeadsHitPlayerBody()
+                botHeadCheckAccumulator -= simulationStep
+            }
         } else if gameMode == .online {
             if frameCounter % 4 == 0 {
                 PhotonManager.shared.sendPlayerState(

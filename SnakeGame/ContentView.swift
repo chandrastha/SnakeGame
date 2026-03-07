@@ -94,6 +94,7 @@ struct GameView: UIViewRepresentable {
         let skView = SKView()
         skView.ignoresSiblingOrder = true
         skView.autoresizingMask    = [.flexibleWidth, .flexibleHeight]
+        skView.preferredFramesPerSecond = 60
 
         let scene = GameScene()
         scene.size                     = CGSize(width: 390, height: 844)
