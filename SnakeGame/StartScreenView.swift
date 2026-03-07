@@ -331,7 +331,7 @@ struct StartScreenView: View {
                         .accessibilityIdentifier("modeExpert")
                 }
                 HStack(spacing: 8) {
-                    ModeButton(icon: "🐭", title: "Maze Hunt", isSelected: selectedGameMode == .mazeHunt) { selectedGameMode = .mazeHunt }
+                    ModeButton(icon: "🐭", title: "Snake Hunt Maze", isSelected: selectedGameMode == .mazeHunt) { selectedGameMode = .mazeHunt }
                         .accessibilityIdentifier("modeMazeHunt")
                     ModeButton(icon: "🏁", title: "Snake Race", isSelected: selectedGameMode == .snakeRace) { selectedGameMode = .snakeRace }
                         .accessibilityIdentifier("modeSnakeRace")
@@ -390,7 +390,7 @@ struct StartScreenView: View {
         case .online:  return "Offline-first build · Online mode is temporarily unavailable"
         case .offline: return "99 bots · Casual mode"
         case .challenge: return "Expert mode · delayed nemesis · survive the hunt"
-        case .mazeHunt: return "Maze Hunt · catch the mouse before it escapes"
+        case .mazeHunt: return "Snake Hunt Maze · endless 3-round bands · hunt mice before the timer ends"
         case .snakeRace: return "Snake Race · clear checkpoints through moving hazards"
         }
     }
