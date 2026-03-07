@@ -180,6 +180,10 @@ class GameScene: SKScene {
     let segmentPixelSpacing:     CGFloat = 14.0
     let foodCount:               Int     = 200
     let maxDeltaTime:            Double  = 1.0 / 30.0
+    let minimumGameplayFPS:      Double  = 30.0
+    var botUpdateAccumulator:    CGFloat = 0
+    var botCollisionAccumulator: CGFloat = 0
+    var botHeadCheckAccumulator: CGFloat = 0
 
     // MARK: - Speed & Boost
     var currentMoveSpeed: CGFloat = 100.0
@@ -255,6 +259,464 @@ class GameScene: SKScene {
     var isPausedGame:       Bool    = false
     var lastPlayerPosition: CGPoint = .zero
 
+    // MARK: - Maze Hunt Mode State
+    enum MazeSpecialRoundType: CaseIterable {
+        case none
+        case twoMouse
+        case pickupRich
+        case highScoreBonus
+        case largeMazePressure
+    }
+
+    enum MazePickupKind: CaseIterable {
+        case boost
+        case time
+        case reveal
+        case slow
+    }
+
+    var mazeWalls: [SKShapeNode] = []
+    var mazeExits: [SKShapeNode] = []
+    var mazeSafeSpaces: [SKShapeNode] = []
+    var mazeMouseNode: SKLabelNode?
+    var mazeMice: [SKLabelNode] = []
+    var mazePickups: [SKLabelNode] = []
+    var mazePickupKinds: [MazePickupKind] = []
+    var mazeRevealTimer: CGFloat = 0
+    var mazeSlowFieldTimer: CGFloat = 0
+    var mazePickupSpawnTimer: CGFloat = 0
+    var mazeNearMissTimer: CGFloat = 0
+    var mazeBoostEnergy: CGFloat = 100
+    let mazeBoostEnergyMax: CGFloat = 100
+    var mazeModeLabel: SKLabelNode?
+    var mazeObjectiveLabel: SKLabelNode?
+    var mazePickupStatusLabel: SKLabelNode?
+    var mazeEscapeTimer: CGFloat = 45
+    var mazeEscapeTarget: CGPoint = .zero
+    var mazeBand: Int = 1
+    var mazeRoundInBand: Int = 1
+    var mazeMouseSpeedMultiplier: CGFloat = 1
+    var mazeCurrentSpecialRound: MazeSpecialRoundType = .none
+    var mazeSpecialRoundIndex: Int? = nil
+    var mazeBandsWithoutSpecial: Int = 0
+    var mazeTutorialActive: Bool = false
+    var mazeTutorialStep: Int = 0
+    var mazeTutorialProgress: CGFloat = 0
+    static var hasSeenMazeTutorial = false
+
+    // MARK: - Maze Hunt
+    func createMazeHuntModeContent() {
+        let plan = GameLogic.mazeHuntRoundPlan(band: mazeBand, roundInBand: mazeRoundInBand)
+        mazeEscapeTimer = CGFloat(plan.timerSeconds)
+        mazeMouseSpeedMultiplier = plan.mouseSpeedMultiplier
+        mazeBoostEnergy = mazeBoostEnergyMax
+        mazeRevealTimer = 0
+        mazeSlowFieldTimer = 0
+        mazePickupSpawnTimer = 0
+        mazeNearMissTimer = 0
+
+        configureSpecialRoundIfNeeded()
+        createMazeWalls()
+        createMazeExitNodes()
+        createMazeSafeSpaces()
+        createMazePickups(fixedOnly: true)
+        spawnMazeMice(using: plan)
+        var fairnessAttempts = 0
+        while !mazeRoundIsFair() && fairnessAttempts < 4 {
+            fairnessAttempts += 1
+            createMazeWalls()
+            createMazeExitNodes()
+            createMazeSafeSpaces()
+            mazePickups.forEach { $0.removeFromParent() }
+            mazePickups.removeAll(); mazePickupKinds.removeAll()
+            createMazePickups(fixedOnly: true)
+            spawnMazeMice(using: plan)
+        }
+
+        mazeModeLabel?.removeFromParent()
+        mazeObjectiveLabel?.removeFromParent()
+        mazePickupStatusLabel?.removeFromParent()
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize = 18
+        label.fontColor = SKColor(red: 1.0, green: 0.9, blue: 0.65, alpha: 1)
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 540)
+        label.zPosition = 610
+        addChild(label)
+        mazeModeLabel = label
+
+        let objective = SKLabelNode(fontNamed: "Arial-BoldMT")
+        objective.fontSize = 15
+        objective.fontColor = SKColor(red: 0.88, green: 0.98, blue: 1.0, alpha: 1.0)
+        objective.horizontalAlignmentMode = .center
+        objective.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 512)
+        objective.zPosition = 610
+        addChild(objective)
+        mazeObjectiveLabel = objective
+
+        let pickupStatus = SKLabelNode(fontNamed: "Arial-BoldMT")
+        pickupStatus.fontSize = 14
+        pickupStatus.fontColor = SKColor(red: 0.65, green: 1.0, blue: 0.85, alpha: 1.0)
+        pickupStatus.horizontalAlignmentMode = .center
+        pickupStatus.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 486)
+        pickupStatus.zPosition = 610
+        addChild(pickupStatus)
+        mazePickupStatusLabel = pickupStatus
+
+        maybeShowMazeTutorial()
+        updateMazeHUD()
+    }
+
+    func configureSpecialRoundIfNeeded() {
+        if mazeRoundInBand == 1 {
+            mazeCurrentSpecialRound = .none
+            mazeSpecialRoundIndex = nil
+            if mazeBand > 4 { mazeBandsWithoutSpecial += 1 }
+            let plan = GameLogic.mazeSpecialRoundPlan(
+                band: mazeBand,
+                bandsWithoutSpecial: mazeBandsWithoutSpecial,
+                randomRoll: CGFloat.random(in: 0...1),
+                randomRoundIndex: Int.random(in: 1...3)
+            )
+            if plan.shouldSchedule {
+                mazeSpecialRoundIndex = plan.scheduledRoundIndex
+                mazeBandsWithoutSpecial = 0
+            }
+        }
+
+        if mazeBand >= 4, mazeSpecialRoundIndex == mazeRoundInBand {
+            let pool: [MazeSpecialRoundType] = [.twoMouse, .pickupRich, .highScoreBonus, .largeMazePressure]
+            mazeCurrentSpecialRound = pool.randomElement() ?? .twoMouse
+        } else {
+            mazeCurrentSpecialRound = .none
+        }
+    }
+
+    func createMazeWalls() {
+        // Pure random generation every round, then fairness checks by spawn/path validation.
+        mazeWalls.forEach { $0.removeFromParent() }
+        mazeWalls.removeAll()
+
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let baseHalfWidth: CGFloat = mazeCurrentSpecialRound == .largeMazePressure ? 680 : 560
+        let baseHalfHeight: CGFloat = mazeCurrentSpecialRound == .largeMazePressure ? 620 : 500
+        let corridor: CGFloat = max(72, 110 - CGFloat(mazeBand) * 3)
+
+        var walls: [CGRect] = [
+            CGRect(x: center.x - baseHalfWidth, y: center.y + baseHalfHeight - 20, width: baseHalfWidth * 2, height: 40),
+            CGRect(x: center.x - baseHalfWidth, y: center.y - baseHalfHeight, width: baseHalfWidth * 2, height: 40),
+            CGRect(x: center.x - baseHalfWidth, y: center.y - baseHalfHeight, width: 40, height: baseHalfHeight * 2),
+            CGRect(x: center.x + baseHalfWidth - 40, y: center.y - baseHalfHeight, width: 40, height: baseHalfHeight * 2)
+        ]
+
+        let segments = 8 + mazeBand + (mazeCurrentSpecialRound == .largeMazePressure ? 4 : 0)
+        for _ in 0..<segments {
+            let vertical = Bool.random()
+            if vertical {
+                let x = CGFloat.random(in: (center.x - baseHalfWidth + 90)...(center.x + baseHalfWidth - 120))
+                let y = CGFloat.random(in: (center.y - baseHalfHeight + 90)...(center.y + baseHalfHeight - 220))
+                let h = CGFloat.random(in: 180...420)
+                walls.append(CGRect(x: x, y: y, width: 26, height: h))
+            } else {
+                let x = CGFloat.random(in: (center.x - baseHalfWidth + 90)...(center.x + baseHalfWidth - 320))
+                let y = CGFloat.random(in: (center.y - baseHalfHeight + 90)...(center.y + baseHalfHeight - 120))
+                let w = CGFloat.random(in: 180...460)
+                walls.append(CGRect(x: x, y: y, width: w, height: 26))
+            }
+        }
+
+        // Carve a guaranteed central chase lane so both sides keep valid movement space.
+        walls.removeAll { $0.intersects(CGRect(x: center.x - corridor / 2, y: center.y - baseHalfHeight + 60, width: corridor, height: baseHalfHeight * 2 - 120)) }
+
+        mazeWalls = walls.map { rect in
+            let wall = SKShapeNode(rect: rect, cornerRadius: 8)
+            wall.fillColor = SKColor(red: 0.25, green: 0.35, blue: 0.82, alpha: 0.75)
+            wall.strokeColor = SKColor(red: 0.7, green: 0.85, blue: 1.0, alpha: 0.9)
+            wall.glowWidth = 5
+            wall.lineWidth = 2
+            wall.zPosition = 120
+            addChild(wall)
+            return wall
+        }
+    }
+
+    func createMazeExitNodes() {
+        mazeExits.forEach { $0.removeFromParent() }
+        mazeExits.removeAll()
+
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let exitRects = [
+            CGRect(x: center.x - 56, y: center.y + 470, width: 112, height: 24),
+            CGRect(x: center.x - 56, y: center.y - 494, width: 112, height: 24),
+            CGRect(x: center.x + 520, y: center.y - 40, width: 24, height: 112)
+        ]
+
+        mazeExits = exitRects.map { rect in
+            let exitNode = SKShapeNode(rect: rect, cornerRadius: 6)
+            exitNode.fillColor = SKColor(red: 0.95, green: 0.35, blue: 0.35, alpha: 0.88)
+            exitNode.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.72, alpha: 1.0)
+            exitNode.glowWidth = 8
+            exitNode.zPosition = 130
+            let pulse = SKAction.sequence([SKAction.fadeAlpha(to: 0.45, duration: 0.55), SKAction.fadeAlpha(to: 0.95, duration: 0.55)])
+            exitNode.run(SKAction.repeatForever(pulse))
+            addChild(exitNode)
+            return exitNode
+        }
+    }
+
+    func createMazeSafeSpaces() {
+        mazeSafeSpaces.forEach { $0.removeFromParent() }
+        mazeSafeSpaces.removeAll()
+
+        let count = min(4, 1 + mazeBand / 3)
+        for i in 0..<count {
+            let node = SKShapeNode(circleOfRadius: 34)
+            node.fillColor = SKColor(red: 0.40, green: 0.30, blue: 0.92, alpha: 0.30)
+            node.strokeColor = SKColor(red: 0.72, green: 0.62, blue: 1.0, alpha: 0.82)
+            node.lineWidth = 2
+            node.glowWidth = 6
+            node.zPosition = 125
+            let x = worldSize / 2 + CGFloat((i % 2 == 0 ? -1 : 1)) * CGFloat.random(in: 140...420)
+            let y = worldSize / 2 + CGFloat(i < 2 ? 1 : -1) * CGFloat.random(in: 120...360)
+            node.position = CGPoint(x: x, y: y)
+            addChild(node)
+            mazeSafeSpaces.append(node)
+        }
+    }
+
+    func spawnMazeMice(using plan: GameLogic.MazeHuntRoundPlan) {
+        mazeMice.forEach { $0.removeFromParent() }
+        mazeMice.removeAll()
+        mazeMouseNode = nil
+
+        let wantsTwoMice = mazeCurrentSpecialRound == .twoMouse
+        let mouseCount = wantsTwoMice ? 2 : 1
+        for idx in 0..<mouseCount {
+            let mouse = SKLabelNode(text: "🐭")
+            mouse.fontSize = 30
+            mouse.zPosition = 220
+            let x = worldSize / 2 + CGFloat(idx == 0 ? 1 : -1) * CGFloat.random(in: 280...460)
+            let y = worldSize / 2 + CGFloat.random(in: -340...360)
+            mouse.position = mazeValidMouseSpawn(preferred: CGPoint(x: x, y: y))
+            if plan.hasHeadStart { mouse.alpha = 0.35 }
+            addChild(mouse)
+            mazeMice.append(mouse)
+        }
+        mazeMouseNode = mazeMice.first
+
+        if plan.hasHeadStart {
+            run(SKAction.wait(forDuration: 0.9)) { [weak self] in
+                self?.mazeMice.forEach { $0.alpha = 1.0 }
+            }
+        }
+    }
+
+    func mazeValidMouseSpawn(preferred: CGPoint) -> CGPoint {
+        var candidate = preferred
+        for _ in 0..<24 {
+            let farEnough = hypot(candidate.x - snakeHead.position.x, candidate.y - snakeHead.position.y) > 260
+            let blocked = mazeWalls.contains { $0.frame.insetBy(dx: -16, dy: -16).contains(candidate) }
+            if farEnough && !blocked { return candidate }
+            candidate = CGPoint(
+                x: worldSize / 2 + CGFloat.random(in: -480...480),
+                y: worldSize / 2 + CGFloat.random(in: -420...420)
+            )
+        }
+        return CGPoint(x: worldSize / 2 + 360, y: worldSize / 2 + 220)
+    }
+
+    func createMazePickups(fixedOnly: Bool) {
+        if !fixedOnly {
+            if mazeCurrentSpecialRound == .pickupRich || CGFloat.random(in: 0...1) < 0.35 {
+                spawnSingleMazePickup(at: CGPoint(
+                    x: worldSize / 2 + CGFloat.random(in: -450...450),
+                    y: worldSize / 2 + CGFloat.random(in: -400...400)
+                ), forcedKind: nil)
+            }
+            return
+        }
+
+        for dx in [-300.0, 0.0, 300.0] {
+            spawnSingleMazePickup(at: CGPoint(x: worldSize / 2 + dx, y: worldSize / 2 - 220), forcedKind: .boost)
+        }
+    }
+
+    func spawnSingleMazePickup(at position: CGPoint, forcedKind: MazePickupKind?) {
+        guard !mazeWalls.contains(where: { $0.frame.insetBy(dx: -20, dy: -20).contains(position) }) else { return }
+        let kind = forcedKind ?? MazePickupKind.allCases.randomElement() ?? .boost
+        let emoji: String
+        switch kind {
+        case .boost: emoji = "⚡️"
+        case .time: emoji = "⏱"
+        case .reveal: emoji = "📡"
+        case .slow: emoji = "🧊"
+        }
+
+        let node = SKLabelNode(text: emoji)
+        node.fontSize = 24
+        node.zPosition = 226
+        node.position = position
+        addChild(node)
+        mazePickups.append(node)
+        mazePickupKinds.append(kind)
+    }
+
+    func updateMazeHUD() {
+        let miceRemaining = mazeMice.count
+        let target = (mazeCurrentSpecialRound == .twoMouse && mazeBand >= 7) ? "Catch both mice" : "Catch 1 mouse"
+        mazeModeLabel?.text = "Snake Hunt Maze · B\(mazeBand)-R\(mazeRoundInBand) · Time: \(Int(max(0, mazeEscapeTimer)))"
+        mazeObjectiveLabel?.text = "Objective: \(target) · Mice Left: \(miceRemaining)"
+        let revealText = mazeRevealTimer > 0 ? "Reveal \(Int(ceil(mazeRevealTimer)))s" : "Reveal ready"
+        let slowText = mazeSlowFieldTimer > 0 ? "Slow \(Int(ceil(mazeSlowFieldTimer)))s" : "Slow ready"
+        mazePickupStatusLabel?.text = "Boost \(Int(mazeBoostEnergy))/\(Int(mazeBoostEnergyMax)) · \(revealText) · \(slowText)"
+    }
+
+    func mapMazeSpecialRoundForLogic() -> GameLogic.MazeSpecialRoundType {
+        switch mazeCurrentSpecialRound {
+        case .none: return .none
+        case .twoMouse: return .twoMouse
+        case .pickupRich: return .pickupRich
+        case .highScoreBonus: return .highScoreBonus
+        case .largeMazePressure: return .largeMazePressure
+        }
+    }
+
+    func maybeShowMazeTutorial() {
+        guard isMazeHuntMode, !GameScene.hasSeenMazeTutorial else { return }
+        mazeTutorialActive = true
+        mazeTutorialStep = 1
+        mazeTutorialProgress = 0
+
+        let panel = SKShapeNode(rectOf: CGSize(width: 520, height: 120), cornerRadius: 14)
+        panel.name = "mazeTutorialPanel"
+        panel.fillColor = SKColor(red: 0.05, green: 0.09, blue: 0.18, alpha: 0.88)
+        panel.strokeColor = SKColor(red: 0.58, green: 0.82, blue: 1.0, alpha: 0.95)
+        panel.lineWidth = 2
+        panel.zPosition = 700
+        panel.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 340)
+
+        let text = SKLabelNode(fontNamed: "Arial-BoldMT")
+        text.name = "mazeTutorialText"
+        text.fontSize = 20
+        text.zPosition = 701
+        text.position = CGPoint(x: 0, y: -10)
+        text.text = "Tutorial: Move the joystick to steer"
+        panel.addChild(text)
+
+        addChild(panel)
+    }
+
+    func updateMazeTutorial(dt: CGFloat) {
+        guard mazeTutorialActive else { return }
+        guard let panel = childNode(withName: "mazeTutorialPanel"), let text = panel.childNode(withName: "mazeTutorialText") as? SKLabelNode else { return }
+
+        if mazeTutorialStep == 1 {
+            if joystickEngagement > 0.45 { mazeTutorialProgress += dt }
+            text.text = "Tutorial: Move joystick (\(Int(min(100, mazeTutorialProgress * 120)))%)"
+            if mazeTutorialProgress >= 0.8 {
+                mazeTutorialStep = 2
+                mazeTutorialProgress = 0
+                text.text = "Tutorial: Hold BOOST to sprint"
+            }
+        } else {
+            if isBoostHeld { mazeTutorialProgress += dt }
+            text.text = "Tutorial: Hold boost (\(Int(min(100, mazeTutorialProgress * 120)))%)"
+            if mazeTutorialProgress >= 0.8 {
+                mazeTutorialActive = false
+                GameScene.hasSeenMazeTutorial = true
+                panel.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.25), SKAction.removeFromParent()]))
+            }
+        }
+    }
+
+    func hasMazeLineOfSight(from: CGPoint, to: CGPoint) -> Bool {
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let dist = max(1, hypot(dx, dy))
+        let steps = Int(dist / 16)
+        if steps <= 1 { return true }
+        for i in 1...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let point = CGPoint(x: from.x + dx * t, y: from.y + dy * t)
+            if mazeWalls.contains(where: { $0.frame.insetBy(dx: -3, dy: -3).contains(point) }) {
+                return false
+            }
+        }
+        return true
+    }
+
+    func mazeRoundIsFair() -> Bool {
+        guard !mazeMice.isEmpty else { return false }
+
+        let start = snakeHead.position
+        let targets = mazeMice.map(\.position)
+        let step: CGFloat = 48
+        let cols = 26
+        let rows = 22
+
+        func nodePoint(_ c: Int, _ r: Int) -> CGPoint {
+            CGPoint(x: worldSize / 2 - CGFloat(cols / 2) * step + CGFloat(c) * step,
+                    y: worldSize / 2 - CGFloat(rows / 2) * step + CGFloat(r) * step)
+        }
+
+        func nearestCell(to point: CGPoint) -> (Int, Int) {
+            var best = (0, 0)
+            var bestDist = CGFloat.greatestFiniteMagnitude
+            for c in 0..<cols {
+                for r in 0..<rows {
+                    let p = nodePoint(c, r)
+                    let d = hypot(p.x - point.x, p.y - point.y)
+                    if d < bestDist {
+                        bestDist = d
+                        best = (c, r)
+                    }
+                }
+            }
+            return best
+        }
+
+        func blocked(_ p: CGPoint) -> Bool {
+            mazeWalls.contains(where: { $0.frame.insetBy(dx: -8, dy: -8).contains(p) })
+        }
+
+        let startCell = nearestCell(to: start)
+        var queue: [(Int, Int)] = [startCell]
+        var seen: Set<String> = ["\(startCell.0)-\(startCell.1)"]
+
+        while !queue.isEmpty {
+            let cell = queue.removeFirst()
+            for delta in [(-1,0),(1,0),(0,-1),(0,1)] {
+                let nc = cell.0 + delta.0
+                let nr = cell.1 + delta.1
+                guard nc >= 0, nr >= 0, nc < cols, nr < rows else { continue }
+                let key = "\(nc)-\(nr)"
+                if seen.contains(key) { continue }
+                let point = nodePoint(nc, nr)
+                if blocked(point) { continue }
+                seen.insert(key)
+                queue.append((nc, nr))
+            }
+        }
+
+        for target in targets {
+            let goal = nearestCell(to: target)
+            if !seen.contains("\(goal.0)-\(goal.1)") {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    // MARK: - Snake Race Mode
+    var raceObstacles: [SKShapeNode] = []
+    var raceCheckpoints: [SKShapeNode] = []
+    var raceModeLabel: SKLabelNode?
+    var raceCurrentCheckpoint: Int = 0
+    var raceTimeRemaining: CGFloat = 75
+    var raceIsFinished: Bool = false
+
     // MARK: - Power-ups
     var shieldActive:        Bool    = false
     var multiplierActive:    Bool    = false
@@ -270,6 +732,15 @@ class GameScene: SKScene {
     /// Target body segment count derived directly from score.
     /// initialBodyCount + 1 segment per 10 score points.
     var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 10) }
+    var isMazeHuntMode: Bool { gameMode == .mazeHunt }
+    var isSnakeRaceMode: Bool { gameMode == .snakeRace }
+    var isSpecialOfflineMode: Bool { isMazeHuntMode || isSnakeRaceMode }
+
+    // MARK: - Coin System
+    var sessionCoinsEarned: Int = 0
+    var hasUsedRevive:      Bool = false
+    var coinPanel:  SKShapeNode?
+    var coinLabel:  SKLabelNode?
 
     // MARK: - Other UI
     var pauseButton:  SKNode?
@@ -305,8 +776,10 @@ class GameScene: SKScene {
     let botBoostCooldownRange: ClosedRange<CGFloat> = 1.10...2.40
     let botDetailedAIRadius: CGFloat = 1200.0
     let botCollisionBroadPhaseRadius: CGFloat = 260.0
+    let botActivationDistance: CGFloat = 920.0
+    let botDeactivationDistance: CGFloat = 1120.0
+    var botVisibilityUpdateTimer: CGFloat = 0
     var frameCounter = 0
-    var botBodyUpdateFrame: Int = 0
 
     // MARK: - Remote Players (Online mode)
     var remotePlayers: [Int: RemotePlayer] = [:]
@@ -426,6 +899,8 @@ class GameScene: SKScene {
         onlineRoundPrimed   = false
         isPausedGame        = false
         scoreMultiplier     = 1
+        sessionCoinsEarned  = 0
+        hasUsedRevive       = false
         shieldActive        = false
         multiplierActive    = false
         multiplierTimeLeft  = 0
@@ -442,6 +917,10 @@ class GameScene: SKScene {
         joystickThumbOffset = .zero
         joystickEngagement  = 0
         frameCounter        = 0
+        botUpdateAccumulator = 0
+        botCollisionAccumulator = 0
+        botHeadCheckAccumulator = 0
+        botVisibilityUpdateTimer = 0
         leaderboardUpdateTimer = 0
         minimapUpdateTimer     = 0
         leaderArrowUpdateTimer = 0
@@ -449,6 +928,25 @@ class GameScene: SKScene {
         trailFoodTimer       = 0
         activeTrailFoodCount = 0
         tailWigglePhase      = 0
+        mazeEscapeTimer      = 45
+        mazeEscapeTarget     = .zero
+        mazeBand             = 1
+        mazeRoundInBand      = 1
+        mazeMouseSpeedMultiplier = 1
+        mazeRevealTimer      = 0
+        mazeSlowFieldTimer   = 0
+        mazePickupSpawnTimer = 0
+        mazeNearMissTimer    = 0
+        mazeBoostEnergy      = mazeBoostEnergyMax
+        mazeCurrentSpecialRound = .none
+        mazeSpecialRoundIndex = nil
+        mazeBandsWithoutSpecial = 0
+        mazeTutorialActive   = false
+        mazeTutorialStep     = 0
+        mazeTutorialProgress = 0
+        raceCurrentCheckpoint = 0
+        raceTimeRemaining    = 75
+        raceIsFinished       = false
 
         removeAllChildren()
         bodySegments.removeAll()
@@ -470,10 +968,29 @@ class GameScene: SKScene {
         miniLeaderboard   = nil
         leaderArrowNode   = nil
         leaderArrowLabel  = nil
+        mazeWalls.removeAll()
+        mazeExits.removeAll()
+        mazeSafeSpaces.removeAll()
+        mazeMice.removeAll()
+        mazePickups.removeAll()
+        mazePickupKinds.removeAll()
+        mazeMouseNode = nil
+        mazeModeLabel = nil
+        mazeObjectiveLabel = nil
+        mazePickupStatusLabel = nil
+        raceObstacles.removeAll()
+        raceCheckpoints.removeAll()
+        raceModeLabel = nil
 
-        backgroundColor = gameMode == .challenge
-            ? SKColor(red: 0.11, green: 0.03, blue: 0.03, alpha: 1.0)
-            : SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
+        if gameMode == .challenge {
+            backgroundColor = SKColor(red: 0.11, green: 0.03, blue: 0.03, alpha: 1.0)
+        } else if isMazeHuntMode {
+            backgroundColor = SKColor(red: 0.07, green: 0.08, blue: 0.16, alpha: 1.0)
+        } else if isSnakeRaceMode {
+            backgroundColor = SKColor(red: 0.03, green: 0.10, blue: 0.12, alpha: 1.0)
+        } else {
+            backgroundColor = SKColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
+        }
         arenaMinX = 0; arenaMaxX = worldSize
         arenaMinY = 0; arenaMaxY = worldSize
 
@@ -504,19 +1021,26 @@ class GameScene: SKScene {
         createMiniLeaderboard()
         createMinimap()
         createLeaderArrow()
+        if isMazeHuntMode {
+            createMazeHuntModeContent()
+        } else if isSnakeRaceMode {
+            createSnakeRaceModeContent()
+        }
         if gameMode != .online { createPauseButton() }
         createJoystick()
         createBoostButton()
         if gameMode == .online {
             prepareOnlineFoodSlots()
-        } else {
+        } else if !isSpecialOfflineMode {
             spawnInitialFood()
+        } else {
+            boostButtonNode?.alpha = 0.5
         }
         updateScoreDisplay()
 
         if gameMode == .online {
             PhotonManager.shared.delegate = self
-        } else {
+        } else if !isSpecialOfflineMode {
             spawnBots()
         }
 
@@ -536,9 +1060,15 @@ class GameScene: SKScene {
         // Arena background fill
         let arenaBg = SKShapeNode(rect: CGRect(x: 0, y: 0, width: worldSize, height: worldSize))
         let isChallengeMode = gameMode == .challenge
-        arenaBg.fillColor   = isChallengeMode
-            ? SKColor(red: 0.22, green: 0.06, blue: 0.07, alpha: 1.0)
-            : SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
+        if isMazeHuntMode {
+            arenaBg.fillColor = SKColor(red: 0.12, green: 0.15, blue: 0.30, alpha: 1.0)
+        } else if isSnakeRaceMode {
+            arenaBg.fillColor = SKColor(red: 0.08, green: 0.26, blue: 0.28, alpha: 1.0)
+        } else {
+            arenaBg.fillColor = isChallengeMode
+                ? SKColor(red: 0.22, green: 0.06, blue: 0.07, alpha: 1.0)
+                : SKColor(red: 0.21, green: 0.29, blue: 0.36, alpha: 1.0)
+        }
         arenaBg.strokeColor = .clear
         arenaBg.zPosition   = -11
         addChild(arenaBg)
@@ -554,9 +1084,19 @@ class GameScene: SKScene {
             path.closeSubpath()
 
             let band = SKShapeNode(path: path)
-            band.fillColor = bandIndex.isMultiple(of: 2)
-                ? (isChallengeMode ? SKColor(red: 0.52, green: 0.14, blue: 0.12, alpha: 0.24) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
-                : (isChallengeMode ? SKColor(red: 0.16, green: 0.04, blue: 0.04, alpha: 0.22) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
+            if isMazeHuntMode {
+                band.fillColor = bandIndex.isMultiple(of: 2)
+                    ? SKColor(red: 0.32, green: 0.40, blue: 0.82, alpha: 0.15)
+                    : SKColor(red: 0.18, green: 0.22, blue: 0.50, alpha: 0.14)
+            } else if isSnakeRaceMode {
+                band.fillColor = bandIndex.isMultiple(of: 2)
+                    ? SKColor(red: 0.16, green: 0.62, blue: 0.62, alpha: 0.16)
+                    : SKColor(red: 0.07, green: 0.34, blue: 0.38, alpha: 0.14)
+            } else {
+                band.fillColor = bandIndex.isMultiple(of: 2)
+                    ? (isChallengeMode ? SKColor(red: 0.52, green: 0.14, blue: 0.12, alpha: 0.24) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
+                    : (isChallengeMode ? SKColor(red: 0.16, green: 0.04, blue: 0.04, alpha: 0.22) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
+            }
             band.strokeColor = .clear
             band.zPosition = -10.8
             addChild(band)
@@ -701,6 +1241,67 @@ class GameScene: SKScene {
         addChild(dots)
     }
 
+    // MARK: - Snake Race
+    func createSnakeRaceModeContent() {
+        raceTimeRemaining = 80
+        createRaceObstaclesAndCheckpoints()
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize = 18
+        label.fontColor = SKColor(red: 0.60, green: 0.95, blue: 0.95, alpha: 1)
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 540)
+        label.zPosition = 610
+        addChild(label)
+        raceModeLabel = label
+        updateRaceHUD()
+    }
+
+    func createRaceObstaclesAndCheckpoints() {
+        let center = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let obstacleRects: [CGRect] = [
+            CGRect(x: center.x - 320, y: center.y + 320, width: 640, height: 34),
+            CGRect(x: center.x - 500, y: center.y + 100, width: 420, height: 34),
+            CGRect(x: center.x + 80, y: center.y + 100, width: 420, height: 34),
+            CGRect(x: center.x - 380, y: center.y - 120, width: 760, height: 34),
+            CGRect(x: center.x - 500, y: center.y - 340, width: 400, height: 34),
+            CGRect(x: center.x + 120, y: center.y - 340, width: 400, height: 34)
+        ]
+
+        raceObstacles = obstacleRects.map { rect in
+            let obstacle = SKShapeNode(rect: rect, cornerRadius: 10)
+            obstacle.fillColor = SKColor(red: 0.06, green: 0.75, blue: 0.75, alpha: 0.75)
+            obstacle.strokeColor = SKColor(red: 0.6, green: 1.0, blue: 1.0, alpha: 0.9)
+            obstacle.glowWidth = 7
+            obstacle.zPosition = 120
+            addChild(obstacle)
+            return obstacle
+        }
+
+        let checkpoints: [CGPoint] = [
+            CGPoint(x: center.x, y: center.y + 470),
+            CGPoint(x: center.x - 470, y: center.y + 10),
+            CGPoint(x: center.x + 470, y: center.y - 210),
+            CGPoint(x: center.x, y: center.y - 470)
+        ]
+
+        raceCheckpoints = checkpoints.enumerated().map { index, point in
+            let ring = SKShapeNode(circleOfRadius: 54)
+            ring.position = point
+            ring.fillColor = .clear
+            ring.strokeColor = index == 0 ? SKColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 1) : SKColor(red: 0.55, green: 0.65, blue: 0.65, alpha: 0.6)
+            ring.lineWidth = 6
+            ring.glowWidth = index == 0 ? 12 : 0
+            ring.zPosition = 115
+            addChild(ring)
+            return ring
+        }
+    }
+
+    func updateRaceHUD() {
+        raceModeLabel?.text = "Snake Race · CP \(min(raceCurrentCheckpoint + 1, raceCheckpoints.count))/\(max(1, raceCheckpoints.count)) · Time: \(Int(max(0, raceTimeRemaining)))"
+    }
+
     // MARK: - Countdown
     func primeOnlineRoundIfReady() {
         guard gameMode == .online, gameSetupComplete, !onlineRoundPrimed else { return }
@@ -751,6 +1352,12 @@ class GameScene: SKScene {
 
     // MARK: - Camera Follow
     func updateCamera() {
+        if isMazeHuntMode {
+            cameraNode.setScale(1.22)
+            cameraNode.position = CGPoint(x: worldSize / 2, y: worldSize / 2)
+            return
+        }
+
         let desiredScale = desiredCameraScale()
         let newScale = cameraNode.xScale + (desiredScale - cameraNode.xScale) * 0.08
         cameraNode.setScale(newScale)
@@ -949,10 +1556,15 @@ class GameScene: SKScene {
         )
 
         if normalized > 0 {
-            targetAngle = angle
+            let blendedAngle = isSnakeRaceMode
+                ? shortestAngleLerp(from: currentAngle, to: angle, blend: 0.55 + 0.35 * normalized)
+                : angle
+            targetAngle = blendedAngle
             isTouching  = true
+            joystickThumbNode?.alpha = 0.92
         } else {
             isTouching = false
+            joystickThumbNode?.alpha = 0.72
         }
     }
 
@@ -962,6 +1574,11 @@ class GameScene: SKScene {
         joystickThumbNode?.run(SKAction.move(to: joystickCenter, duration: 0.12))
         isTouching    = false
         joystickTouch = nil
+    }
+
+    func shortestAngleLerp(from: CGFloat, to: CGFloat, blend: CGFloat) -> CGFloat {
+        let delta = atan2(sin(to - from), cos(to - from))
+        return from + delta * max(0, min(1, blend))
     }
 
     // MARK: - Boost Button
@@ -1045,6 +1662,227 @@ class GameScene: SKScene {
         )
     }
 
+    func collidesWithShapeWalls(_ walls: [SKShapeNode], padding: CGFloat = 8) -> Bool {
+        walls.contains { wall in
+            wall.frame.insetBy(dx: -padding, dy: -padding).contains(snakeHead.position)
+        }
+    }
+
+    func runModeImpactVFX(color: SKColor) {
+        let ring = SKShapeNode(circleOfRadius: 14)
+        ring.position = snakeHead.position
+        ring.strokeColor = color
+        ring.lineWidth = 4
+        ring.glowWidth = 10
+        ring.zPosition = 700
+        addChild(ring)
+        ring.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.scale(to: 5.0, duration: 0.28),
+                SKAction.fadeOut(withDuration: 0.28)
+            ]),
+            SKAction.removeFromParent()
+        ]))
+    }
+
+    func updateMazeMode(dt: CGFloat) {
+        guard isMazeHuntMode else { return }
+
+        if mazeTutorialActive {
+            updateMazeTutorial(dt: dt)
+            updateMazeHUD()
+            return
+        }
+
+        mazeEscapeTimer -= dt
+        mazeRevealTimer = max(0, mazeRevealTimer - dt)
+        mazeSlowFieldTimer = max(0, mazeSlowFieldTimer - dt)
+
+        // Boost energy system for Maze Hunt (hold-to-boost drains, passive refill).
+        let refillRate: CGFloat = isBoostHeld ? 7 : 16
+        let drainRate: CGFloat = isBoostHeld ? 34 : 0
+        mazeBoostEnergy = min(mazeBoostEnergyMax, max(0, mazeBoostEnergy + (refillRate - drainRate) * dt))
+        if mazeBoostEnergy <= 0.5, isBoostHeld {
+            isBoostHeld = false
+            boostTouch = nil
+            setBoostButtonActive(false)
+        }
+
+        if collidesWithShapeWalls(mazeWalls, padding: 14) {
+            playerGameOver()
+            return
+        }
+
+        mazePickupSpawnTimer += dt
+        if mazePickupSpawnTimer >= (mazeCurrentSpecialRound == .pickupRich ? 2.4 : 4.2) {
+            mazePickupSpawnTimer = 0
+            createMazePickups(fixedOnly: false)
+        }
+
+        for (index, pickup) in mazePickups.enumerated().reversed() {
+            let dist = hypot(snakeHead.position.x - pickup.position.x, snakeHead.position.y - pickup.position.y)
+            if dist < 42 {
+                let kind = mazePickupKinds[index]
+                switch kind {
+                case .boost:
+                    mazeBoostEnergy = min(mazeBoostEnergyMax, mazeBoostEnergy + 36)
+                case .time:
+                    mazeEscapeTimer += 4
+                case .reveal:
+                    mazeRevealTimer = max(mazeRevealTimer, 5)
+                case .slow:
+                    mazeSlowFieldTimer = max(mazeSlowFieldTimer, 4)
+                }
+                runModeImpactVFX(color: .green)
+                pickup.removeFromParent()
+                mazePickups.remove(at: index)
+                mazePickupKinds.remove(at: index)
+            }
+        }
+
+        var capturedThisFrame = 0
+        for (idx, mouse) in mazeMice.enumerated().reversed() {
+            let nearestExit = mazeExits.min { a, b in
+                hypot(mouse.position.x - a.position.x, mouse.position.y - a.position.y)
+                < hypot(mouse.position.x - b.position.x, mouse.position.y - b.position.y)
+            }
+            mazeEscapeTarget = nearestExit?.position ?? CGPoint(x: worldSize / 2, y: worldSize / 2 + 440)
+
+            let fleeX = mouse.position.x - snakeHead.position.x
+            let fleeY = mouse.position.y - snakeHead.position.y
+            let fleeDist = max(1, hypot(fleeX, fleeY))
+            let exitX = mazeEscapeTarget.x - mouse.position.x
+            let exitY = mazeEscapeTarget.y - mouse.position.y
+            let exitDist = max(1, hypot(exitX, exitY))
+            let lineOfSight = hasMazeLineOfSight(from: snakeHead.position, to: mouse.position)
+
+            // Step-based behavior scaling: speed first, then route deception and safe-space usage.
+            let panicBias: CGFloat = fleeDist < 260 ? 0.95 : 0.55
+            let deceptionBias: CGFloat = mazeBand >= 6 ? 0.35 : 0.10
+            let safeBias: CGFloat = mazeBand >= 5 ? 0.45 : 0.15
+            let slowScale: CGFloat = mazeSlowFieldTimer > 0 ? 0.70 : 1.0
+            let aiJitter = CGFloat.random(in: -deceptionBias...deceptionBias)
+            let step: CGFloat = dt * 108 * mazeMouseSpeedMultiplier * slowScale
+
+            var vx = (exitX / exitDist * 0.62 + fleeX / fleeDist * panicBias)
+            var vy = (exitY / exitDist * 0.62 + fleeY / fleeDist * panicBias)
+
+            if !lineOfSight {
+                vx += aiJitter
+                vy -= aiJitter
+                mouse.alpha = mazeRevealTimer > 0 ? 1.0 : 0.52
+            } else {
+                mouse.alpha = 1.0
+            }
+
+            if let safeSpace = mazeSafeSpaces.min(by: {
+                hypot($0.position.x - mouse.position.x, $0.position.y - mouse.position.y) <
+                hypot($1.position.x - mouse.position.x, $1.position.y - mouse.position.y)
+            }), mazeBand >= 4 {
+                let safeDist = hypot(safeSpace.position.x - mouse.position.x, safeSpace.position.y - mouse.position.y)
+                if safeDist < 170 && CGFloat.random(in: 0...1) < safeBias {
+                    let toSafeX = safeSpace.position.x - mouse.position.x
+                    let toSafeY = safeSpace.position.y - mouse.position.y
+                    let toSafeDist = max(1, hypot(toSafeX, toSafeY))
+                    vx = vx * 0.55 + (toSafeX / toSafeDist) * 0.8
+                    vy = vy * 0.55 + (toSafeY / toSafeDist) * 0.8
+                }
+            }
+
+            mouse.position.x += vx * step
+            mouse.position.y += vy * step
+
+            if mazeWalls.contains(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(mouse.position) }) {
+                mouse.position.x -= (exitX / exitDist) * step * 1.2
+                mouse.position.y -= (exitY / exitDist) * step * 1.2
+            }
+
+            let catchDistance = hypot(mouse.position.x - snakeHead.position.x, mouse.position.y - snakeHead.position.y)
+            if catchDistance < 32 {
+                let urgencyBonus = max(10, mazeEscapeTimer * 3)
+                let efficiencyBonus = max(0, 36 - CGFloat(bodySegments.count))
+                let styleBonus = mazeCurrentSpecialRound == .highScoreBonus ? 24 : 0
+                score += Int(urgencyBonus + efficiencyBonus + CGFloat(styleBonus))
+                updateScoreDisplay()
+                runModeImpactVFX(color: .yellow)
+                mouse.removeFromParent()
+                mazeMice.remove(at: idx)
+                capturedThisFrame += 1
+                continue
+            }
+
+            if catchDistance < 70 {
+                mazeNearMissTimer += dt
+                if mazeNearMissTimer > 1.2 {
+                    mazeNearMissTimer = 0
+                    spawnSingleMazePickup(at: CGPoint(x: mouse.position.x + CGFloat.random(in: -40...40), y: mouse.position.y + CGFloat.random(in: -40...40)), forcedKind: nil)
+                }
+            }
+
+            if let exitNode = nearestExit, exitNode.frame.insetBy(dx: -8, dy: -8).contains(mouse.position) {
+                runModeImpactVFX(color: .red)
+                completeSpecialMode(success: false)
+                return
+            }
+        }
+
+        mazeMouseNode = mazeMice.first
+        if capturedThisFrame > 0 {
+            let requiredCaptures = GameLogic.mazeRequiredCaptures(band: mazeBand, specialRound: mapMazeSpecialRoundForLogic())
+            if requiredCaptures == 1 || mazeMice.isEmpty {
+                advanceMazeRound()
+                return
+            }
+        }
+
+        updateMazeHUD()
+
+        if mazeEscapeTimer <= 0 {
+            completeSpecialMode(success: false)
+        }
+    }
+
+    func updateSnakeRaceMode(dt: CGFloat) {
+        guard isSnakeRaceMode, !raceIsFinished else { return }
+        raceTimeRemaining -= dt
+        updateRaceHUD()
+
+        if collidesWithShapeWalls(raceObstacles, padding: 16) {
+            score = max(0, score - 3)
+            updateScoreDisplay()
+            runModeImpactVFX(color: .cyan)
+            snakeHead.position.x -= cos(currentAngle) * 26
+            snakeHead.position.y -= sin(currentAngle) * 26
+        }
+
+        if raceCurrentCheckpoint < raceCheckpoints.count {
+            let checkpoint = raceCheckpoints[raceCurrentCheckpoint]
+            let distance = hypot(snakeHead.position.x - checkpoint.position.x, snakeHead.position.y - checkpoint.position.y)
+            if distance < 70 {
+                checkpoint.strokeColor = SKColor(red: 0.22, green: 0.95, blue: 0.45, alpha: 1)
+                checkpoint.glowWidth = 16
+                score += 20
+                updateScoreDisplay()
+                raceCurrentCheckpoint += 1
+                if raceCurrentCheckpoint < raceCheckpoints.count {
+                    raceCheckpoints[raceCurrentCheckpoint].strokeColor = SKColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 1)
+                    raceCheckpoints[raceCurrentCheckpoint].glowWidth = 12
+                } else {
+                    raceIsFinished = true
+                    score += Int(max(0, raceTimeRemaining) * 2)
+                    updateScoreDisplay()
+                    runModeImpactVFX(color: .green)
+                    completeSpecialMode(success: true)
+                }
+                updateRaceHUD()
+            }
+        }
+
+        if raceTimeRemaining <= 0 {
+            completeSpecialMode(success: false)
+        }
+    }
+
     // MARK: - Player Death
     func playerGameOver() {
         guard !isGameOver else { return }
@@ -1060,6 +1898,10 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
+        // Save session coins to persistent balance now (before revive prompt)
+        CoinManager.shared.earn(sessionCoinsEarned)
+        sessionCoinsEarned = 0
+        updateCoinDisplay()
         spawnDeathFood(at: bodySegments.map(\.position),
                        colorIndex: selectedSnakeColorIndex,
                        patternIndex: selectedSnakePatternIndex)   // body scatters as death food
@@ -1075,6 +1917,71 @@ class GameScene: SKScene {
             self?.stopBackgroundMusic()
             self?.showGameOverScreen()
         }
+    }
+
+    func completeSpecialMode(success: Bool) {
+        guard !isGameOver else { return }
+        isGameOver = true
+        isBoostHeld = false
+        boostTouch = nil
+        setBoostButtonActive(false)
+        if success {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        }
+        run(SKAction.wait(forDuration: 0.25)) { [weak self] in
+            self?.showGameOverScreen()
+        }
+    }
+
+
+    func advanceMazeRound() {
+        guard isMazeHuntMode else {
+            completeSpecialMode(success: true)
+            return
+        }
+
+        let nextRound = mazeRoundInBand + 1
+        if nextRound <= 3 {
+            mazeRoundInBand = nextRound
+        } else {
+            mazeBand += 1
+            mazeRoundInBand = 1
+        }
+
+        mazeWalls.forEach { $0.removeFromParent() }
+        mazeExits.forEach { $0.removeFromParent() }
+        mazeSafeSpaces.forEach { $0.removeFromParent() }
+        mazeMice.forEach { $0.removeFromParent() }
+        mazePickups.forEach { $0.removeFromParent() }
+        mazeWalls.removeAll()
+        mazeExits.removeAll()
+        mazeSafeSpaces.removeAll()
+        mazeMice.removeAll()
+        mazePickups.removeAll()
+        mazePickupKinds.removeAll()
+        mazeMouseNode = nil
+        mazeModeLabel?.removeFromParent()
+        mazeObjectiveLabel?.removeFromParent()
+        mazePickupStatusLabel?.removeFromParent()
+        mazeModeLabel = nil
+        mazeObjectiveLabel = nil
+        mazePickupStatusLabel = nil
+
+        if mazeRoundInBand == 1 {
+            runModeImpactVFX(color: .green)
+            let summary = SKLabelNode(fontNamed: "Arial-BoldMT")
+            summary.fontSize = 20
+            summary.fontColor = .white
+            summary.zPosition = 720
+            summary.position = CGPoint(x: worldSize / 2, y: worldSize / 2 + 280)
+            summary.text = "Band \(mazeBand) · Score \(score)"
+            addChild(summary)
+            summary.run(SKAction.sequence([SKAction.wait(forDuration: 0.75), SKAction.fadeOut(withDuration: 0.2), SKAction.removeFromParent()]))
+        }
+
+        createMazeHuntModeContent()
     }
 
     // MARK: - Shield Visuals
@@ -1141,6 +2048,7 @@ class GameScene: SKScene {
         gameOverOverlay = nil
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
+        let canRevive = !hasUsedRevive && CoinManager.shared.balance >= CoinManager.reviveCost && gameMode != .online
 
         let overlay = SKNode()
         overlay.zPosition = 1000
@@ -1152,57 +2060,101 @@ class GameScene: SKScene {
         bg.position    = CGPoint(x: cx, y: cy)
         overlay.addChild(bg)
 
-        // Card background for game-over content
-        let card = SKShapeNode(rectOf: CGSize(width: 280, height: 260), cornerRadius: 22)
+        // Card — taller when revive is available
+        let cardH: CGFloat = canRevive ? 330 : 290
+        let card = SKShapeNode(rectOf: CGSize(width: 280, height: cardH), cornerRadius: 22)
         card.fillColor   = SKColor(red: 0.08, green: 0.10, blue: 0.18, alpha: 0.95)
-        card.strokeColor = SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.30)
+        card.strokeColor = canRevive
+            ? SKColor(red: 1.0, green: 0.80, blue: 0.0, alpha: 0.40)
+            : SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.30)
         card.lineWidth   = 1.5
         card.position    = CGPoint(x: cx, y: cy - 10)
         overlay.addChild(card)
 
+        // Title
         let titleLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         titleLabel.text                    = title
-        titleLabel.fontSize                = 42
+        titleLabel.fontSize                = 38
         titleLabel.fontColor               = .white
         titleLabel.horizontalAlignmentMode = .center
         titleLabel.verticalAlignmentMode   = .center
-        titleLabel.position                = CGPoint(x: cx, y: cy + 100)
+        titleLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 118 : 98))
         overlay.addChild(titleLabel)
 
+        // Final score
         let finalScore = SKLabelNode(fontNamed: "Arial-BoldMT")
         finalScore.text                    = "\(playerName.isEmpty ? "You" : playerName): \(score)"
-        finalScore.fontSize                = 28
+        finalScore.fontSize                = 26
         finalScore.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
         finalScore.horizontalAlignmentMode = .center
         finalScore.verticalAlignmentMode   = .center
-        finalScore.position                = CGPoint(x: cx, y: cy + 35)
+        finalScore.position                = CGPoint(x: cx, y: cy + (canRevive ? 58 : 42))
         overlay.addChild(finalScore)
 
-        // Play Again / Rejoin button (primary action)
+        // Coin balance display
+        let coinsLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
+        coinsLabel.text                    = "🪙 \(CoinManager.shared.balance) coins"
+        coinsLabel.fontSize                = 16
+        coinsLabel.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.85)
+        coinsLabel.horizontalAlignmentMode = .center
+        coinsLabel.verticalAlignmentMode   = .center
+        coinsLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 10 : -2))
+        overlay.addChild(coinsLabel)
+
+        // Revive button (only if eligible)
+        let playBtnY: CGFloat
+        let menuBtnY: CGFloat
+        if canRevive {
+            playBtnY = cy - 60
+            menuBtnY = cy - 125
+
+            let reviveBtnY = cy - 2
+            let reviveBg = SKShapeNode(rectOf: CGSize(width: 220, height: 48), cornerRadius: 14)
+            reviveBg.fillColor   = SKColor(red: 0.85, green: 0.60, blue: 0.0, alpha: 1.0)
+            reviveBg.strokeColor = SKColor(red: 1.0, green: 0.90, blue: 0.2, alpha: 0.60)
+            reviveBg.lineWidth   = 1.5
+            reviveBg.glowWidth   = 8
+            reviveBg.position    = CGPoint(x: cx, y: reviveBtnY)
+            reviveBg.name        = "reviveButton"
+            overlay.addChild(reviveBg)
+
+            let reviveLbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+            reviveLbl.text                    = "REVIVE  —  \(CoinManager.reviveCost) 🪙"
+            reviveLbl.fontSize                = 18
+            reviveLbl.fontColor               = .white
+            reviveLbl.horizontalAlignmentMode = .center
+            reviveLbl.verticalAlignmentMode   = .center
+            reviveLbl.position                = CGPoint(x: cx, y: reviveBtnY)
+            reviveLbl.name                    = "reviveButton"
+            overlay.addChild(reviveLbl)
+        } else {
+            playBtnY = cy - 52
+            menuBtnY = cy - 115
+        }
+
+        // Play Again / Rejoin button
         let restartLabel = gameMode == .online ? "Rejoin" : "Play Again"
-        let restartBtnY  = cy - 45
-        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 54), cornerRadius: 14)
+        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
         restartBg.fillColor   = SKColor(red: 0.20, green: 0.78, blue: 0.32, alpha: 1.0)
         restartBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
         restartBg.lineWidth   = 1
         restartBg.glowWidth   = 6
-        restartBg.position    = CGPoint(x: cx, y: restartBtnY)
+        restartBg.position    = CGPoint(x: cx, y: playBtnY)
         restartBg.name        = "restartButton"
         overlay.addChild(restartBg)
 
         let restartLbl = SKLabelNode(fontNamed: "Arial-BoldMT")
         restartLbl.text                    = restartLabel
-        restartLbl.fontSize                = 22
+        restartLbl.fontSize                = 20
         restartLbl.fontColor               = .white
         restartLbl.horizontalAlignmentMode = .center
         restartLbl.verticalAlignmentMode   = .center
-        restartLbl.position                = CGPoint(x: cx, y: restartBtnY)
+        restartLbl.position                = CGPoint(x: cx, y: playBtnY)
         restartLbl.name                    = "restartButton"
         overlay.addChild(restartLbl)
 
-        // Main Menu button (secondary action)
-        let menuBtnY  = cy - 115
-        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 54), cornerRadius: 14)
+        // Main Menu button
+        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
         btnBg.fillColor   = SKColor(red: 0.12, green: 0.14, blue: 0.22, alpha: 0.95)
         btnBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
         btnBg.lineWidth   = 1
@@ -1212,7 +2164,7 @@ class GameScene: SKScene {
 
         let btnLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         btnLabel.text                    = "Main Menu"
-        btnLabel.fontSize                = 20
+        btnLabel.fontSize                = 18
         btnLabel.fontColor               = SKColor(white: 0.90, alpha: 1.0)
         btnLabel.horizontalAlignmentMode = .center
         btnLabel.verticalAlignmentMode   = .center
@@ -1232,6 +2184,71 @@ class GameScene: SKScene {
             PhotonManager.shared.prepareLocalPlayerForNewRound()
         }
         setupNewGame()
+        startBackgroundMusic()
+    }
+
+    // MARK: - Revive
+    func revivePlayer() {
+        guard !hasUsedRevive else { return }
+        guard CoinManager.shared.spend(CoinManager.reviveCost) else { return }
+        hasUsedRevive = true
+
+        // Remove game over overlay
+        gameOverOverlay?.removeFromParent()
+        gameOverOverlay = nil
+
+        // Remove all existing body segments (they scattered as death food)
+        for seg in bodySegments { seg.removeFromParent() }
+        bodySegments.removeAll()
+        bodyPositionCache.removeAll()
+
+        // Rebuild position history and body at arena center
+        let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
+        let reviveBodyCount = max(initialBodyCount, initialBodyCount + score / 20)
+        let historyNeeded = historyCapacity(forSegmentCount: reviveBodyCount)
+        positionHistory.setCapacity(historyNeeded)
+        positionHistory.removeAll()
+        for k in 0..<historyNeeded {
+            positionHistory.append(CGPoint(x: spawnPos.x - CGFloat(k) * 0.5, y: spawnPos.y))
+        }
+        for i in 1...reviveBodyCount {
+            let seg = makePlayerBodySegment(segIndex: i - 1)
+            seg.position = CGPoint(x: spawnPos.x - CGFloat(i) * segmentPixelSpacing, y: spawnPos.y)
+            addChild(seg)
+            bodySegments.append(seg)
+        }
+
+        // Reposition head
+        snakeHead.removeFromParent()
+        snakeHead.position = spawnPos
+        addChild(snakeHead)
+        currentAngle = 0
+        targetAngle  = 0
+        lastPlayerPosition = spawnPos
+
+        // Restore game state
+        isGameOver    = false
+        shieldActive  = false
+        multiplierActive   = false
+        multiplierTimeLeft = 0
+        magnetActive  = false
+        magnetTimeLeft = 0
+        ghostActive   = false
+        ghostTimeLeft  = 0
+        scoreMultiplier = 1
+        refreshPowerUpPanel()
+
+        // 3 seconds invincibility with flashing
+        invincibleTimeLeft = 3.0
+        snakeHead.run(SKAction.repeat(
+            SKAction.sequence([
+                SKAction.fadeAlpha(to: 0.25, duration: 0.18),
+                SKAction.fadeAlpha(to: 1.0,  duration: 0.18)
+            ]),
+            count: 8
+        ))
+
+        updateCoinDisplay()
         startBackgroundMusic()
     }
 
@@ -1261,6 +2278,78 @@ class GameScene: SKScene {
         scoreLabel.position = CGPoint(x: panelW / 2, y: panelH / 2)
         scorePanel.addChild(scoreLabel)
         addChild(scorePanel)
+        createCoinPanel()
+    }
+
+    func createCoinPanel() {
+        let hPad: CGFloat = 12, vPad: CGFloat = 7
+
+        let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+        lbl.text                    = "\(CoinManager.shared.balance)"
+        lbl.fontSize                = 16
+        lbl.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+        lbl.horizontalAlignmentMode = .left
+        lbl.verticalAlignmentMode   = .center
+        coinLabel = lbl
+
+        let iconW: CGFloat = 18
+        let textW = max(lbl.frame.width, 24)
+        let panelW = iconW + textW + hPad * 2 + 4
+        let panelH: CGFloat = lbl.frame.height + vPad * 2
+
+        let panel = SKShapeNode(rect: CGRect(x: 0, y: 0, width: panelW, height: panelH), cornerRadius: 10)
+        panel.fillColor   = SKColor(red: 0.12, green: 0.10, blue: 0.03, alpha: 0.85)
+        panel.strokeColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 0.35)
+        panel.lineWidth   = 1.0
+        panel.zPosition   = 500
+        coinPanel = panel
+
+        let cx = worldSize / 2
+        let spY = scorePanel.position.y
+        panel.position = CGPoint(x: cx - size.width/2 + 20, y: spY - panelH - 6)
+
+        let icon = SKLabelNode(fontNamed: "Arial")
+        icon.text                    = "🪙"
+        icon.fontSize                = 13
+        icon.horizontalAlignmentMode = .left
+        icon.verticalAlignmentMode   = .center
+        icon.position                = CGPoint(x: hPad, y: panelH / 2)
+        icon.zPosition               = 1
+        panel.addChild(icon)
+
+        lbl.position = CGPoint(x: hPad + iconW, y: panelH / 2)
+        panel.addChild(lbl)
+        addChild(panel)
+    }
+
+    func updateCoinDisplay() {
+        coinLabel?.text = "\(CoinManager.shared.balance)"
+    }
+
+    func awardBotKillCoins(botScore: Int) {
+        let bonus = max(10, min(25, botScore / 5 + 10))
+        sessionCoinsEarned += bonus
+        spawnCoinFloatingText("+\(bonus) 🪙", at: snakeHead.position)
+    }
+
+    func spawnCoinFloatingText(_ text: String, at position: CGPoint) {
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.text                    = text
+        label.fontSize                = 20
+        label.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode   = .center
+        label.position                = CGPoint(x: position.x + 30, y: position.y + 20)
+        label.zPosition               = 700
+        addChild(label)
+        label.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.moveBy(x: 0, y: 50, duration: 0.9),
+                SKAction.sequence([SKAction.wait(forDuration: 0.4),
+                                   SKAction.fadeOut(withDuration: 0.5)])
+            ]),
+            SKAction.removeFromParent()
+        ]))
     }
 
     func updateScoreDisplay() {
@@ -1868,6 +2957,11 @@ class GameScene: SKScene {
              .magnet, .ghost, .shrink:           pts = 0
         }
         score += pts * scoreMultiplier
+        // Earn coins proportional to food value
+        if pts > 0 {
+            let coinsGained = pts >= 5 ? 2 : 1
+            sessionCoinsEarned += coinsGained
+        }
         updateScoreDisplay()
         updateSpeedForScore()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -2342,6 +3436,27 @@ class GameScene: SKScene {
                 bots[i].respawnTimer = expertNemesisInitialDelay
             } else {
                 activateBot(i)
+            }
+        }
+    }
+
+    private func updateBotVisibilityLOD() {
+        guard gameMode != .online, !isSpecialOfflineMode else { return }
+
+        let playerPos = snakeHead.position
+        let activateSq = botActivationDistance * botActivationDistance
+        let deactivateSq = botDeactivationDistance * botDeactivationDistance
+
+        for i in bots.indices {
+            guard !bots[i].isDead else { continue }
+            let dx = bots[i].position.x - playerPos.x
+            let dy = bots[i].position.y - playerPos.y
+            let distSq = dx * dx + dy * dy
+
+            if bots[i].isActive {
+                if distSq > deactivateSq { deactivateBot(i) }
+            } else {
+                if distSq < activateSq { activateBot(i) }
             }
         }
     }
@@ -3190,31 +4305,19 @@ class GameScene: SKScene {
         let targetScale: CGFloat = bots[index].isBoosting ? 1.04 : 1.0
         if head.xScale != targetScale { head.setScale(targetScale) }
 
-        if botBodyUpdateFrame == 0 {
-            fillArcPositions(
-                history: bots[index].posHistory,
-                leadPos: bots[index].position,
-                count: bots[index].body.count,
-                spacing: segmentPixelSpacing,
-                into: &bots[index].bodyPositionCache
-            )
-            let camPos    = cameraNode.position
-            let viewHalfW = (size.width  * 0.5) / cameraNode.xScale + bodySegmentRadius * 2
-            let viewHalfH = (size.height * 0.5) / cameraNode.yScale + bodySegmentRadius * 2
-            let boosting   = bots[index].isBoosting
-            let bodyCount  = bots[index].body.count
-            let halfCount  = max(1, bodyCount / 2)
-            let sixthCount = max(2, bodyCount / 6)
-            for (segmentIndex, segment) in bots[index].body.enumerated() {
-                let pos = bots[index].bodyPositionCache[segmentIndex]
-                // Only write SKNode position when visible in viewport.
-                if abs(pos.x - camPos.x) < viewHalfW && abs(pos.y - camPos.y) < viewHalfH {
-                    segment.position = pos
-                }
-                let baseGlow: CGFloat = segmentIndex < halfCount ? 3 : 0
-                let newGlow: CGFloat  = (boosting && segmentIndex < sixthCount) ? 6 : baseGlow
-                if segment.glowWidth != newGlow { segment.glowWidth = newGlow }
-            }
+        fillArcPositions(
+            history: bots[index].posHistory,
+            leadPos: bots[index].position,
+            count: bots[index].body.count,
+            spacing: segmentPixelSpacing,
+            into: &bots[index].bodyPositionCache
+        )
+        for (segmentIndex, segment) in bots[index].body.enumerated() {
+            segment.position = bots[index].bodyPositionCache[segmentIndex]
+            let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? CGFloat(3) : 0
+            segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
+                ? 6
+                : baseGlow
         }
     }
 
@@ -3394,6 +4497,7 @@ class GameScene: SKScene {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {
+                    awardBotKillCoins(botScore: bots[i].score)
                     respawnBot(i)   // bot dies simultaneously
                 }
                 return true     // player also dies (caller triggers playerGameOver)
@@ -3422,6 +4526,7 @@ class GameScene: SKScene {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {
+                    awardBotKillCoins(botScore: bots[i].score)
                     respawnBot(i)
                 }
             }
@@ -3732,7 +4837,9 @@ class GameScene: SKScene {
 
             if isGameOver {
                 let tappedNames = nodes(at: loc).compactMap { $0.name }
-                if tappedNames.contains("restartButton") {
+                if tappedNames.contains("reviveButton") {
+                    revivePlayer()
+                } else if tappedNames.contains("restartButton") {
                     restartGame()
                 } else if tappedNames.contains("playAgainButton") {
                     shutdown()
@@ -3749,7 +4856,8 @@ class GameScene: SKScene {
 
             let controlScale = hudControlScale()
             let boostDist = hypot(loc.x - boostButtonCenter.x, loc.y - boostButtonCenter.y)
-            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 * controlScale && score > 0 {
+            let canBoost = isMazeHuntMode ? mazeBoostEnergy > 1 : score > 0
+            if boostTouch == nil && boostDist < boostButtonRadius * 1.4 * controlScale && canBoost {
                 boostTouch  = touch
                 isBoostHeld = true
                 setBoostButtonActive(true)
@@ -3830,18 +4938,24 @@ class GameScene: SKScene {
     override func update(_ currentTime: TimeInterval) {
         guard !isGameOver, gameSetupComplete, gameStarted, !isPausedGame else { return }
 
-        let dt: CGFloat = lastUpdateTime == 0
+        let frameDelta: CGFloat = lastUpdateTime == 0
             ? CGFloat(1.0 / 60.0)
-            : CGFloat(min(currentTime - lastUpdateTime, maxDeltaTime))
+            : CGFloat(max(0, currentTime - lastUpdateTime))
+        let dt: CGFloat = min(frameDelta, CGFloat(maxDeltaTime))
         lastUpdateTime = currentTime
 
         updatePowerUps(dt: dt)
         frameCounter += 1
-        botBodyUpdateFrame = (botBodyUpdateFrame + 1) % 2
 
-        // --- Boost Score Drain (1 pt per 200ms) ---
+        // --- Boost Drain ---
         if isBoostHeld {
-            if score <= 0 {
+            if isMazeHuntMode {
+                if mazeBoostEnergy <= 0.5 {
+                    isBoostHeld = false
+                    boostTouch  = nil
+                    setBoostButtonActive(false)
+                }
+            } else if score <= 0 {
                 // No score left — disengage boost
                 isBoostHeld = false
                 boostTouch  = nil
@@ -3860,7 +4974,9 @@ class GameScene: SKScene {
         }
 
         // --- Player Movement ---
-        let playerDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
+        let baseDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
+        let raceControlSpeedFactor: CGFloat = isSnakeRaceMode ? (0.72 + joystickEngagement * 0.72) : 1.0
+        let playerDist = baseDist * raceControlSpeedFactor
 
         positionHistory.append(snakeHead.position)
         positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
@@ -3944,14 +5060,14 @@ class GameScene: SKScene {
         if checkWallCollision() { playerGameOver(); return }
         // Self-collision intentionally disabled: snake passes through its own body
 
-        if gameMode != .online && checkPlayerCollidesWithBotBodies()    { playerGameOver(); return }
-        if gameMode != .online && checkPlayerHeadVsBotHeads()           { playerGameOver(); return }
+        if gameMode != .online && !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
+        if gameMode != .online && !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { playerGameOver(); return }
         if gameMode == .online  && checkPlayerCollidesWithRemotePlayers() { playerGameOver(); return }
 
-        checkFoodCollisions()
+        if !isSpecialOfflineMode { checkFoodCollisions() }
 
         // --- Trail food spawning (player) ---
-        if gameMode != .online, gameStarted, let tailSeg = bodySegments.last {
+        if gameMode != .online, !isSpecialOfflineMode, gameStarted, let tailSeg = bodySegments.last {
             trailFoodTimer += dt
             if trailFoodTimer >= playerTrailInterval {
                 spawnTrailFood(at: tailSeg.position,
@@ -3962,7 +5078,7 @@ class GameScene: SKScene {
         }
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
-        if gameMode != .online && frameCounter % 300 == 0 {
+        if gameMode != .online && !isSpecialOfflineMode && frameCounter % 300 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
@@ -3979,15 +5095,43 @@ class GameScene: SKScene {
         updateCamera()
         updateHUDPositions()
 
+        if gameMode != .online && !isSpecialOfflineMode {
+            botVisibilityUpdateTimer += dt
+            if botVisibilityUpdateTimer >= 0.20 {
+                botVisibilityUpdateTimer = 0
+                updateBotVisibilityLOD()
+            }
+        }
+
         // --- Magnet power-up: pull food every other frame ---
         if magnetActive && frameCounter % 2 == 0 { applyMagnetEffect() }
 
         // --- Mode-specific ---
-        if gameMode != .online {
-            let updateAI = frameCounter % 2 == 0  // bot AI at ~30 Hz
-            updateBots(dt: dt, updateAI: updateAI)
-            if frameCounter % 3 == 0 { checkBotVsBotCollisions() }        // bot-vs-bot at ~20 Hz
-            if frameCounter % 3 == 0 { checkBotHeadsHitPlayerBody() }    // bot head → player body
+        if isMazeHuntMode {
+            updateMazeMode(dt: dt)
+        } else if isSnakeRaceMode {
+            updateSnakeRaceMode(dt: dt)
+        } else if gameMode != .online {
+            let simulationStep = CGFloat(1.0 / minimumGameplayFPS)
+            let botDelta = min(frameDelta, 0.2)
+            botUpdateAccumulator += botDelta
+            botCollisionAccumulator += botDelta
+            botHeadCheckAccumulator += botDelta
+
+            while botUpdateAccumulator >= simulationStep {
+                updateBots(dt: simulationStep, updateAI: true)
+                botUpdateAccumulator -= simulationStep
+            }
+
+            while botCollisionAccumulator >= simulationStep {
+                checkBotVsBotCollisions()
+                botCollisionAccumulator -= simulationStep
+            }
+
+            while botHeadCheckAccumulator >= simulationStep {
+                checkBotHeadsHitPlayerBody()
+                botHeadCheckAccumulator -= simulationStep
+            }
         } else if gameMode == .online {
             if frameCounter % 4 == 0 {
                 PhotonManager.shared.sendPlayerState(
