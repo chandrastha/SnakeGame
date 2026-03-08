@@ -136,6 +136,11 @@ struct RemotePlayer {
 // MARK: - GameScene
 class GameScene: SKScene {
 
+    private struct GridCell: Hashable {
+        let x: Int
+        let y: Int
+    }
+
     // MARK: - Callbacks & Config
     var onGameOver: ((Int) -> Void)?
     var playerHeadImage: UIImage?
@@ -179,7 +184,7 @@ class GameScene: SKScene {
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
     let foodCount:               Int     = 200
-    let maxDeltaTime:            Double  = 1.0 / 30.0
+    let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
     var botCollisionAccumulator: CGFloat = 0
@@ -192,9 +197,14 @@ class GameScene: SKScene {
 
     // MARK: - Player Snake
     var snakeHead: SKNode!
-    var bodySegments:    [SKShapeNode] = []
+    var bodySegments:    [SKSpriteNode] = []
+    var pooledBodySegments: [SKSpriteNode] = []
+    let maxBodySegmentPoolSize: Int = 1200
+    var playerBodyPathNode = SKShapeNode()
     var positionHistory = PointRingBuffer()
     var bodyPositionCache: [CGPoint] = []
+    var playerBodyOccupancy: Set<GridCell> = []
+    var playerBodyCellCounts: [GridCell: Int] = [:]
     var currentAngle: CGFloat = 0
     var targetAngle:  CGFloat = 0
     var isTouching:   Bool    = false
@@ -682,10 +692,13 @@ class GameScene: SKScene {
 
         let startCell = nearestCell(to: start)
         var queue: [(Int, Int)] = [startCell]
+        queue.reserveCapacity(cols * rows)
+        var queueIndex = 0
         var seen: Set<String> = ["\(startCell.0)-\(startCell.1)"]
 
-        while !queue.isEmpty {
-            let cell = queue.removeFirst()
+        while queueIndex < queue.count {
+            let cell = queue[queueIndex]
+            queueIndex += 1
             for delta in [(-1,0),(1,0),(0,-1),(0,1)] {
                 let nc = cell.0 + delta.0
                 let nr = cell.1 + delta.1
@@ -947,6 +960,9 @@ class GameScene: SKScene {
         bodySegments.removeAll()
         bodyPositionCache.removeAll()
         positionHistory.removeAll()
+        playerBodyOccupancy.removeAll()
+        playerBodyCellCounts.removeAll()
+        playerBodyPathNode.removeFromParent()
         bots.removeAll()
         remotePlayers.removeAll()
         foodItems.removeAll()
@@ -1045,7 +1061,7 @@ class GameScene: SKScene {
         }
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
-        animateSnakeEntrance(head: snakeHead, body: bodySegments, angle: currentAngle, accent: playerTheme.bodySKColor)
+        animateSnakeEntrance(head: snakeHead, body: [], angle: currentAngle, accent: playerTheme.bodySKColor)
     }
 
     // MARK: - Arena Border
@@ -1891,7 +1907,7 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
-        spawnDeathFood(at: bodySegments.map(\.position),
+        spawnDeathFood(at: bodyPositionCache,
                        colorIndex: selectedSnakeColorIndex,
                        patternIndex: selectedSnakePatternIndex)   // body scatters as death food
         lastPlayerPosition = snakeHead.position
@@ -2165,12 +2181,11 @@ class GameScene: SKScene {
         gameOverOverlay?.removeFromParent()
         gameOverOverlay = nil
 
-        // Remove all existing body segments (they scattered as death food)
-        for seg in bodySegments { seg.removeFromParent() }
+        // Reset body nodes and rebuild position history at arena center
+        for seg in bodySegments { releaseBodySegmentNode(seg) }
         bodySegments.removeAll()
         bodyPositionCache.removeAll()
 
-        // Rebuild position history and body at arena center
         let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
         let reviveBodyCount = max(initialBodyCount, initialBodyCount + score / 20)
         let historyNeeded = historyCapacity(forSegmentCount: reviveBodyCount)
@@ -2179,12 +2194,14 @@ class GameScene: SKScene {
         for k in 0..<historyNeeded {
             positionHistory.append(CGPoint(x: spawnPos.x - CGFloat(k) * 0.5, y: spawnPos.y))
         }
-        for i in 1...reviveBodyCount {
-            let seg = makePlayerBodySegment(segIndex: i - 1)
-            seg.position = CGPoint(x: spawnPos.x - CGFloat(i) * segmentPixelSpacing, y: spawnPos.y)
-            addChild(seg)
-            bodySegments.append(seg)
+        for _ in 0..<reviveBodyCount {
+            bodySegments.append(acquireBodySegmentNode())
         }
+        ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
+        for i in 0..<bodySegments.count {
+            bodyPositionCache[i] = CGPoint(x: spawnPos.x - CGFloat(i + 1) * segmentPixelSpacing, y: spawnPos.y)
+        }
+        updatePlayerBodyPathAndCollisionSet()
 
         // Reposition head
         snakeHead.removeFromParent()
@@ -2758,7 +2775,7 @@ class GameScene: SKScene {
 
     func isPositionOnPlayerSnake(_ p: CGPoint) -> Bool {
         if hypot(p.x - snakeHead.position.x, p.y - snakeHead.position.y) < safeSpawnDistance { return true }
-        for seg in bodySegments where hypot(p.x - seg.position.x, p.y - seg.position.y) < safeSpawnDistance { return true }
+        for pos in bodyPositionCache where hypot(p.x - pos.x, p.y - pos.y) < safeSpawnDistance { return true }
         return false
     }
 
@@ -3015,24 +3032,27 @@ class GameScene: SKScene {
         for k in 0..<historyNeeded {
             positionHistory.append(CGPoint(x: spawnPos.x - CGFloat(k) * 0.5, y: spawnPos.y))
         }
-        for i in 1...initialBodyCount {
-            let seg = makePlayerBodySegment(segIndex: i - 1)
-            seg.position = CGPoint(x: spawnPos.x - CGFloat(i) * segmentPixelSpacing, y: spawnPos.y)
-            addChild(seg)
-            bodySegments.append(seg)
+
+        bodySegments.removeAll(keepingCapacity: true)
+        for _ in 0..<initialBodyCount {
+            bodySegments.append(acquireBodySegmentNode())
         }
-        cacheBodyPositions(from: bodySegments, into: &bodyPositionCache)
-        updateSegmentScales()
+
+        ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
+        for i in 0..<bodySegments.count {
+            bodyPositionCache[i] = CGPoint(x: spawnPos.x - CGFloat(i + 1) * segmentPixelSpacing, y: spawnPos.y)
+        }
+
+        configurePlayerBodyPathNodeIfNeeded()
+        updatePlayerBodyPathAndCollisionSet()
     }
 
     func addBodySegment() {
-        let seg = makePlayerBodySegment(segIndex: bodySegments.count)
-        seg.position = bodySegments.last?.position ?? snakeHead.position
-        addChild(seg)
-        bodySegments.append(seg)
+        bodySegments.append(acquireBodySegmentNode())
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
+        let fallback = bodyPositionCache.dropLast().last ?? snakeHead.position
+        bodyPositionCache[bodySegments.count - 1] = fallback
         positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
-        updateSegmentScales()
     }
 
     /// Grow or shrink the player body to match targetBodyCount.
@@ -3040,18 +3060,83 @@ class GameScene: SKScene {
     func syncSnakeLength() {
         let target = targetBodyCount
         while bodySegments.count < target {
-            let seg = makePlayerBodySegment(segIndex: bodySegments.count)
-            seg.position = bodySegments.last?.position ?? snakeHead.position
-            addChild(seg)
-            bodySegments.append(seg)
+            bodySegments.append(acquireBodySegmentNode())
         }
         while bodySegments.count > target && bodySegments.count > 1 {
-            bodySegments.removeLast().removeFromParent()
+            releaseBodySegmentNode(bodySegments.removeLast())
         }
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
         positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
-        updateSegmentScales()
     }
+
+    private func configurePlayerBodyPathNodeIfNeeded() {
+        if playerBodyPathNode.parent == nil {
+            let theme = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
+            playerBodyPathNode.strokeColor = theme.bodySKColor
+            playerBodyPathNode.lineWidth = bodySegmentRadius * 2
+            playerBodyPathNode.lineCap = .round
+            playerBodyPathNode.lineJoin = .round
+            playerBodyPathNode.fillColor = .clear
+            playerBodyPathNode.glowWidth = 1.5
+            playerBodyPathNode.zPosition = snakeHead.zPosition - 0.1
+            addChild(playerBodyPathNode)
+        }
+    }
+
+    private func updatePlayerBodyPathAndCollisionSet() {
+        let path = CGMutablePath()
+        if let first = bodyPositionCache.first {
+            path.move(to: first)
+            for point in bodyPositionCache.dropFirst() {
+                path.addLine(to: point)
+            }
+        }
+        playerBodyPathNode.path = path
+
+        playerBodyOccupancy.removeAll(keepingCapacity: true)
+        playerBodyCellCounts.removeAll(keepingCapacity: true)
+        for point in bodyPositionCache {
+            let cell = gridCell(for: point)
+            playerBodyCellCounts[cell, default: 0] += 1
+            playerBodyOccupancy.insert(cell)
+        }
+    }
+
+    private func gridCell(for point: CGPoint) -> GridCell {
+        GridCell(x: Int((point.x / collisionRadius).rounded()), y: Int((point.y / collisionRadius).rounded()))
+    }
+
+    private func bodyOccupancyContains(_ point: CGPoint) -> Bool {
+        let center = gridCell(for: point)
+        for dx in -1...1 {
+            for dy in -1...1 {
+                if playerBodyOccupancy.contains(GridCell(x: center.x + dx, y: center.y + dy)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private func acquireBodySegmentNode() -> SKSpriteNode {
+        if let node = pooledBodySegments.popLast() { return node }
+        return SKSpriteNode(texture: nil, color: .clear, size: CGSize(width: bodySegmentRadius * 2, height: bodySegmentRadius * 2))
+    }
+
+    private func releaseBodySegmentNode(_ node: SKSpriteNode) {
+        node.removeFromParent()
+        guard pooledBodySegments.count < maxBodySegmentPoolSize else { return }
+        pooledBodySegments.append(node)
+    }
+
+    func updateSegmentScales() {
+        playerBodyPathNode.alpha = ghostActive ? 0.35 : 1.0
+    }
+
+    func makePlayerBodySegment(segIndex: Int = 0) -> SKSpriteNode {
+        acquireBodySegmentNode()
+    }
+
 
     func createSpawnHole(at position: CGPoint, angle: CGFloat, accent: SKColor) -> SKNode {
         let hole = SKNode()
@@ -3126,25 +3211,6 @@ class GameScene: SKScene {
                 ])
             ]))
         }
-    }
-
-    func updateSegmentScales() {
-        let count = bodySegments.count
-        guard count > 0 else { return }
-        for (i, seg) in bodySegments.enumerated() {
-            let t = count > 1 ? CGFloat(i) / CGFloat(count - 1) : 0
-            seg.setScale(1.0 - t * 0.22)
-            // Ghost active: keep semi-transparent; otherwise normal taper
-            seg.alpha     = ghostActive ? 0.35 : (1.0 - t * 0.10)
-            seg.glowWidth = i < count / 2 ? 3 : 0
-        }
-    }
-
-    func makePlayerBodySegment(segIndex: Int = 0) -> SKShapeNode {
-        let theme   = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
-        let pattern = SnakePattern(rawValue: selectedSnakePatternIndex) ?? .solid
-        return makeBodySegment(color: theme.bodySKColor, stroke: theme.bodyStrokeSKColor,
-                               pattern: pattern, segIndex: segIndex)
     }
 
     func makeDiamondPath(radius: CGFloat) -> CGPath {
@@ -4264,7 +4330,7 @@ class GameScene: SKScene {
                 let trailInterval = bots[i].isBoosting ? botTrailInterval * 0.65 : botTrailInterval
                 if bots[i].trailFoodTimer >= trailInterval {
                     if let tailSeg = bots[i].body.last {
-                        spawnTrailFood(at: tailSeg.position,
+                        spawnTrailFood(at: tailPos,
                                        colorIndex: bots[i].colorIndex,
                                        patternIndex: 0)
                     }
@@ -4407,7 +4473,7 @@ class GameScene: SKScene {
             let dx = snakeHead.position.x - botHead.position.x
             let dy = snakeHead.position.y - botHead.position.y
             guard dx * dx + dy * dy <= interactionRadiusSq else { continue }
-            if headCollidesWithPoints(
+            if bodyOccupancyContains(botHead.position) && headCollidesWithPoints(
                 botHead.position,
                 points: bodyPositionCache,
                 combinedRadius: collisionRadius + bodySegmentRadius
@@ -4567,7 +4633,7 @@ class GameScene: SKScene {
     /// 👻 Ghost — make the snake semi-transparent; body collision is skipped while active.
     func showGhostEffect() {
         snakeHead.alpha = 0.45
-        for seg in bodySegments { seg.alpha = 0.35 }
+        playerBodyPathNode.alpha = 0.35
         spawnFloatingText("👻 Ghost!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 60))
     }
 
@@ -4917,38 +4983,21 @@ class GameScene: SKScene {
         let dangerStart = totalSegs - dangerCount
         if shieldActive { tailWigglePhase += dt * 8.0 }
 
-        // Viewport bounds for culling off-screen segment writes (cache computed once per frame).
-        // bodyPositionCache is always updated fully — only the SKNode write is skipped off-screen.
-        let camPos   = cameraNode.position
-        let viewHalfW = (size.width  * 0.5) / cameraNode.xScale + bodySegmentRadius * 2
-        let viewHalfH = (size.height * 0.5) / cameraNode.yScale + bodySegmentRadius * 2
-
-        for (i, seg) in bodySegments.enumerated() {
+        for i in bodyPositionCache.indices {
             var pos = bodyPositionCache[i]
             let isWiggling = shieldActive && i >= dangerStart
             if isWiggling {
-                // progress: 0.0 at the join, 1.0 at the tail tip
                 let progress: CGFloat = dangerCount > 1
                     ? CGFloat(i - dangerStart) / CGFloat(dangerCount - 1)
                     : 1.0
-                // Amplitude grows from ~0 at the join to 9 at the tip
                 let amplitude: CGFloat = 9.0 * progress
                 let phase = tailWigglePhase + CGFloat(i - dangerStart) * 0.8
                 pos.x += -sin(currentAngle) * sin(phase) * amplitude
                 pos.y +=  cos(currentAngle) * sin(phase) * amplitude
-                // Size: progressively smaller toward the tip
-                let t: CGFloat = totalSegs > 1 ? CGFloat(i) / CGFloat(totalSegs - 1) : 0
-                let baseTaper: CGFloat = 1.0 - t * 0.22
-                seg.setScale(baseTaper * (1.0 - progress * 0.45))
-                // No strokeColor / glowWidth override — keep the body's own colour
             }
             bodyPositionCache[i] = pos
-            // Only push position to the SKNode when it is within the visible viewport.
-            // The cache above is always authoritative for AI collision checks.
-            if abs(pos.x - camPos.x) < viewHalfW && abs(pos.y - camPos.y) < viewHalfH {
-                seg.position = pos
-            }
         }
+        updatePlayerBodyPathAndCollisionSet()
 
         // Shield tail kills bots on contact
         if shieldActive && dangerCount > 0 && frameCounter % 2 == 0 {
@@ -4976,10 +5025,10 @@ class GameScene: SKScene {
         if !isSpecialOfflineMode { checkFoodCollisions() }
 
         // --- Trail food spawning (player) ---
-        if gameMode != .online, !isSpecialOfflineMode, gameStarted, let tailSeg = bodySegments.last {
+        if gameMode != .online, !isSpecialOfflineMode, gameStarted, let tailPos = bodyPositionCache.last {
             trailFoodTimer += dt
             if trailFoodTimer >= playerTrailInterval {
-                spawnTrailFood(at: tailSeg.position,
+                spawnTrailFood(at: tailPos,
                                colorIndex: selectedSnakeColorIndex,
                                patternIndex: selectedSnakePatternIndex)
                 trailFoodTimer = 0
