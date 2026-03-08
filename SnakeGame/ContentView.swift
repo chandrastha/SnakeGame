@@ -29,10 +29,7 @@ struct ContentView: View {
                     patternIndex: selectedSnakePatternIndex,
                     playerName:   playerName,
                     playerImage:  playerImage,
-                    onGameOver: { finalScore in
-                        if AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
-                            PhotonManager.shared.disconnect()
-                        }
+                    onGameOver: { _ in
                         withAnimation(.easeInOut(duration: 0.4)) { isPlaying = false }
                     }
                 )
@@ -43,33 +40,12 @@ struct ContentView: View {
                     isPlaying:        $isPlaying,
                     selectedGameMode: $selectedGameMode,
                     playerImage:      $playerImage,
-                    onPlayTapped: {
-                        if AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
-                            PhotonManager.shared.setPlayerName(playerName)
-                        } else {
-                            isPlaying = true
-                        }
-                    }
+                    onPlayTapped: { isPlaying = true }
                 )
                 .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
-        .onChange(of: selectedGameMode) { mode in
-            if Self.shouldDisconnectPhotonOnModeChange(mode: mode, isOnlineModeEnabled: AppFeatureFlags.isOnlineModeEnabled) {
-                PhotonManager.shared.disconnect()
-            }
-        }
-        .onAppear {
-            if !AppFeatureFlags.isOnlineModeEnabled, selectedGameMode == .online {
-                selectedGameMode = .offline
-            }
-        }
-    }
-
-
-    static func shouldDisconnectPhotonOnModeChange(mode: GameMode, isOnlineModeEnabled: Bool) -> Bool {
-        isOnlineModeEnabled && mode != .online
     }
 }
 
@@ -91,7 +67,7 @@ struct GameView: UIViewRepresentable {
         let scene = GameScene()
         scene.size                     = CGSize(width: 390, height: 844)
         scene.scaleMode                = .resizeFill
-        scene.gameMode                 = AppFeatureFlags.isOnlineModeEnabled || gameMode != .online ? gameMode : .offline
+        scene.gameMode                 = gameMode
         scene.selectedSnakeColorIndex  = colorIndex
         scene.selectedSnakePatternIndex = patternIndex
         scene.playerName               = playerName

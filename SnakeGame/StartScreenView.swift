@@ -320,7 +320,6 @@ struct StartScreenView: View {
 
     private var instructionText: String {
         switch selectedGameMode {
-        case .online:  return "Offline-first build · Online mode is temporarily unavailable"
         case .offline: return "99 bots · Casual mode"
         case .challenge: return "Expert mode · delayed nemesis · survive the hunt"
         }

@@ -120,19 +120,6 @@ private struct BotDecision {
     let focusPoint: CGPoint?
 }
 
-// MARK: - Remote Player (Online Mode)
-struct RemotePlayer {
-    var head: SKShapeNode
-    var body: [SKShapeNode]
-    var posHistory: PointRingBuffer
-    var bodyPositionCache: [CGPoint]
-    var score: Int
-    var bodyLength: Int
-    var nameLabel: SKLabelNode
-    var colorIndex: Int
-    var playerName: String
-}
-
 // MARK: - GameScene
 class GameScene: SKScene {
 
@@ -265,7 +252,6 @@ class GameScene: SKScene {
     var gameOverOverlay:    SKNode? = nil
     var gameSetupComplete:  Bool    = false
     var gameStarted:        Bool    = false
-    var onlineRoundPrimed:  Bool    = false
     var isPausedGame:       Bool    = false
     var lastPlayerPosition: CGPoint = .zero
 
@@ -761,7 +747,6 @@ class GameScene: SKScene {
     var minimapNode:              SKNode?
     var minimapPlayerDot:         SKShapeNode?
     var minimapBotDots:           [SKShapeNode] = []
-    var minimapRemotePlayerDots:  [Int: SKShapeNode] = [:]
     var leaderArrowNode:          SKNode?
     var leaderArrowLabel:         SKLabelNode?
 
@@ -791,7 +776,6 @@ class GameScene: SKScene {
     var frameCounter = 0
 
     // MARK: - Remote Players (Online mode)
-    var remotePlayers: [Int: RemotePlayer] = [:]
 
     // Bot name pool (100 names for 99 bots)
     static let botNamePool: [String] = [
@@ -847,12 +831,6 @@ class GameScene: SKScene {
         isBoostHeld = false
         stopBackgroundMusic()
 
-        if PhotonManager.shared.delegate === self {
-            PhotonManager.shared.delegate = nil
-        }
-        if gameMode == .online {
-            PhotonManager.shared.leaveRoom()
-        }
     }
 
     private var isLandscapeLayout: Bool { size.width > size.height }
@@ -892,9 +870,6 @@ class GameScene: SKScene {
     }
 
     func setupNewGame() {
-        if !AppFeatureFlags.isOnlineModeEnabled, gameMode == .online {
-            gameMode = .offline
-        }
         selectedSnakeColorIndex = normalizedSnakeColorIndex(selectedSnakeColorIndex)
         hasShutdown         = false
         isGameOver          = false
@@ -905,7 +880,6 @@ class GameScene: SKScene {
         lastUpdateTime      = 0
         gameSetupComplete   = false
         gameStarted         = false
-        onlineRoundPrimed   = false
         isPausedGame        = false
         scoreMultiplier     = 1
         hasUsedRevive       = false
@@ -964,10 +938,8 @@ class GameScene: SKScene {
         playerBodyCellCounts.removeAll()
         playerBodyPathNode.removeFromParent()
         bots.removeAll()
-        remotePlayers.removeAll()
         foodItems.removeAll()
         foodTypes.removeAll()
-        minimapRemotePlayerDots.removeAll()
         gameOverOverlay   = nil
         pauseOverlay      = nil
         powerUpPanel      = nil
@@ -1035,30 +1007,22 @@ class GameScene: SKScene {
         } else if isSnakeRaceMode {
             createSnakeRaceModeContent()
         }
-        if gameMode != .online { createPauseButton() }
+        createPauseButton()
         createJoystick()
         createBoostButton()
-        if gameMode == .online {
-            prepareOnlineFoodSlots()
-        } else if !isSpecialOfflineMode {
+        if !isSpecialOfflineMode {
             spawnInitialFood()
         } else {
             boostButtonNode?.alpha = 0.5
         }
         updateScoreDisplay()
 
-        if gameMode == .online {
-            PhotonManager.shared.delegate = self
-        } else if !isSpecialOfflineMode {
+        if !isSpecialOfflineMode {
             spawnBots()
         }
 
         gameSetupComplete = true
-        if gameMode == .online {
-            primeOnlineRoundIfReady()
-        } else {
-            startGameImmediately()
-        }
+        startGameImmediately()
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
         animateSnakeEntrance(head: snakeHead, body: [], angle: currentAngle, accent: playerTheme.bodySKColor)
@@ -1310,16 +1274,7 @@ class GameScene: SKScene {
     func updateRaceHUD() {
         raceModeLabel?.text = "Snake Race · CP \(min(raceCurrentCheckpoint + 1, raceCheckpoints.count))/\(max(1, raceCheckpoints.count)) · Time: \(Int(max(0, raceTimeRemaining)))"
     }
-
     // MARK: - Countdown
-    func primeOnlineRoundIfReady() {
-        guard gameMode == .online, gameSetupComplete, !onlineRoundPrimed else { return }
-        guard PhotonManager.shared.connectionState == .inRoom else { return }
-        onlineRoundPrimed = true
-        PhotonManager.shared.sendGameReady()
-        startCountdown()
-    }
-
     func startGameImmediately() {
         gameStarted   = true
         ghostActive   = true
@@ -1914,10 +1869,6 @@ class GameScene: SKScene {
         UINotificationFeedbackGenerator().notificationOccurred(.error)
         spawnDeathParticles(at: snakeHead.position)
 
-        if gameMode == .online {
-            PhotonManager.shared.sendPlayerDied()
-        }
-
         run(deathAction) { [weak self] in
             self?.stopBackgroundMusic()
             self?.showGameOverScreen()
@@ -2053,7 +2004,7 @@ class GameScene: SKScene {
         gameOverOverlay = nil
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
-        let canRevive = !hasUsedRevive && gameMode != .online
+        let canRevive = !hasUsedRevive
 
         let overlay = SKNode()
         overlay.zPosition = 1000
@@ -2118,7 +2069,7 @@ class GameScene: SKScene {
         }
 
         // Play Again / Rejoin button
-        let restartLabel = gameMode == .online ? "Rejoin" : "Play Again"
+        let restartLabel = "Play Again"
         let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
         restartBg.fillColor   = SKColor(red: 0.20, green: 0.78, blue: 0.32, alpha: 1.0)
         restartBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
@@ -2165,9 +2116,6 @@ class GameScene: SKScene {
 
     func restartGame() {
         stopBackgroundMusic()
-        if gameMode == .online {
-            PhotonManager.shared.prepareLocalPlayerForNewRound()
-        }
         setupNewGame()
         startBackgroundMusic()
     }
@@ -2373,9 +2321,6 @@ class GameScene: SKScene {
         for i in 0..<bots.count where bots[i].isActive && !bots[i].isDead {
             entries.append((bots[i].name, bots[i].score, false))
         }
-        for (_, rp) in remotePlayers {
-            entries.append((rp.playerName, rp.score, false))
-        }
         entries.sort { $0.score > $1.score }
         let top5 = Array(entries.prefix(5))          // hard cap at 5
 
@@ -2470,17 +2415,6 @@ class GameScene: SKScene {
             }
         }
 
-        // Online: update remote player dots
-        for (actorID, dot) in minimapRemotePlayerDots {
-            if let rp = remotePlayers[actorID] {
-                let rx = (rp.head.position.x / world - 0.5) * mapSize
-                let ry = (rp.head.position.y / world - 0.5) * mapSize
-                dot.position = CGPoint(x: rx, y: ry)
-                dot.isHidden = false
-            } else {
-                dot.isHidden = true
-            }
-        }
     }
 
     func createLeaderArrow() {
@@ -2539,16 +2473,6 @@ class GameScene: SKScene {
             }
         }
 
-        for (_, remote) in remotePlayers {
-            if remote.score > best.score {
-                best = (
-                    name: remote.playerName.isEmpty ? "Player" : remote.playerName,
-                    score: remote.score,
-                    position: remote.head.position,
-                    isPlayer: false
-                )
-            }
-        }
 
         return best
     }
@@ -2580,15 +2504,6 @@ class GameScene: SKScene {
     func spawnInitialFood() {
         for _ in 0..<foodCount { spawnFood() }
     }
-
-    func prepareOnlineFoodSlots() {
-        guard gameMode == .online else { return }
-        if foodItems.count == foodCount, foodTypes.count == foodCount { return }
-
-        foodItems = (0..<foodCount).map { _ in SKNode() }
-        foodTypes = Array(repeating: .regular, count: foodCount)
-    }
-
     func randomSpawnFoodType() -> FoodType {
         let roll = Int.random(in: 0...99)
         let candidate: FoodType
@@ -2778,26 +2693,6 @@ class GameScene: SKScene {
         for pos in bodyPositionCache where hypot(p.x - pos.x, p.y - pos.y) < safeSpawnDistance { return true }
         return false
     }
-
-    func applyOnlineFoodUpdate(foodIndex: Int, newFoodX: Float, newFoodY: Float, newFoodType: Int) {
-        prepareOnlineFoodSlots()
-        guard foodIndex >= 0, foodIndex < foodItems.count else { return }
-
-        let oldType = foodTypes[foodIndex]
-        if oldType == .trail {
-            activeTrailFoodCount = max(0, activeTrailFoodCount - 1)
-        }
-
-        foodItems[foodIndex].removeFromParent()
-
-        let type = FoodType(rawValue: newFoodType) ?? .regular
-        let node = makeFoodNode(for: type)
-        node.position = CGPoint(x: CGFloat(newFoodX), y: CGFloat(newFoodY))
-        addChild(node)
-        foodItems[foodIndex] = node
-        foodTypes[foodIndex] = type
-    }
-
     func checkFoodCollisions() {
         let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
         for (i, food) in foodItems.enumerated().reversed() {
@@ -2815,27 +2710,12 @@ class GameScene: SKScene {
         let foodPos = foodItems[index].position
         let type    = foodTypes[index]
 
-        if gameMode == .online {
-            let newPos = randomPositionInArena()
-            let newType = randomSpawnFoodType()
-            applyOnlineFoodUpdate(
-                foodIndex: index,
-                newFoodX: Float(newPos.x),
-                newFoodY: Float(newPos.y),
-                newFoodType: newType.rawValue
-            )
-            PhotonManager.shared.sendFoodEaten(foodIndex: index,
-                                               newFoodX: Float(newPos.x),
-                                               newFoodY: Float(newPos.y),
-                                               newFoodType: newType.rawValue)
-        } else {
-            if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
-            foodItems[index].removeFromParent()
-            foodItems.remove(at: index)
-            foodTypes.remove(at: index)
-            clusterBonusDirty = true
-            spawnFood()
-        }
+        if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
+        foodItems[index].removeFromParent()
+        foodItems.remove(at: index)
+        foodTypes.remove(at: index)
+        clusterBonusDirty = true
+        spawnFood()
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
 
         // Apply power-up effects
@@ -3397,7 +3277,7 @@ class GameScene: SKScene {
     }
 
     private func updateBotVisibilityLOD() {
-        guard gameMode != .online, !isSpecialOfflineMode else { return }
+        guard !isSpecialOfflineMode else { return }
 
         let playerPos = snakeHead.position
         let activateSq = botActivationDistance * botActivationDistance
@@ -4444,7 +4324,7 @@ class GameScene: SKScene {
 
     /// Offline: player head collides with a bot head → both die (head-to-head).
     func checkPlayerHeadVsBotHeads() -> Bool {
-        guard gameMode != .online, !ghostActive else { return false }
+        guard !ghostActive else { return false }
         for i in 0..<bots.count {
             guard bots[i].isActive, !bots[i].isDead, let botHead = bots[i].head else { continue }
             let dist = hypot(snakeHead.position.x - botHead.position.x,
@@ -4463,7 +4343,7 @@ class GameScene: SKScene {
 
     /// Offline: any active bot's head hitting the player's body kills that bot.
     func checkBotHeadsHitPlayerBody() {
-        guard gameMode != .online else { return }
+        
         let interactionRadius = interactionRadiusForPlayerBody()
         let interactionRadiusSq = interactionRadius * interactionRadius
         guard !bodyPositionCache.isEmpty else { return }
@@ -4486,120 +4366,6 @@ class GameScene: SKScene {
             }
         }
     }
-
-    // MARK: - Remote Players (Online Mode)
-    func addRemotePlayer(actorID: Int, colorIndex: Int, headPos: CGPoint, playerName: String = "Player") {
-        let theme = snakeColorThemes[colorIndex % snakeColorThemes.count]
-
-        let head = SKShapeNode(circleOfRadius: headRadius)
-        head.fillColor   = theme.headSKColor
-        head.strokeColor = theme.headStrokeSKColor
-        head.lineWidth   = 2
-        head.glowWidth   = 5
-        head.position    = headPos
-        addChild(head)
-        addEyes(to: head)
-
-        let nameLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        nameLabel.text      = playerName
-        nameLabel.fontSize  = 12
-        nameLabel.fontColor = SKColor(white: 1, alpha: 0.8)
-        nameLabel.horizontalAlignmentMode = .center
-        nameLabel.verticalAlignmentMode   = .bottom
-        nameLabel.position  = CGPoint(x: 0, y: headRadius + 4)
-        head.addChild(nameLabel)
-
-        // Minimap dot for this remote player
-        if let mapContainer = minimapNode {
-            let dot = SKShapeNode(circleOfRadius: 2.5)
-            dot.fillColor   = SKColor(red: 0.3, green: 0.9, blue: 1.0, alpha: 0.9)
-            dot.strokeColor = .clear
-            dot.zPosition   = 1
-            mapContainer.addChild(dot)
-            minimapRemotePlayerDots[actorID] = dot
-        }
-
-        remotePlayers[actorID] = RemotePlayer(
-            head: head, body: [], posHistory: PointRingBuffer(), bodyPositionCache: [], score: 0,
-            bodyLength: 10, nameLabel: nameLabel, colorIndex: colorIndex,
-            playerName: playerName
-        )
-        miniLeaderboardNeedsRefresh = true
-        animateSnakeEntrance(head: head, body: [], angle: 0, accent: theme.bodySKColor)
-    }
-
-    func removeRemotePlayer(actorID: Int) {
-        guard let rp = remotePlayers[actorID] else { return }
-        rp.head.removeFromParent()
-        for seg in rp.body { seg.removeFromParent() }
-        remotePlayers.removeValue(forKey: actorID)
-        minimapRemotePlayerDots[actorID]?.removeFromParent()
-        minimapRemotePlayerDots.removeValue(forKey: actorID)
-        miniLeaderboardNeedsRefresh = true
-    }
-
-    func updateRemotePlayerPosition(actorID: Int, headX: Float, headY: Float,
-                                    angle: Float, score: Int32, bodyLength: Int32) {
-        guard var rp = remotePlayers[actorID] else { return }
-        let newPos    = CGPoint(x: CGFloat(headX), y: CGFloat(headY))
-        let segCount  = max(1, Int(bodyLength))
-        let theme     = snakeColorThemes[rp.colorIndex % snakeColorThemes.count]
-
-        rp.head.run(SKAction.move(to: newPos, duration: 0.05))
-        rp.head.zRotation = (CGFloat(angle) * 180 / .pi - 90) * .pi / 180
-
-        rp.posHistory.setCapacity(historyCapacity(forSegmentCount: segCount))
-        rp.posHistory.append(newPos)
-
-        rp.score      = Int(score)
-        rp.bodyLength = segCount
-
-        // ── Sync body segment node count ──────────────────────────────────
-        while rp.body.count < segCount {
-            let seg = makeBodySegment(color: theme.bodySKColor, stroke: theme.bodyStrokeSKColor)
-            seg.zPosition = 5
-            addChild(seg)
-            rp.body.append(seg)
-        }
-        while rp.body.count > segCount {
-            rp.body.last?.removeFromParent()
-            rp.body.removeLast()
-        }
-        ensurePointCacheLength(rp.body.count, cache: &rp.bodyPositionCache)
-
-        fillArcPositions(history: rp.posHistory, leadPos: newPos,
-                         count: rp.body.count, spacing: segmentPixelSpacing,
-                         into: &rp.bodyPositionCache)
-        let dist      = hypot(snakeHead.position.x - newPos.x, snakeHead.position.y - newPos.y)
-        let isVisible = dist <= visibleRadius
-        rp.head.isHidden = !isVisible
-
-        for (i, seg) in rp.body.enumerated() {
-            seg.position = rp.bodyPositionCache[i]
-            seg.isHidden = !isVisible
-            // Taper scale + alpha toward tail (same look as local player)
-            let t: CGFloat = segCount > 1 ? CGFloat(i) / CGFloat(segCount - 1) : 0
-            seg.setScale(1.0 - t * 0.22)
-            seg.alpha     = 1.0 - t * 0.10
-            seg.glowWidth = i < segCount / 2 ? 3 : 0
-        }
-
-        remotePlayers[actorID] = rp
-        miniLeaderboardNeedsRefresh = true
-    }
-
-    func checkPlayerCollidesWithRemotePlayers() -> Bool {
-        if ghostActive { return false }   // 👻 ghost: pass through bodies
-        for (_, rp) in remotePlayers where !rp.head.isHidden {
-            if headCollidesWithPoints(
-                snakeHead.position,
-                points: rp.bodyPositionCache,
-                combinedRadius: collisionRadius + bodySegmentRadius
-            ) { return true }
-        }
-        return false
-    }
-
     // MARK: - New Power-Up Effects
 
     /// 🧲 Magnet — pull nearby food items toward the snake head.
@@ -5018,14 +4784,14 @@ class GameScene: SKScene {
         if checkWallCollision() { playerGameOver(); return }
         // Self-collision intentionally disabled: snake passes through its own body
 
-        if gameMode != .online && !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
-        if gameMode != .online && !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { playerGameOver(); return }
-        if gameMode == .online  && checkPlayerCollidesWithRemotePlayers() { playerGameOver(); return }
+        if !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
+        if !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { playerGameOver(); return }
+        
 
         if !isSpecialOfflineMode { checkFoodCollisions() }
 
         // --- Trail food spawning (player) ---
-        if gameMode != .online, !isSpecialOfflineMode, gameStarted, let tailPos = bodyPositionCache.last {
+        if !isSpecialOfflineMode, gameStarted, let tailPos = bodyPositionCache.last {
             trailFoodTimer += dt
             if trailFoodTimer >= playerTrailInterval {
                 spawnTrailFood(at: tailPos,
@@ -5036,7 +4802,7 @@ class GameScene: SKScene {
         }
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
-        if gameMode != .online && !isSpecialOfflineMode && frameCounter % 300 == 0 {
+        if !isSpecialOfflineMode && frameCounter % 300 == 0 {
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
@@ -5053,7 +4819,7 @@ class GameScene: SKScene {
         updateCamera()
         updateHUDPositions()
 
-        if gameMode != .online && !isSpecialOfflineMode {
+        if !isSpecialOfflineMode {
             botVisibilityUpdateTimer += dt
             if botVisibilityUpdateTimer >= 0.20 {
                 botVisibilityUpdateTimer = 0
@@ -5069,7 +4835,7 @@ class GameScene: SKScene {
             updateMazeMode(dt: dt)
         } else if isSnakeRaceMode {
             updateSnakeRaceMode(dt: dt)
-        } else if gameMode != .online {
+        } else {
             let simulationStep = CGFloat(1.0 / minimumGameplayFPS)
             let botDelta = min(frameDelta, 0.2)
             botUpdateAccumulator += botDelta
@@ -5089,16 +4855,6 @@ class GameScene: SKScene {
             while botHeadCheckAccumulator >= simulationStep {
                 checkBotHeadsHitPlayerBody()
                 botHeadCheckAccumulator -= simulationStep
-            }
-        } else if gameMode == .online {
-            if frameCounter % 4 == 0 {
-                PhotonManager.shared.sendPlayerState(
-                    headX: Float(snakeHead.position.x),
-                    headY: Float(snakeHead.position.y),
-                    angle: Float(currentAngle),
-                    score: score,
-                    bodyLength: bodySegments.count
-                )
             }
         }
 
@@ -5141,45 +4897,3 @@ extension SKColor {
     }
 }
 
-// MARK: - PhotonManager Delegate (Online Mode)
-extension GameScene: PhotonManagerDelegate {
-    func didJoinRoom() {
-        primeOnlineRoundIfReady()
-    }
-
-    func didReceivePlayerState(_ state: RemotePlayerState, playerID: Int) {
-        if remotePlayers[playerID] == nil {
-            addRemotePlayer(actorID: playerID,
-                            colorIndex: (normalizedSnakeColorIndex(selectedSnakeColorIndex) + playerID) % snakeColorThemes.count,
-                            headPos: CGPoint(x: CGFloat(state.headX), y: CGFloat(state.headY)),
-                            playerName: state.playerName)
-        } else {
-            // Update the name label in case the player updated their name mid-game
-            remotePlayers[playerID]?.nameLabel.text = state.playerName
-            remotePlayers[playerID]?.playerName     = state.playerName
-        }
-        updateRemotePlayerPosition(actorID: playerID, headX: state.headX, headY: state.headY,
-                                   angle: state.angle, score: Int32(state.score), bodyLength: Int32(state.bodyLength))
-    }
-
-    func didReceiveFoodEaten(foodIndex: Int, newFoodX: Float, newFoodY: Float, newFoodType: Int) {
-        applyOnlineFoodUpdate(
-            foodIndex: foodIndex,
-            newFoodX: newFoodX,
-            newFoodY: newFoodY,
-            newFoodType: newFoodType
-        )
-    }
-
-    func didPlayerLeave(playerID: Int) {
-        removeRemotePlayer(actorID: playerID)
-        // Game is continuous — alive player keeps playing; just show a brief notification
-        if !isGameOver {
-            spawnFloatingText("Opponent left 👋", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 80))
-        }
-    }
-
-    func didReceiveOpponentDied(playerID: Int) {
-        removeRemotePlayer(actorID: playerID)
-    }
-}
