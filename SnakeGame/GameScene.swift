@@ -191,7 +191,6 @@ class GameScene: SKScene {
     var positionHistory = PointRingBuffer()
     var bodyPositionCache: [CGPoint] = []
     private var playerBodyOccupancy: Set<GridCell> = []
-    private var playerBodyCellCounts: [GridCell: Int] = [:]
     var currentAngle: CGFloat = 0
     var targetAngle:  CGFloat = 0
     var isTouching:   Bool    = false
@@ -935,7 +934,6 @@ class GameScene: SKScene {
         bodyPositionCache.removeAll()
         positionHistory.removeAll()
         playerBodyOccupancy.removeAll()
-        playerBodyCellCounts.removeAll()
         playerBodyPathNode.removeFromParent()
         bots.removeAll()
         foodItems.removeAll()
@@ -2985,10 +2983,8 @@ class GameScene: SKScene {
         playerBodyPathNode.path = path
 
         playerBodyOccupancy.removeAll(keepingCapacity: true)
-        playerBodyCellCounts.removeAll(keepingCapacity: true)
         for point in bodyPositionCache {
             let cell = gridCell(for: point)
-            playerBodyCellCounts[cell, default: 0] += 1
             playerBodyOccupancy.insert(cell)
         }
     }
