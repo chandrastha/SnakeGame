@@ -2967,8 +2967,19 @@ class GameScene: SKScene {
         let path = CGMutablePath()
         if let first = bodyPositionCache.first {
             path.move(to: first)
-            for point in bodyPositionCache.dropFirst() {
-                path.addLine(to: point)
+            // Rendering every point in a very long body can tank SKShapeNode performance.
+            // Keep collision data at full resolution, but downsample only the drawn path.
+            let maxRenderedPoints = 260
+            let renderStep = max(1, bodyPositionCache.count / maxRenderedPoints)
+            var index = renderStep
+            while index < bodyPositionCache.count {
+                path.addLine(to: bodyPositionCache[index])
+                index += renderStep
+            }
+            if let last = bodyPositionCache.last,
+               bodyPositionCache.count > 1,
+               bodyPositionCache[(bodyPositionCache.count - 1) / renderStep * renderStep] != last {
+                path.addLine(to: last)
             }
         }
         playerBodyPathNode.path = path
@@ -4896,4 +4907,3 @@ extension SKColor {
         return SKColor(red: r, green: g, blue: b, alpha: alpha)
     }
 }
-
