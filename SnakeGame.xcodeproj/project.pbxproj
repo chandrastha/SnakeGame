@@ -7,9 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		FB0005FB2F000005000001 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = FB0002FB2F000002000001 /* FirebaseCore */; };
-		FB0006FB2F000006000001 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = FB0003FB2F000003000001 /* FirebaseDatabase */; };
-		FB0007FB2F000007000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = FB0004FB2F000004000001 /* FirebaseAuth */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,9 +55,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FB0005FB2F000005000001 /* FirebaseCore in Frameworks */,
-				FB0006FB2F000006000001 /* FirebaseDatabase in Frameworks */,
-				FB0007FB2F000007000001 /* FirebaseAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,9 +115,6 @@
 			);
 			name = SnakeGame;
 			packageProductDependencies = (
-				FB0002FB2F000002000001 /* FirebaseCore */,
-				FB0003FB2F000003000001 /* FirebaseDatabase */,
-				FB0004FB2F000004000001 /* FirebaseAuth */,
 			);
 			productName = SnakeGame;
 			productReference = E539AB872F4E15A400A78880 /* SnakeGame.app */;
@@ -208,7 +199,6 @@
 			mainGroup = E539AB7E2F4E15A400A78880;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				E56A99782F563C42003AE0AA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E539AB882F4E15A400A78880 /* Products */;
@@ -587,40 +577,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		E56A99782F563C42003AE0AA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 12.10.0;
-			};
-		};
-		FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 11.0.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		FB0002FB2F000002000001 /* FirebaseCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseCore;
-		};
-		FB0003FB2F000003000001 /* FirebaseDatabase */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseDatabase;
-		};
-		FB0004FB2F000004000001 /* FirebaseAuth */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = FB0001FB2F000001000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAuth;
-		};
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E539AB7F2F4E15A400A78880 /* Project object */;
