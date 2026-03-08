@@ -203,8 +203,8 @@ class GameScene: SKScene {
     var playerBodyPathNode = SKShapeNode()
     var positionHistory = PointRingBuffer()
     var bodyPositionCache: [CGPoint] = []
-    var playerBodyOccupancy: Set<GridCell> = []
-    var playerBodyCellCounts: [GridCell: Int] = [:]
+    private var playerBodyOccupancy: Set<GridCell> = []
+    private var playerBodyCellCounts: [GridCell: Int] = [:]
     var currentAngle: CGFloat = 0
     var targetAngle:  CGFloat = 0
     var isTouching:   Bool    = false
@@ -4330,7 +4330,7 @@ class GameScene: SKScene {
                 let trailInterval = bots[i].isBoosting ? botTrailInterval * 0.65 : botTrailInterval
                 if bots[i].trailFoodTimer >= trailInterval {
                     if let tailSeg = bots[i].body.last {
-                        spawnTrailFood(at: tailPos,
+                        spawnTrailFood(at: tailSeg.position,
                                        colorIndex: bots[i].colorIndex,
                                        patternIndex: 0)
                     }
