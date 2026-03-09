@@ -123,65 +123,47 @@ enum SnakePattern: Int, CaseIterable {
     case frost   = 12  // Ice-line cross highlights
     case ringed  = 13  // Bold center ring
     case toxic   = 14  // Acid blobs
-    case checker     = 15  // Checker tiles
-    case sphere      = 16  // 3D ball with specular highlight and shadow
-    case diamondGrid = 17  // Woven diamond lattice (silver scale)
-    case cylinder    = 18  // Striped pill segments oriented to travel direction
-    case armor       = 19  // Dark capsule with gold band rings
-    case leaf        = 20  // Organic leaf-shaped segments with vein
-    case rainbow     = 21  // Each segment cycles through rainbow hues
+    case checker = 15  // Checker tiles
 
     var name: String {
         switch self {
-        case .solid:       return "Solid"
-        case .striped:     return "Striped"
-        case .dotted:      return "Dotted"
-        case .scales:      return "Scales"
-        case .crystal:     return "Crystal"
-        case .neon:        return "Neon"
-        case .camo:        return "Camo"
-        case .galaxy:      return "Galaxy"
-        case .zigzag:      return "Zigzag"
-        case .ripple:      return "Ripple"
-        case .split:       return "Split"
-        case .ember:       return "Ember"
-        case .frost:       return "Frost"
-        case .ringed:      return "Ringed"
-        case .toxic:       return "Toxic"
-        case .checker:     return "Checker"
-        case .sphere:      return "Sphere"
-        case .diamondGrid: return "Diamond"
-        case .cylinder:    return "Cylinder"
-        case .armor:       return "Armor"
-        case .leaf:        return "Leaf"
-        case .rainbow:     return "Rainbow"
+        case .solid:   return "Solid"
+        case .striped: return "Striped"
+        case .dotted:  return "Dotted"
+        case .scales:  return "Scales"
+        case .crystal: return "Crystal"
+        case .neon:    return "Neon"
+        case .camo:    return "Camo"
+        case .galaxy:  return "Galaxy"
+        case .zigzag:  return "Zigzag"
+        case .ripple:  return "Ripple"
+        case .split:   return "Split"
+        case .ember:   return "Ember"
+        case .frost:   return "Frost"
+        case .ringed:  return "Ringed"
+        case .toxic:   return "Toxic"
+        case .checker: return "Checker"
         }
     }
 
     var emoji: String {
         switch self {
-        case .solid:       return "⬤"
-        case .striped:     return "▤"
-        case .dotted:      return "⁙"
-        case .scales:      return "🐟"
-        case .crystal:     return "💎"
-        case .neon:        return "✨"
-        case .camo:        return "🌿"
-        case .galaxy:      return "🌌"
-        case .zigzag:      return "⚡️"
-        case .ripple:      return "🌀"
-        case .split:       return "◐"
-        case .ember:       return "🔥"
-        case .frost:       return "❄️"
-        case .ringed:      return "◎"
-        case .toxic:       return "☣️"
-        case .checker:     return "▦"
-        case .sphere:      return "🔵"
-        case .diamondGrid: return "🔷"
-        case .cylinder:    return "🥫"
-        case .armor:       return "🛡️"
-        case .leaf:        return "🍃"
-        case .rainbow:     return "🌈"
+        case .solid:   return "⬤"
+        case .striped: return "▤"
+        case .dotted:  return "⁙"
+        case .scales:  return "🐟"
+        case .crystal: return "💎"
+        case .neon:    return "✨"
+        case .camo:    return "🌿"
+        case .galaxy:  return "🌌"
+        case .zigzag:  return "⚡️"
+        case .ripple:  return "🌀"
+        case .split:   return "◐"
+        case .ember:   return "🔥"
+        case .frost:   return "❄️"
+        case .ringed:  return "◎"
+        case .toxic:   return "☣️"
+        case .checker: return "▦"
         }
     }
 }
