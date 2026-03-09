@@ -239,7 +239,7 @@ class GameScene: SKScene {
     // Food spawns are biased 60% toward high-activity cells, 40% uniform random.
     let heatmapCols: Int = 20
     let heatmapRows: Int = 20
-    var movementHeatmap: [[Float]] = []   // [row][col]
+    var movementHeatmap: [[Float]] = Array(repeating: Array(repeating: 0.1, count: 20), count: 20)   // [row][col]
     var heatmapSampleTimer: CGFloat = 0
     let heatmapSampleInterval: CGFloat = 0.5   // record positions every 0.5 s
     var heatmapDecayTimer: CGFloat = 0
