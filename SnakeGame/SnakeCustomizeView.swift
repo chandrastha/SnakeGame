@@ -452,6 +452,100 @@ extension View {
                 }
                 .clipShape(Circle())
             )
+
+        case .sphere:
+            self.overlay(
+                ZStack {
+                    Ellipse()
+                        .fill(Color.white.opacity(0.70))
+                        .frame(width: size * 0.38, height: size * 0.28)
+                        .offset(x: -size * 0.15, y: -size * 0.15)
+                    Ellipse()
+                        .fill(Color.black.opacity(0.22))
+                        .frame(width: size * 0.45, height: size * 0.32)
+                        .offset(x: size * 0.10, y: size * 0.11)
+                }
+                .clipShape(Circle())
+            )
+
+        case .diamondGrid:
+            self.overlay(
+                ZStack {
+                    Rectangle()
+                        .fill(Color.white.opacity(segIndex % 2 == 0 ? 0.40 : 0.10))
+                        .frame(width: size * 0.80, height: size * 0.80)
+                        .rotationEffect(.degrees(45))
+                        .overlay(
+                            Rectangle()
+                                .stroke(Color.white.opacity(0.70), lineWidth: 1.2)
+                                .frame(width: size * 0.80, height: size * 0.80)
+                                .rotationEffect(.degrees(45))
+                        )
+                    Rectangle()
+                        .fill(Color.white.opacity(0.55))
+                        .frame(width: size * 0.26, height: size * 0.26)
+                        .rotationEffect(.degrees(45))
+                        .offset(y: -size * 0.09)
+                }
+                .clipShape(Circle())
+            )
+
+        case .cylinder:
+            self.overlay(
+                ZStack {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.30))
+                        .frame(width: size, height: size * 0.28)
+                    Ellipse()
+                        .fill(Color.white.opacity(0.42))
+                        .frame(width: size * 0.80, height: size * 0.22)
+                        .offset(y: -size * 0.28)
+                }
+                .clipShape(Circle())
+            )
+
+        case .armor:
+            self.overlay(
+                ZStack {
+                    Rectangle()
+                        .fill(Color(red: 1.0, green: 0.78, blue: 0.08).opacity(0.90))
+                        .frame(width: size, height: size * 0.26)
+                    Ellipse()
+                        .fill(Color.white.opacity(0.38))
+                        .frame(width: size * 0.70, height: size * 0.14)
+                        .offset(y: -size * 0.04)
+                }
+                .clipShape(Circle())
+            )
+
+        case .leaf:
+            self.overlay(
+                ZStack {
+                    Capsule()
+                        .fill(Color.white.opacity(0.30))
+                        .frame(width: size * 0.10, height: size * 0.72)
+                    Ellipse()
+                        .fill(Color.white.opacity(0.38))
+                        .frame(width: size * 0.30, height: size * 0.18)
+                        .offset(x: -size * 0.08, y: -size * 0.20)
+                }
+                .clipShape(Circle())
+            )
+
+        case .rainbow:
+            self.overlay(
+                ZStack {
+                    Ellipse()
+                        .fill(Color.white.opacity(0.70))
+                        .frame(width: size * 0.38, height: size * 0.28)
+                        .offset(x: -size * 0.15, y: -size * 0.15)
+                    Ellipse()
+                        .fill(Color.black.opacity(0.22))
+                        .frame(width: size * 0.45, height: size * 0.32)
+                        .offset(x: size * 0.10, y: size * 0.11)
+                }
+                .clipShape(Circle())
+            )
         }
     }
 }
