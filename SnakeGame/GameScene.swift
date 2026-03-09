@@ -56,6 +56,7 @@ struct BotState {
 
     // Trail food
     var trailFoodTimer: CGFloat
+    var zoneIndex: Int     // home zone in 3×3 arena grid (0–8), used for area coverage
     var shieldCharges: Int
     var multiplierTimeLeft: CGFloat
     var magnetTimeLeft: CGFloat
@@ -90,6 +91,7 @@ struct BotState {
         self.focusTimer    = 0
         self.roamAnchor    = position
         self.trailFoodTimer = 0
+        self.zoneIndex     = id % 9  // assign home zone in 3×3 grid
         self.shieldCharges = 0
         self.multiplierTimeLeft = 0
         self.magnetTimeLeft = 0
@@ -148,7 +150,7 @@ class GameScene: SKScene {
     var lastUpdateTime: TimeInterval = 0
 
     // MARK: - World & Camera
-    let worldSize: CGFloat = 4000.0
+    let worldSize: CGFloat = 6000.0
     let visibleRadius: CGFloat = 700.0
     var cameraNode = SKCameraNode()
     let cameraZoomStepScore: CGFloat = 300.0
@@ -172,7 +174,7 @@ class GameScene: SKScene {
     let initialBodyCount:        Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
-    let foodCount:               Int     = 200
+    let foodCount:               Int     = 340
     let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
@@ -228,13 +230,25 @@ class GameScene: SKScene {
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
-    let maxTrailFoodItems:   Int     = 150    // hard cap on active .trail nodes
+    let maxTrailFoodItems:   Int     = 220    // hard cap on active .trail nodes
     // Trail food: makeTrailFoodNode — scaled body segment matching player skin + pattern
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
+    // MARK: - Movement Heatmap (food density weighting)
+    // 20×20 grid over the playable arena. Each cell accumulates activity as snake heads pass through.
+    // Food spawns are biased 60% toward high-activity cells, 40% uniform random.
+    let heatmapCols: Int = 20
+    let heatmapRows: Int = 20
+    var movementHeatmap: [[Float]] = []   // [row][col]
+    var heatmapSampleTimer: CGFloat = 0
+    let heatmapSampleInterval: CGFloat = 0.5   // record positions every 0.5 s
+    var heatmapDecayTimer: CGFloat = 0
+    let heatmapDecayInterval: CGFloat = 15.0   // decay all cells every 15 s
+    let heatmapDecayFactor: Float = 0.85       // keep 85% of activity per decay step
+
     // MARK: - Arena
-    var arenaMinX: CGFloat = 0, arenaMaxX: CGFloat = 4000
-    var arenaMinY: CGFloat = 0, arenaMaxY: CGFloat = 4000
+    var arenaMinX: CGFloat = 0, arenaMaxX: CGFloat = 6000
+    var arenaMinY: CGFloat = 0, arenaMaxY: CGFloat = 6000
     var isGameOver: Bool = false
 
     // MARK: - Score & HUD
@@ -764,19 +778,23 @@ class GameScene: SKScene {
 
     // MARK: - Bots (Offline mode)
     var bots: [BotState] = []
-    let totalBots = 30
+    let totalBots = 50
     let challengeNemesisScore = 1000
-    let expertNemesisInitialDelay: CGFloat = 60.0
-    let expertNemesisRespawnDelay: CGFloat = 120.0
+    let expertNemesisInitialDelay: CGFloat = 30.0   // was 60 — Nemesis arrives sooner in Expert
+    let expertNemesisRespawnDelay: CGFloat = 60.0   // was 120 — Nemesis comes back faster
     var localBotTargetCount: Int { gameMode == .challenge ? totalBots + 1 : totalBots }
     // Per-tier base speeds (replaces single botMoveSpeed)
     let botSpeedEasy:   CGFloat = 95.0
     let botSpeedMedium: CGFloat = 120.0
     let botSpeedHard:   CGFloat = 150.0
     let botSpeedScoreCap: Int = 100
+    /// Extra speed multiplier applied to ALL bots in Expert (.challenge) mode.
+    let expertBotSpeedMultiplier: CGFloat = 1.18
     let botBoostMultiplier: CGFloat = 1.52
     let botBoostDurationRange: ClosedRange<CGFloat> = 0.30...0.90
     let botBoostCooldownRange: ClosedRange<CGFloat> = 1.10...2.40
+    /// Tighter boost cooldown used by ALL bots in Expert mode.
+    let expertBotBoostCooldownRange: ClosedRange<CGFloat> = 0.65...1.50
     let botDetailedAIRadius: CGFloat = 1200.0
     let botCollisionBroadPhaseRadius: CGFloat = 260.0
     let botActivationDistance: CGFloat = 920.0
@@ -881,20 +899,27 @@ class GameScene: SKScene {
         playerName.isEmpty ? "You" : playerName
     }
 
-    private func fastestBoostingBotSpeed() -> CGFloat? {
+    /// Theoretical max boost speed of all non-nemesis bots (regardless of whether they are
+    /// currently boosting). Used to anchor the player's boost so it always feels dominant.
+    private func fastestRegularBotBoostSpeed() -> CGFloat? {
         bots.indices.compactMap { index in
-            guard bots[index].isActive, !bots[index].isDead, bots[index].isBoosting else { return nil }
-            return botSpeed(for: index)
+            guard !bots[index].isDead, !bots[index].isNemesis else { return nil }
+            // Cruise speed * boost multiplier, irrespective of current isBoosting state.
+            return botSpeed(for: index, includeBoost: false) * botBoostMultiplier
         }
         .max()
     }
 
     private func currentPlayerForwardSpeed() -> CGFloat {
         guard isBoostHeld else { return currentMoveSpeed }
+        // Casual (.offline): player boost is 30% above the highest regular-bot boost speed.
+        // Expert (.challenge): player boost is only 10% above, keeping the game harder.
+        let dominanceMultiplier: CGFloat = gameMode == .challenge ? 1.10 : 1.30
         return GameLogic.boostedPlayerSpeed(
             baseSpeed: currentMoveSpeed,
-            fastestBoostingBotSpeed: fastestBoostingBotSpeed(),
-            minimumBoostMultiplier: boostMultiplier
+            fastestBoostingBotSpeed: fastestRegularBotBoostSpeed(),
+            minimumBoostMultiplier: boostMultiplier,
+            dominanceMultiplier: dominanceMultiplier
         )
     }
 
@@ -944,6 +969,10 @@ class GameScene: SKScene {
         trailFoodTimer       = 0
         activeTrailFoodCount = 0
         tailWigglePhase      = 0
+        // Initialise heatmap with a small uniform baseline so early food isn't purely central.
+        movementHeatmap = Array(repeating: Array(repeating: 0.1, count: heatmapCols), count: heatmapRows)
+        heatmapSampleTimer = 0
+        heatmapDecayTimer  = 0
         mazeEscapeTimer      = 45
         mazeEscapeTarget     = .zero
         mazeBand             = 1
@@ -2677,7 +2706,8 @@ class GameScene: SKScene {
         let type = randomSpawnFoodType()
         let food = makeFoodNode(for: type)
 
-        var pos = randomPositionInArena()
+        // 60 % of spawns are biased toward high-traffic zones; 40 % are uniform random.
+        var pos = CGFloat.random(in: 0...1) < 0.60 ? heatmapWeightedPosition() : randomPositionInArena()
         var attempts = 0
         while isPositionOnPlayerSnake(pos) && attempts < 20 {
             pos = randomPositionInArena()
@@ -2695,6 +2725,97 @@ class GameScene: SKScene {
         let minY = arenaMinY + foodPadding, maxY = arenaMaxY - foodPadding
         guard minX < maxX, minY < maxY else { return CGPoint(x: worldSize/2, y: worldSize/2) }
         return CGPoint(x: CGFloat.random(in: minX...maxX), y: CGFloat.random(in: minY...maxY))
+    }
+
+    // MARK: - Heatmap Helpers
+
+    /// Sample snake positions into the movement heatmap and apply periodic decay.
+    func updateMovementHeatmap(dt: CGFloat) {
+        heatmapSampleTimer += dt
+        heatmapDecayTimer  += dt
+
+        if heatmapSampleTimer >= heatmapSampleInterval {
+            heatmapSampleTimer = 0
+            // Record player head
+            if !isGameOver { recordHeatmapPosition(snakeHead.position) }
+            // Record active bot heads (sampled to avoid cost)
+            for bot in bots where bot.isActive && !bot.isDead {
+                recordHeatmapPosition(bot.position)
+            }
+        }
+
+        if heatmapDecayTimer >= heatmapDecayInterval {
+            heatmapDecayTimer = 0
+            for row in 0..<heatmapRows {
+                for col in 0..<heatmapCols {
+                    movementHeatmap[row][col] *= heatmapDecayFactor
+                }
+            }
+        }
+    }
+
+    private func recordHeatmapPosition(_ pos: CGPoint) {
+        let arenaW = arenaMaxX - arenaMinX
+        let arenaH = arenaMaxY - arenaMinY
+        guard arenaW > 0, arenaH > 0 else { return }
+        let col = Int(((pos.x - arenaMinX) / arenaW) * CGFloat(heatmapCols))
+        let row = Int(((pos.y - arenaMinY) / arenaH) * CGFloat(heatmapRows))
+        let c = max(0, min(heatmapCols - 1, col))
+        let r = max(0, min(heatmapRows - 1, row))
+        movementHeatmap[r][c] += 1.0
+    }
+
+    /// Pick a food spawn position weighted toward high-activity heatmap cells.
+    /// Falls back to a uniform random position if the heatmap is empty.
+    func heatmapWeightedPosition() -> CGPoint {
+        // Build cumulative weight array
+        var total: Float = 0
+        var weights: [Float] = []
+        weights.reserveCapacity(heatmapRows * heatmapCols)
+        for row in 0..<heatmapRows {
+            for col in 0..<heatmapCols {
+                total += movementHeatmap[row][col]
+                weights.append(total)
+            }
+        }
+        guard total > 0 else { return randomPositionInArena() }
+
+        let pick = Float.random(in: 0..<total)
+        var chosenIdx = weights.firstIndex(where: { $0 > pick }) ?? (heatmapRows * heatmapCols - 1)
+        chosenIdx = max(0, min(heatmapRows * heatmapCols - 1, chosenIdx))
+
+        let col = chosenIdx % heatmapCols
+        let row = chosenIdx / heatmapCols
+        let cellW = (arenaMaxX - arenaMinX) / CGFloat(heatmapCols)
+        let cellH = (arenaMaxY - arenaMinY) / CGFloat(heatmapRows)
+        let cellMinX = arenaMinX + CGFloat(col) * cellW + foodPadding
+        let cellMaxX = arenaMinX + CGFloat(col + 1) * cellW - foodPadding
+        let cellMinY = arenaMinY + CGFloat(row) * cellH + foodPadding
+        let cellMaxY = arenaMinY + CGFloat(row + 1) * cellH - foodPadding
+
+        guard cellMinX < cellMaxX, cellMinY < cellMaxY else { return randomPositionInArena() }
+        return CGPoint(x: CGFloat.random(in: cellMinX...cellMaxX),
+                       y: CGFloat.random(in: cellMinY...cellMaxY))
+    }
+
+    /// Returns a random position inside a bot's home zone (3×3 arena grid).
+    /// 80% of the time the point is inside the bot's assigned zone;
+    /// 20% of the time it is a fully random arena position to allow cross-zone roaming.
+    func randomPositionInZone(for botIndex: Int) -> CGPoint {
+        guard botIndex < bots.count else { return randomPositionInArena() }
+        if CGFloat.random(in: 0...1) < 0.20 { return randomPositionInArena() }
+        let zoneIdx = bots[botIndex].zoneIndex
+        let zoneCol = zoneIdx % 3
+        let zoneRow = zoneIdx / 3
+        let zoneW   = worldSize / 3
+        let zoneH   = worldSize / 3
+        let pad: CGFloat = 300
+        let zMinX = max(arenaMinX + pad, CGFloat(zoneCol) * zoneW + pad)
+        let zMaxX = min(arenaMaxX - pad, CGFloat(zoneCol + 1) * zoneW - pad)
+        let zMinY = max(arenaMinY + pad, CGFloat(zoneRow) * zoneH + pad)
+        let zMaxY = min(arenaMaxY - pad, CGFloat(zoneRow + 1) * zoneH - pad)
+        guard zMinX < zMaxX, zMinY < zMaxY else { return randomPositionInArena() }
+        return CGPoint(x: CGFloat.random(in: zMinX...zMaxX), y: CGFloat.random(in: zMinY...zMaxY))
     }
 
     // MARK: - Skin-Matched Food Node Builders
@@ -3590,19 +3711,30 @@ class GameScene: SKScene {
             let isNemesis = i == nemesisIndex
             let name = isNemesis ? "NEMESIS" : namePool[i % namePool.count]
 
-            // First 15 spawn near player for immediate action
+            // Zone-distributed spawn: divide arena into 3×3 grid so bots cover the whole map.
+            // Nemesis always starts near the player (center of the arena).
             let position: CGPoint
-            if i < 15 {
+            if isNemesis {
                 let angle = CGFloat.random(in: 0...(2 * .pi))
-                let dist  = isNemesis ? CGFloat.random(in: 260...480) : CGFloat.random(in: 300...680)
+                let dist  = CGFloat.random(in: 260...480)
                 position = CGPoint(
-                    x: max(200, min(worldSize - 200, worldSize/2 + cos(angle) * dist)),
-                    y: max(200, min(worldSize - 200, worldSize/2 + sin(angle) * dist))
+                    x: max(300, min(worldSize - 300, worldSize / 2 + cos(angle) * dist)),
+                    y: max(300, min(worldSize - 300, worldSize / 2 + sin(angle) * dist))
                 )
             } else {
+                let zoneIdx = i % 9
+                let zoneCol = zoneIdx % 3
+                let zoneRow = zoneIdx / 3
+                let zoneW   = worldSize / 3
+                let zoneH   = worldSize / 3
+                let pad: CGFloat = 300
+                let zMinX = CGFloat(zoneCol) * zoneW + pad
+                let zMaxX = CGFloat(zoneCol + 1) * zoneW - pad
+                let zMinY = CGFloat(zoneRow) * zoneH + pad
+                let zMaxY = CGFloat(zoneRow + 1) * zoneH - pad
                 position = CGPoint(
-                    x: CGFloat.random(in: 200...(worldSize - 200)),
-                    y: CGFloat.random(in: 200...(worldSize - 200))
+                    x: CGFloat.random(in: zMinX...zMaxX),
+                    y: CGFloat.random(in: zMinY...zMaxY)
                 )
             }
             bots.append(BotState(id: i, position: position, colorIndex: colorIndex, name: name))
@@ -3612,11 +3744,20 @@ class GameScene: SKScene {
                 bots[i].tier = .hard
                 bots[i].personality = .nemesis
             } else {
-                // Assign tier: 0–9 easy, 10–21 medium, 22–29 hard
-                switch min(i, totalBots - 1) {
-                case 0..<10:  bots[i].tier = .easy
-                case 10..<22: bots[i].tier = .medium
-                default:      bots[i].tier = .hard
+                // Casual:  0–14 easy, 15–34 medium, 35–49 hard  (30% hard)
+                // Expert:  0–4  easy,  5–19 medium, 20–49 hard  (60% hard — much tougher)
+                if gameMode == .challenge {
+                    switch min(i, totalBots - 1) {
+                    case 0..<5:  bots[i].tier = .easy
+                    case 5..<20: bots[i].tier = .medium
+                    default:     bots[i].tier = .hard
+                    }
+                } else {
+                    switch min(i, totalBots - 1) {
+                    case 0..<15:  bots[i].tier = .easy
+                    case 15..<35: bots[i].tier = .medium
+                    default:      bots[i].tier = .hard
+                    }
                 }
                 let personalities = botPersonalities(for: bots[i].tier)
                 bots[i].personality = personalities[i % personalities.count]
@@ -3704,7 +3845,8 @@ class GameScene: SKScene {
         bots[index].intent = bots[index].isNemesis ? .hunt : .roam
         bots[index].decisionTimer = 0
         bots[index].boostTimer = 0
-        bots[index].boostCooldown = bots[index].isNemesis ? 0.08 : CGFloat.random(in: 0.15...0.80)
+        let initialCooldownMax: CGFloat = gameMode == .challenge ? 0.50 : 0.80
+        bots[index].boostCooldown = bots[index].isNemesis ? 0.08 : CGFloat.random(in: 0.15...initialCooldownMax)
         bots[index].isBoosting = false
         bots[index].focusPoint = nil
         bots[index].focusTimer = 0
@@ -3713,7 +3855,7 @@ class GameScene: SKScene {
         bots[index].magnetTimeLeft = 0
         bots[index].ghostTimeLeft = 0
         bots[index].patternIndex = botPatternIndex(for: index)
-        bots[index].roamAnchor = randomPositionInArena()
+        bots[index].roamAnchor = randomPositionInZone(for: index)
         bots[index].dirChangeTimer = bots[index].isNemesis ? 1.2 : CGFloat.random(in: 1.8...4.6)
         bots[index].trailFoodTimer = CGFloat.random(in: 0...(botTrailInterval * 0.8))
     }
@@ -3854,10 +3996,8 @@ class GameScene: SKScene {
     private func finishRespawn(_ index: Int) {
         bots[index].isDead = false
         bots[index].respawnTimer = 0
-        bots[index].position = CGPoint(
-            x: CGFloat.random(in: 300...(worldSize - 300)),
-            y: CGFloat.random(in: 300...(worldSize - 300))
-        )
+        // Respawn inside the bot's home zone so coverage stays distributed.
+        bots[index].position = randomPositionInZone(for: index)
         bots[index].angle = CGFloat.random(in: 0...(2 * .pi))
         bots[index].targetAngle = bots[index].angle
         configureBotIdentity(index: index, preservePersonality: true)
@@ -3879,6 +4019,8 @@ class GameScene: SKScene {
         let scoreFraction = CGFloat(min(bots[index].score, botSpeedScoreCap)) / CGFloat(botSpeedScoreCap * 2)
         var speed = base * (1.0 + scoreFraction) * profile.cruiseSpeedMultiplier
         if bots[index].isNemesis { speed *= 1.18 }
+        // Expert mode: all bots are faster, making gameplay harder.
+        if gameMode == .challenge { speed *= expertBotSpeedMultiplier }
         if includeBoost && bots[index].isBoosting {
             speed *= botBoostMultiplier
         }
@@ -4451,7 +4593,7 @@ class GameScene: SKScene {
     private func chooseAmbientDecision(for i: Int) -> BotDecision {
         let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
         if bots[i].dirChangeTimer <= 0 || hypot(bots[i].position.x - bots[i].roamAnchor.x, bots[i].position.y - bots[i].roamAnchor.y) < 130 {
-            bots[i].roamAnchor = randomPositionInArena()
+            bots[i].roamAnchor = randomPositionInZone(for: i)
             bots[i].dirChangeTimer = CGFloat.random(in: 1.8...4.6)
         }
 
@@ -4511,9 +4653,10 @@ class GameScene: SKScene {
             if bots[i].boostTimer <= 0 {
                 bots[i].boostTimer = 0
                 bots[i].isBoosting = false
+                let cooldownRange = gameMode == .challenge ? expertBotBoostCooldownRange : botBoostCooldownRange
                 bots[i].boostCooldown = bots[i].isNemesis
                     ? CGFloat.random(in: 0.40...1.00)
-                    : CGFloat.random(in: botBoostCooldownRange)
+                    : CGFloat.random(in: cooldownRange)
             }
         }
     }
@@ -5333,6 +5476,9 @@ class GameScene: SKScene {
             leaderboardUpdateTimer = 0
             updateMiniLeaderboard()
         }
+
+        // --- Movement Heatmap update ---
+        updateMovementHeatmap(dt: dt)
     }
 }
 
