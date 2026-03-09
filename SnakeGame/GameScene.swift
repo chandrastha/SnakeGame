@@ -26,6 +26,7 @@ struct BotState {
     var score: Int
     var bodyLength: Int
     var colorIndex: Int
+    var patternIndex: Int
     var name: String
     var isActive: Bool        // true = has SpriteKit nodes
 
@@ -69,6 +70,7 @@ struct BotState {
         self.score        = Int.random(in: 0...30)
         self.bodyLength   = 10 + Int.random(in: 0...20)
         self.colorIndex   = colorIndex
+        self.patternIndex = 0
         self.name         = name
         self.isActive     = false
         self.body         = []
@@ -184,9 +186,7 @@ class GameScene: SKScene {
 
     // MARK: - Player Snake
     var snakeHead: SKNode!
-    var bodySegments:    [SKSpriteNode] = []
-    var pooledBodySegments: [SKSpriteNode] = []
-    let maxBodySegmentPoolSize: Int = 1200
+    var bodySegments:    [SKShapeNode] = []
     var playerBodyPathNode = SKShapeNode()
     var positionHistory = PointRingBuffer()
     var bodyPositionCache: [CGPoint] = []
@@ -848,11 +848,11 @@ class GameScene: SKScene {
     }
 
     private func joystickMargins() -> CGPoint {
-        isLandscapeLayout ? CGPoint(x: 74, y: 132) : CGPoint(x: 90, y: 100)
+        isLandscapeLayout ? CGPoint(x: 128, y: 190) : CGPoint(x: 132, y: 176)
     }
 
     private func boostMargins() -> CGPoint {
-        isLandscapeLayout ? CGPoint(x: 94, y: 118) : CGPoint(x: 88, y: 100)
+        isLandscapeLayout ? CGPoint(x: 148, y: 200) : CGPoint(x: 138, y: 176)
     }
 
     private func minimapMargins() -> CGPoint {
@@ -861,6 +861,31 @@ class GameScene: SKScene {
 
     private func leaderArrowMarginTop() -> CGFloat {
         isLandscapeLayout ? 68 : 74
+    }
+
+    private var selectedSnakePattern: SnakePattern {
+        SnakePattern(rawValue: selectedSnakePatternIndex) ?? .solid
+    }
+
+    private func playerDisplayName() -> String {
+        playerName.isEmpty ? "You" : playerName
+    }
+
+    private func fastestBoostingBotSpeed() -> CGFloat? {
+        bots.indices.compactMap { index in
+            guard bots[index].isActive, !bots[index].isDead, bots[index].isBoosting else { return nil }
+            return botSpeed(for: index)
+        }
+        .max()
+    }
+
+    private func currentPlayerForwardSpeed() -> CGFloat {
+        guard isBoostHeld else { return currentMoveSpeed }
+        return GameLogic.boostedPlayerSpeed(
+            baseSpeed: currentMoveSpeed,
+            fastestBoostingBotSpeed: fastestBoostingBotSpeed(),
+            minimumBoostMultiplier: boostMultiplier
+        )
     }
 
     private func desiredCameraScale() -> CGFloat {
@@ -998,6 +1023,8 @@ class GameScene: SKScene {
         createArenaBorder()
         createSnakeHead()
         createInitialBody()
+        createScorePanel()
+        createMiniLeaderboard()
         createMinimap()
         createLeaderArrow()
         if isMazeHuntMode {
@@ -1005,7 +1032,6 @@ class GameScene: SKScene {
         } else if isSnakeRaceMode {
             createSnakeRaceModeContent()
         }
-        createPauseButton()
         createJoystick()
         createBoostButton()
         if !isSpecialOfflineMode {
@@ -1018,12 +1044,13 @@ class GameScene: SKScene {
         if !isSpecialOfflineMode {
             spawnBots()
         }
+        updateMiniLeaderboard()
 
         gameSetupComplete = true
         startGameImmediately()
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
-        animateSnakeEntrance(head: snakeHead, body: [], angle: currentAngle, accent: playerTheme.bodySKColor)
+        animateSnakeEntrance(head: snakeHead, body: bodySegments, angle: currentAngle, accent: playerTheme.bodySKColor)
     }
 
     // MARK: - Arena Border
@@ -1363,10 +1390,9 @@ class GameScene: SKScene {
 
         let panelH = scorePanelHeight
         scorePanel?.position  = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
-        pauseButton?.position = CGPoint(x: cx + extents.halfW - 42, y: cy + extents.halfH - 42)
         powerUpPanel?.position = CGPoint(x: cx, y: cy - extents.halfH + 170)
         minimapNode?.position = CGPoint(x: cx + extents.halfW - minimapInset.x, y: cy + extents.halfH - minimapInset.y)
-        miniLeaderboard?.position = CGPoint(x: cx + extents.halfW - minimapInset.x + 56, y: cy + extents.halfH - minimapInset.y - 140)
+        miniLeaderboard?.position = CGPoint(x: cx + extents.halfW - minimapInset.x + 40, y: cy + extents.halfH - minimapInset.y - 132)
         leaderArrowNode?.position = CGPoint(x: cx, y: cy + extents.halfH - leaderArrowMarginTop())
     }
 
@@ -2140,8 +2166,11 @@ class GameScene: SKScene {
         for k in 0..<historyNeeded {
             positionHistory.append(CGPoint(x: spawnPos.x - CGFloat(k) * 0.5, y: spawnPos.y))
         }
-        for _ in 0..<reviveBodyCount {
-            bodySegments.append(acquireBodySegmentNode())
+        for index in 0..<reviveBodyCount {
+            let segment = acquireBodySegmentNode(segIndex: index)
+            segment.position = CGPoint(x: spawnPos.x - CGFloat(index + 1) * segmentPixelSpacing, y: spawnPos.y)
+            addChild(segment)
+            bodySegments.append(segment)
         }
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
         for i in 0..<bodySegments.count {
@@ -2185,14 +2214,14 @@ class GameScene: SKScene {
     // MARK: - Score Panel
     func createScorePanel() {
         scoreLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        scoreLabel.text                    = "0"
-        scoreLabel.fontSize                = 20
+        scoreLabel.text                    = "SCORE 0"
+        scoreLabel.fontSize                = 18
         scoreLabel.fontColor               = .white
-        scoreLabel.horizontalAlignmentMode = .center
+        scoreLabel.horizontalAlignmentMode = .left
         scoreLabel.verticalAlignmentMode   = .center
 
         let hPad: CGFloat = 16, vPad: CGFloat = 10
-        let panelW = max(scoreLabel.frame.width + hPad * 2, 72)
+        let panelW = max(scoreLabel.frame.width + hPad * 2, 118)
         let panelH = scoreLabel.frame.height + vPad * 2
         scorePanelHeight = panelH
 
@@ -2205,7 +2234,7 @@ class GameScene: SKScene {
         let cx = worldSize / 2, cy = worldSize / 2
         scorePanel.position = CGPoint(x: cx - size.width/2 + 20, y: cy + size.height/2 - 60 - panelH)
 
-        scoreLabel.position = CGPoint(x: panelW / 2, y: panelH / 2)
+        scoreLabel.position = CGPoint(x: hPad, y: panelH / 2)
         scorePanel.addChild(scoreLabel)
         addChild(scorePanel)
     }
@@ -2213,16 +2242,16 @@ class GameScene: SKScene {
 
     func updateScoreDisplay() {
         guard scoreLabel != nil, scorePanel != nil else { return }
-        scoreLabel.text = "\(score)"
+        scoreLabel.text = "SCORE \(score)"
         let hPad: CGFloat = 16, vPad: CGFloat = 10
-        let panelW = max(scoreLabel.frame.width + hPad * 2, 72)
+        let panelW = max(scoreLabel.frame.width + hPad * 2, 118)
         let panelH = scoreLabel.frame.height + vPad * 2
         scorePanelHeight = panelH
         scorePanel.path = CGPath(
             roundedRect: CGRect(x: 0, y: 0, width: panelW, height: panelH),
             cornerWidth: 12, cornerHeight: 12, transform: nil
         )
-        scoreLabel.position = CGPoint(x: panelW / 2, y: panelH / 2)
+        scoreLabel.position = CGPoint(x: hPad, y: panelH / 2)
         miniLeaderboardNeedsRefresh = true
     }
 
@@ -2303,7 +2332,7 @@ class GameScene: SKScene {
         let node = SKNode()
         node.zPosition = 500
         let cx = worldSize / 2, cy = worldSize / 2
-        node.position = CGPoint(x: cx + size.width/2 - 10, y: cy + size.height/2 - 90)
+        node.position = CGPoint(x: cx + size.width/2 - 24, y: cy + size.height/2 - 150)
         addChild(node)
         miniLeaderboard = node
     }
@@ -2313,25 +2342,42 @@ class GameScene: SKScene {
         lb.removeAllChildren()
         miniLeaderboardNeedsRefresh = false
 
-        let myName = playerName.isEmpty ? "You" : playerName
-        // isMe flag prevents incorrect highlight when player sets a custom name
-        var entries: [(name: String, score: Int, isMe: Bool)] = [(myName, score, true)]
+        var entries: [LeaderboardScoreEntry] = [LeaderboardScoreEntry(
+            name: playerDisplayName(),
+            score: score,
+            isCurrentPlayer: true
+        )]
         for i in 0..<bots.count where bots[i].isActive && !bots[i].isDead {
-            entries.append((bots[i].name, bots[i].score, false))
+            entries.append(LeaderboardScoreEntry(name: bots[i].name, score: bots[i].score, isCurrentPlayer: false))
         }
-        entries.sort { $0.score > $1.score }
-        let top5 = Array(entries.prefix(5))          // hard cap at 5
+        let visibleEntries = GameLogic.leaderboardDisplayEntries(from: entries)
+        let panelHeight = CGFloat(max(visibleEntries.count, 1)) * 20 + 34
 
-        for (i, entry) in top5.enumerated() {
+        let bg = SKShapeNode(rectOf: CGSize(width: 168, height: panelHeight), cornerRadius: 14)
+        bg.fillColor = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.72)
+        bg.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.18)
+        bg.lineWidth = 1
+        lb.addChild(bg)
+
+        let title = SKLabelNode(fontNamed: "Arial-BoldMT")
+        title.text = "LEADERS"
+        title.fontSize = 11
+        title.fontColor = SKColor(white: 1.0, alpha: 0.52)
+        title.horizontalAlignmentMode = .center
+        title.verticalAlignmentMode = .center
+        title.position = CGPoint(x: 0, y: panelHeight / 2 - 16)
+        lb.addChild(title)
+
+        for (i, entry) in visibleEntries.enumerated() {
             let label = SKLabelNode(fontNamed: "Arial-BoldMT")
-            label.text      = "\(i+1). \(entry.name)  \(entry.score)"
+            label.text      = "\(entry.rank). \(entry.name)  \(entry.score)"
             label.fontSize  = 13
-            label.fontColor = entry.isMe
+            label.fontColor = entry.isCurrentPlayer
                 ? SKColor(red: 1, green: 0.85, blue: 0, alpha: 1)   // gold for player
                 : SKColor(white: 1, alpha: 0.70)
             label.horizontalAlignmentMode = .right
             label.verticalAlignmentMode   = .center
-            label.position = CGPoint(x: 0, y: -CGFloat(i) * 20)
+            label.position = CGPoint(x: 72, y: panelHeight / 2 - 36 - CGFloat(i) * 20)
             lb.addChild(label)
         }
     }
@@ -2457,9 +2503,8 @@ class GameScene: SKScene {
     private func highestScoringSnakeTarget() -> (name: String, score: Int, position: CGPoint, isPlayer: Bool)? {
         guard snakeHead != nil else { return nil }
 
-        let myName = playerName.isEmpty ? "You" : playerName
         var best: (name: String, score: Int, position: CGPoint, isPlayer: Bool) = (
-            name: myName,
+            name: playerDisplayName(),
             score: score,
             position: snakeHead.position,
             isPlayer: true
@@ -2838,12 +2883,24 @@ class GameScene: SKScene {
         let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
 
         if let image = playerHeadImage {
+            let container = SKNode()
+            container.position = spawnPos
+
+            let ring = SKShapeNode(circleOfRadius: headRadius + 2)
+            ring.fillColor = theme.headSKColor
+            ring.strokeColor = theme.headStrokeSKColor
+            ring.lineWidth = 2
+            ring.glowWidth = 6
+            container.addChild(ring)
+
             let texture = SKTexture(image: cropToCircle(image: image, size: CGSize(width: 40, height: 40)))
             let sprite  = SKSpriteNode(texture: texture)
-            sprite.size     = CGSize(width: headRadius * 2, height: headRadius * 2)
-            sprite.position = spawnPos
-            addChild(sprite)
-            snakeHead = sprite
+            sprite.size = CGSize(width: headRadius * 2, height: headRadius * 2)
+            sprite.zPosition = 1
+            container.addChild(sprite)
+
+            addChild(container)
+            snakeHead = container
         } else {
             let shape = SKShapeNode(circleOfRadius: headRadius)
             shape.fillColor   = theme.headSKColor
@@ -2912,8 +2969,11 @@ class GameScene: SKScene {
         }
 
         bodySegments.removeAll(keepingCapacity: true)
-        for _ in 0..<initialBodyCount {
-            bodySegments.append(acquireBodySegmentNode())
+        for index in 0..<initialBodyCount {
+            let segment = acquireBodySegmentNode(segIndex: index)
+            segment.position = CGPoint(x: spawnPos.x - CGFloat(index + 1) * segmentPixelSpacing, y: spawnPos.y)
+            addChild(segment)
+            bodySegments.append(segment)
         }
 
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
@@ -2926,11 +2986,15 @@ class GameScene: SKScene {
     }
 
     func addBodySegment() {
-        bodySegments.append(acquireBodySegmentNode())
+        let segment = acquireBodySegmentNode(segIndex: bodySegments.count)
+        segment.position = bodySegments.last?.position ?? snakeHead.position
+        addChild(segment)
+        bodySegments.append(segment)
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
         let fallback = bodyPositionCache.dropLast().last ?? snakeHead.position
         bodyPositionCache[bodySegments.count - 1] = fallback
         positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
+        updatePlayerBodyVisuals()
     }
 
     /// Grow or shrink the player body to match targetBodyCount.
@@ -2938,25 +3002,29 @@ class GameScene: SKScene {
     func syncSnakeLength() {
         let target = targetBodyCount
         while bodySegments.count < target {
-            bodySegments.append(acquireBodySegmentNode())
+            let segment = acquireBodySegmentNode(segIndex: bodySegments.count)
+            segment.position = bodySegments.last?.position ?? snakeHead.position
+            addChild(segment)
+            bodySegments.append(segment)
         }
         while bodySegments.count > target && bodySegments.count > 1 {
             releaseBodySegmentNode(bodySegments.removeLast())
         }
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
         positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
+        updatePlayerBodyVisuals()
     }
 
     private func configurePlayerBodyPathNodeIfNeeded() {
         if playerBodyPathNode.parent == nil {
             let theme = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
-            playerBodyPathNode.strokeColor = theme.bodySKColor
+            playerBodyPathNode.strokeColor = theme.bodySKColor.withAlphaComponent(0.26)
             playerBodyPathNode.lineWidth = bodySegmentRadius * 2
             playerBodyPathNode.lineCap = .round
             playerBodyPathNode.lineJoin = .round
             playerBodyPathNode.fillColor = .clear
-            playerBodyPathNode.glowWidth = 1.5
-            playerBodyPathNode.zPosition = snakeHead.zPosition - 0.1
+            playerBodyPathNode.glowWidth = selectedSnakePattern == .neon ? 10 : 2
+            playerBodyPathNode.zPosition = snakeHead.zPosition - 0.2
             addChild(playerBodyPathNode)
         }
     }
@@ -2981,6 +3049,7 @@ class GameScene: SKScene {
             }
         }
         playerBodyPathNode.path = path
+        updatePlayerBodyVisuals()
 
         playerBodyOccupancy.removeAll(keepingCapacity: true)
         for point in bodyPositionCache {
@@ -3005,23 +3074,49 @@ class GameScene: SKScene {
         return false
     }
 
-    private func acquireBodySegmentNode() -> SKSpriteNode {
-        if let node = pooledBodySegments.popLast() { return node }
-        return SKSpriteNode(texture: nil, color: .clear, size: CGSize(width: bodySegmentRadius * 2, height: bodySegmentRadius * 2))
+    private func updatePlayerBodyVisuals() {
+        let count = bodySegments.count
+        guard count > 0 else {
+            playerBodyPathNode.alpha = ghostActive ? 0.18 : 0.30
+            return
+        }
+
+        for (index, segment) in bodySegments.enumerated() {
+            if index < bodyPositionCache.count {
+                segment.position = bodyPositionCache[index]
+            }
+            let progress = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
+            let scale = 1.0 - progress * 0.22
+            segment.setScale(scale)
+            segment.alpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
+            let baseGlow: CGFloat = selectedSnakePattern == .neon ? 10 : (index < max(1, count / 4) ? 3 : 0)
+            segment.glowWidth = ghostActive ? baseGlow * 0.4 : baseGlow
+            segment.zPosition = snakeHead.zPosition - 0.04 - CGFloat(index) * 0.0005
+        }
+
+        playerBodyPathNode.alpha = ghostActive ? 0.18 : 0.30
     }
 
-    private func releaseBodySegmentNode(_ node: SKSpriteNode) {
+    private func acquireBodySegmentNode(segIndex: Int) -> SKShapeNode {
+        makePlayerBodySegment(segIndex: segIndex)
+    }
+
+    private func releaseBodySegmentNode(_ node: SKShapeNode) {
         node.removeFromParent()
-        guard pooledBodySegments.count < maxBodySegmentPoolSize else { return }
-        pooledBodySegments.append(node)
     }
 
     func updateSegmentScales() {
-        playerBodyPathNode.alpha = ghostActive ? 0.35 : 1.0
+        updatePlayerBodyVisuals()
     }
 
-    func makePlayerBodySegment(segIndex: Int = 0) -> SKSpriteNode {
-        acquireBodySegmentNode()
+    func makePlayerBodySegment(segIndex: Int = 0) -> SKShapeNode {
+        let theme = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
+        return makeBodySegment(
+            color: theme.bodySKColor,
+            stroke: theme.bodyStrokeSKColor,
+            pattern: selectedSnakePattern,
+            segIndex: segIndex
+        )
     }
 
 
@@ -3110,6 +3205,18 @@ class GameScene: SKScene {
         return p
     }
 
+    func makeRoundedRectPath(size: CGSize, cornerRadius: CGFloat) -> CGPath {
+        UIBezierPath(
+            roundedRect: CGRect(
+                x: -size.width / 2,
+                y: -size.height / 2,
+                width: size.width,
+                height: size.height
+            ),
+            cornerRadius: cornerRadius
+        ).cgPath
+    }
+
     func makeBodySegment(color: SKColor, stroke: SKColor,
                          pattern: SnakePattern = .solid,
                          segIndex: Int = 0) -> SKShapeNode {
@@ -3135,13 +3242,22 @@ class GameScene: SKScene {
         case .galaxy:
             seg.fillColor   = color.darkened(by: 0.55)
             seg.strokeColor = stroke.darkened(by: 0.30)
+        case .split:
+            seg.fillColor   = color.darkened(by: 0.12)
+            seg.strokeColor = stroke
+        case .ember:
+            seg.fillColor   = color.darkened(by: 0.10)
+            seg.strokeColor = stroke.withAlphaComponent(0.92)
+        case .toxic:
+            seg.fillColor   = color.darkened(by: 0.08)
+            seg.strokeColor = stroke
         default:
             seg.fillColor   = color
             seg.strokeColor = stroke
         }
 
         seg.lineWidth = 2
-        seg.glowWidth = pattern == .neon ? 14 : 3
+        seg.glowWidth = pattern == .neon ? 14 : (pattern == .ember ? 8 : 3)
 
         if pattern == .neon {
             seg.strokeColor = SKColor(white: 1.0, alpha: 0.80)
@@ -3219,6 +3335,140 @@ class GameScene: SKScene {
             nebula.lineWidth   = 1.5
             nebula.zPosition   = 1
             seg.addChild(nebula)
+
+        case .zigzag:
+            let slash1 = SKShapeNode(path: makeRoundedRectPath(
+                size: CGSize(width: bodySegmentRadius * 0.52, height: bodySegmentRadius * 2.05),
+                cornerRadius: bodySegmentRadius * 0.22
+            ))
+            slash1.fillColor = SKColor(white: 1.0, alpha: 0.58)
+            slash1.strokeColor = .clear
+            slash1.zRotation = .pi / 5
+            slash1.position = CGPoint(x: -bodySegmentRadius * 0.24, y: 0)
+            slash1.zPosition = 1
+            seg.addChild(slash1)
+
+            let slash2 = SKShapeNode(path: makeRoundedRectPath(
+                size: CGSize(width: bodySegmentRadius * 0.46, height: bodySegmentRadius * 1.85),
+                cornerRadius: bodySegmentRadius * 0.20
+            ))
+            slash2.fillColor = stroke.withAlphaComponent(0.36)
+            slash2.strokeColor = .clear
+            slash2.zRotation = -.pi / 6
+            slash2.position = CGPoint(x: bodySegmentRadius * 0.22, y: 0)
+            slash2.zPosition = 1
+            seg.addChild(slash2)
+
+        case .ripple:
+            let outerRing = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.70)
+            outerRing.fillColor = .clear
+            outerRing.strokeColor = SKColor(white: 1.0, alpha: 0.72)
+            outerRing.lineWidth = 1.6
+            outerRing.zPosition = 1
+            seg.addChild(outerRing)
+
+            let innerRing = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.36)
+            innerRing.fillColor = .clear
+            innerRing.strokeColor = color.withAlphaComponent(0.55)
+            innerRing.lineWidth = 1.1
+            innerRing.zPosition = 1
+            seg.addChild(innerRing)
+
+        case .split:
+            let slice = SKShapeNode(path: makeRoundedRectPath(
+                size: CGSize(width: bodySegmentRadius * 1.25, height: bodySegmentRadius * 2.30),
+                cornerRadius: bodySegmentRadius * 0.24
+            ))
+            slice.fillColor = SKColor(white: 1.0, alpha: 0.28)
+            slice.strokeColor = .clear
+            slice.zRotation = .pi / 5
+            slice.position = CGPoint(x: bodySegmentRadius * 0.24, y: 0)
+            slice.zPosition = 1
+            seg.addChild(slice)
+
+        case .ember:
+            let ember1 = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.22)
+            ember1.fillColor = SKColor(red: 1.0, green: 0.76, blue: 0.20, alpha: 0.86)
+            ember1.strokeColor = .clear
+            ember1.position = CGPoint(x: -bodySegmentRadius * 0.20, y: -bodySegmentRadius * 0.12)
+            ember1.zPosition = 1
+            seg.addChild(ember1)
+
+            let ember2 = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.14)
+            ember2.fillColor = SKColor(red: 1.0, green: 0.44, blue: 0.14, alpha: 0.82)
+            ember2.strokeColor = .clear
+            ember2.position = CGPoint(x: bodySegmentRadius * 0.22, y: bodySegmentRadius * 0.20)
+            ember2.zPosition = 1
+            seg.addChild(ember2)
+
+        case .frost:
+            let vertical = SKShapeNode(path: makeRoundedRectPath(
+                size: CGSize(width: bodySegmentRadius * 0.24, height: bodySegmentRadius * 1.40),
+                cornerRadius: bodySegmentRadius * 0.12
+            ))
+            vertical.fillColor = SKColor(white: 1.0, alpha: 0.70)
+            vertical.strokeColor = .clear
+            vertical.zPosition = 1
+            seg.addChild(vertical)
+
+            let horizontal = SKShapeNode(path: makeRoundedRectPath(
+                size: CGSize(width: bodySegmentRadius * 1.38, height: bodySegmentRadius * 0.24),
+                cornerRadius: bodySegmentRadius * 0.12
+            ))
+            horizontal.fillColor = SKColor(red: 0.72, green: 0.92, blue: 1.0, alpha: 0.48)
+            horizontal.strokeColor = .clear
+            horizontal.zRotation = .pi / 4
+            horizontal.zPosition = 1
+            seg.addChild(horizontal)
+
+        case .ringed:
+            let ring = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.58)
+            ring.fillColor = .clear
+            ring.strokeColor = SKColor(white: 1.0, alpha: 0.76)
+            ring.lineWidth = 1.8
+            ring.zPosition = 1
+            seg.addChild(ring)
+
+            let center = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.18)
+            center.fillColor = SKColor(white: 1.0, alpha: 0.24)
+            center.strokeColor = .clear
+            center.zPosition = 1
+            seg.addChild(center)
+
+        case .toxic:
+            let acidBlob = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.34)
+            acidBlob.fillColor = SKColor(red: 0.86, green: 1.0, blue: 0.22, alpha: 0.80)
+            acidBlob.strokeColor = .clear
+            acidBlob.position = CGPoint(x: -bodySegmentRadius * 0.18, y: bodySegmentRadius * 0.16)
+            acidBlob.zPosition = 1
+            seg.addChild(acidBlob)
+
+            let darkSpot = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.16)
+            darkSpot.fillColor = SKColor(white: 0.08, alpha: 0.22)
+            darkSpot.strokeColor = .clear
+            darkSpot.position = CGPoint(x: bodySegmentRadius * 0.20, y: -bodySegmentRadius * 0.22)
+            darkSpot.zPosition = 1
+            seg.addChild(darkSpot)
+
+        case .checker:
+            let tileSize = bodySegmentRadius * 0.54
+            let offsets: [(CGFloat, CGFloat, Bool)] = [
+                (-tileSize * 0.5, -tileSize * 0.5, true),
+                ( tileSize * 0.5, -tileSize * 0.5, false),
+                (-tileSize * 0.5,  tileSize * 0.5, false),
+                ( tileSize * 0.5,  tileSize * 0.5, true)
+            ]
+            for (x, y, isFilled) in offsets {
+                let tile = SKShapeNode(path: makeRoundedRectPath(
+                    size: CGSize(width: tileSize, height: tileSize),
+                    cornerRadius: bodySegmentRadius * 0.08
+                ))
+                tile.fillColor = isFilled ? SKColor(white: 1.0, alpha: 0.45) : .clear
+                tile.strokeColor = .clear
+                tile.position = CGPoint(x: x, y: y)
+                tile.zPosition = 1
+                seg.addChild(tile)
+            }
 
         default: break
         }
@@ -3331,6 +3581,15 @@ class GameScene: SKScene {
         return max(8, length)
     }
 
+    private func botPatternIndex(for index: Int) -> Int {
+        let patterns = SnakePattern.allCases.filter { $0 != .solid }
+        guard !patterns.isEmpty else { return SnakePattern.solid.rawValue }
+        if bots[index].isNemesis {
+            return SnakePattern.ember.rawValue
+        }
+        return patterns[index % patterns.count].rawValue
+    }
+
     private func configureBotIdentity(index: Int, preservePersonality: Bool) {
         if !preservePersonality && !bots[index].isNemesis {
             let personalities = botPersonalities(for: bots[index].tier)
@@ -3354,6 +3613,7 @@ class GameScene: SKScene {
         bots[index].multiplierTimeLeft = 0
         bots[index].magnetTimeLeft = 0
         bots[index].ghostTimeLeft = 0
+        bots[index].patternIndex = botPatternIndex(for: index)
         bots[index].roamAnchor = randomPositionInArena()
         bots[index].dirChangeTimer = bots[index].isNemesis ? 1.2 : CGFloat.random(in: 1.8...4.6)
         bots[index].trailFoodTimer = CGFloat.random(in: 0...(botTrailInterval * 0.8))
@@ -3397,7 +3657,12 @@ class GameScene: SKScene {
             ))
         }
         for i in 1...segCount {
-            let seg = makeBodySegment(color: theme.bodySKColor, stroke: theme.bodyStrokeSKColor)
+            let seg = makeBodySegment(
+                color: theme.bodySKColor,
+                stroke: theme.bodyStrokeSKColor,
+                pattern: SnakePattern(rawValue: bot.patternIndex) ?? .solid,
+                segIndex: i - 1
+            )
             seg.position = CGPoint(
                 x: bot.position.x - cos(bot.angle) * CGFloat(i) * segmentPixelSpacing,
                 y: bot.position.y - sin(bot.angle) * CGFloat(i) * segmentPixelSpacing
@@ -3428,11 +3693,13 @@ class GameScene: SKScene {
     func updateBotBodyScales(_ index: Int) {
         let count = bots[index].body.count
         guard count > 0 else { return }
+        let pattern = SnakePattern(rawValue: bots[index].patternIndex) ?? .solid
         for (i, seg) in bots[index].body.enumerated() {
             let t = count > 1 ? CGFloat(i) / CGFloat(count - 1) : 0
             seg.setScale(1.0 - t * 0.22)
             seg.alpha     = 1.0 - t * 0.10
-            seg.glowWidth = i < count / 2 ? 3 : 0
+            let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
+            seg.glowWidth = i < count / 2 ? leadingGlow : 0
         }
     }
 
@@ -3441,7 +3708,12 @@ class GameScene: SKScene {
             bots[index].bodyLength += 1; return
         }
         let theme = snakeColorThemes[bots[index].colorIndex % snakeColorThemes.count]
-        let seg   = makeBodySegment(color: theme.bodySKColor, stroke: theme.bodyStrokeSKColor)
+        let seg   = makeBodySegment(
+            color: theme.bodySKColor,
+            stroke: theme.bodyStrokeSKColor,
+            pattern: SnakePattern(rawValue: bots[index].patternIndex) ?? .solid,
+            segIndex: bots[index].body.count
+        )
         seg.position = bots[index].body.last?.position ?? head.position
         addChild(seg)
         bots[index].body.append(seg)
@@ -3457,7 +3729,7 @@ class GameScene: SKScene {
         if bots[index].isActive {
             spawnDeathFood(at: bots[index].bodyPositionCache,
                            colorIndex: bots[index].colorIndex,
-                           patternIndex: 0)  // body becomes death food; bots use solid pattern
+                           patternIndex: bots[index].patternIndex)
             deactivateBot(index)
         }
         // Mark dead with a tier-based respawn delay
@@ -3570,7 +3842,7 @@ class GameScene: SKScene {
                 id: -1,
                 position: snakeHead.position,
                 angle: currentAngle,
-                speed: currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0),
+                speed: currentPlayerForwardSpeed(),
                 length: bodySegments.count,
                 isPlayer: true
             ))
@@ -4155,11 +4427,13 @@ class GameScene: SKScene {
             spacing: segmentPixelSpacing,
             into: &bots[index].bodyPositionCache
         )
+        let pattern = SnakePattern(rawValue: bots[index].patternIndex) ?? .solid
         for (segmentIndex, segment) in bots[index].body.enumerated() {
             segment.position = bots[index].bodyPositionCache[segmentIndex]
-            let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? CGFloat(3) : 0
+            let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
+            let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? leadingGlow : 0
             segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
-                ? 6
+                ? max(baseGlow, 6)
                 : baseGlow
         }
     }
@@ -4214,13 +4488,15 @@ class GameScene: SKScene {
                 updateBotVisuals(i)
 
                 bots[i].trailFoodTimer += dt
-                let trailInterval = bots[i].isBoosting ? botTrailInterval * 0.65 : botTrailInterval
-                if bots[i].trailFoodTimer >= trailInterval {
+                let trailInterval = botTrailInterval * 0.65
+                if bots[i].isBoosting, bots[i].trailFoodTimer >= trailInterval {
                     if let tailSeg = bots[i].body.last {
                         spawnTrailFood(at: tailSeg.position,
                                        colorIndex: bots[i].colorIndex,
-                                       patternIndex: 0)
+                                       patternIndex: bots[i].patternIndex)
                     }
+                    bots[i].trailFoodTimer = 0
+                } else if !bots[i].isBoosting {
                     bots[i].trailFoodTimer = 0
                 }
             }
@@ -4323,7 +4599,8 @@ class GameScene: SKScene {
             if headCollidesWithPoints(
                 snakeHead.position,
                 points: bot.bodyPositionCache,
-                combinedRadius: collisionRadius + bodySegmentRadius
+                combinedRadius: collisionRadius + bodySegmentRadius,
+                skip: 1
             ) { return true }
         }
         return false
@@ -4363,7 +4640,8 @@ class GameScene: SKScene {
             if bodyOccupancyContains(botHead.position) && headCollidesWithPoints(
                 botHead.position,
                 points: bodyPositionCache,
-                combinedRadius: collisionRadius + bodySegmentRadius
+                combinedRadius: collisionRadius + bodySegmentRadius,
+                skip: 1
             ) {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
@@ -4406,7 +4684,7 @@ class GameScene: SKScene {
     /// 👻 Ghost — make the snake semi-transparent; body collision is skipped while active.
     func showGhostEffect() {
         snakeHead.alpha = 0.45
-        playerBodyPathNode.alpha = 0.35
+        updateSegmentScales()
         spawnFloatingText("👻 Ghost!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 60))
     }
 
@@ -4502,45 +4780,56 @@ class GameScene: SKScene {
 
         for i in 0..<(bots.count - 1) {
             guard bots[i].isActive, !bots[i].isDead, let headI = bots[i].head else { continue }
+            var botIRespawned = false
 
             for j in (i + 1)..<bots.count {
                 guard bots[j].isActive, !bots[j].isDead, let headJ = bots[j].head else { continue }
                 guard botPairWithinBroadPhase(bots[i], bots[j]) else { continue }
-
-                // Head-to-body collisions (both directions)
-                if bots[i].ghostTimeLeft <= 0 {
-                    if !bots[j].bodyPositionCache.isEmpty,
-                       headCollidesWithPoints(
-                        headI.position,
-                        points: bots[j].bodyPositionCache,
-                        combinedRadius: collisionRadius + bodySegmentRadius
-                       ) {
-                        if !consumeBotShieldIfAvailable(i) { respawnBot(i) }
-                        continue
-                    }
-                }
-
-                if bots[j].ghostTimeLeft <= 0 {
-                    if !bots[i].bodyPositionCache.isEmpty,
-                       headCollidesWithPoints(
-                        headJ.position,
-                        points: bots[i].bodyPositionCache,
-                        combinedRadius: collisionRadius + bodySegmentRadius
-                       ) {
-                        if !consumeBotShieldIfAvailable(j) { respawnBot(j) }
-                        continue
-                    }
-                }
 
                 // Head-to-head collision (evaluated once per pair)
                 if bots[i].ghostTimeLeft <= 0, bots[j].ghostTimeLeft <= 0 {
                     let d = hypot(headI.position.x - headJ.position.x,
                                   headI.position.y - headJ.position.y)
                     if d < (headRadius + headRadius) {
-                        if !consumeBotShieldIfAvailable(i) { respawnBot(i) }
+                        if !consumeBotShieldIfAvailable(i) {
+                            respawnBot(i)
+                            botIRespawned = true
+                        }
                         if !consumeBotShieldIfAvailable(j) { respawnBot(j) }
+                        break
                     }
                 }
+
+                // Head-to-body collisions (both directions)
+                if bots[i].ghostTimeLeft <= 0,
+                   !bots[j].bodyPositionCache.isEmpty,
+                   headCollidesWithPoints(
+                    headI.position,
+                    points: bots[j].bodyPositionCache,
+                    combinedRadius: collisionRadius + bodySegmentRadius,
+                    skip: 1
+                   ) {
+                    if !consumeBotShieldIfAvailable(i) {
+                        respawnBot(i)
+                        botIRespawned = true
+                    }
+                    break
+                }
+
+                if bots[j].ghostTimeLeft <= 0,
+                   !bots[i].bodyPositionCache.isEmpty,
+                   headCollidesWithPoints(
+                    headJ.position,
+                    points: bots[i].bodyPositionCache,
+                    combinedRadius: collisionRadius + bodySegmentRadius,
+                    skip: 1
+                   ) {
+                    if !consumeBotShieldIfAvailable(j) { respawnBot(j) }
+                }
+            }
+
+            if botIRespawned {
+                continue
             }
         }
     }
@@ -4573,10 +4862,6 @@ class GameScene: SKScene {
                     onGameOver?(score)
                 }
                 continue
-            }
-
-            if gameStarted && nodes(at: loc).contains(where: { $0.name == "pauseButton" }) {
-                togglePause(); continue
             }
 
             guard gameStarted, !isPausedGame else { continue }
@@ -4722,7 +5007,7 @@ class GameScene: SKScene {
         }
 
         // --- Player Movement ---
-        let baseDist = currentMoveSpeed * (isBoostHeld ? boostMultiplier : 1.0) * dt
+        let baseDist = currentPlayerForwardSpeed() * dt
         let raceControlSpeedFactor: CGFloat = isSnakeRaceMode ? (0.72 + joystickEngagement * 0.72) : 1.0
         let playerDist = baseDist * raceControlSpeedFactor
 
@@ -4791,8 +5076,8 @@ class GameScene: SKScene {
         if checkWallCollision() { playerGameOver(); return }
         // Self-collision intentionally disabled: snake passes through its own body
 
-        if !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
         if !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { playerGameOver(); return }
+        if !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
         
 
         if !isSpecialOfflineMode { checkFoodCollisions() }
@@ -4800,10 +5085,12 @@ class GameScene: SKScene {
         // --- Trail food spawning (player) ---
         if !isSpecialOfflineMode, gameStarted, let tailPos = bodyPositionCache.last {
             trailFoodTimer += dt
-            if trailFoodTimer >= playerTrailInterval {
+            if isBoostHeld, trailFoodTimer >= playerTrailInterval {
                 spawnTrailFood(at: tailPos,
                                colorIndex: selectedSnakeColorIndex,
                                patternIndex: selectedSnakePatternIndex)
+                trailFoodTimer = 0
+            } else if !isBoostHeld {
                 trailFoodTimer = 0
             }
         }

@@ -67,6 +67,38 @@ let snakeColorThemes: [SnakeColorTheme] = [
     SnakeColorTheme(id: 7, name: "Shadow",  emoji: "🖤",
                     headR: 0.42, headG: 0.42, headB: 0.50,
                     bodyR: 0.30, bodyG: 0.30, bodyB: 0.38),
+
+    SnakeColorTheme(id: 8, name: "Sunset",  emoji: "🌇",
+                    headR: 0.98, headG: 0.56, headB: 0.28,
+                    bodyR: 0.89, bodyG: 0.36, bodyB: 0.22),
+
+    SnakeColorTheme(id: 9, name: "Mint",    emoji: "🍃",
+                    headR: 0.48, headG: 0.96, headB: 0.78,
+                    bodyR: 0.30, bodyG: 0.82, bodyB: 0.64),
+
+    SnakeColorTheme(id: 10, name: "Crimson", emoji: "🩸",
+                    headR: 0.88, headG: 0.18, headB: 0.24,
+                    bodyR: 0.70, bodyG: 0.10, bodyB: 0.16),
+
+    SnakeColorTheme(id: 11, name: "Copper",  emoji: "🪙",
+                    headR: 0.80, headG: 0.48, headB: 0.22,
+                    bodyR: 0.63, bodyG: 0.34, bodyB: 0.14),
+
+    SnakeColorTheme(id: 12, name: "Storm",   emoji: "⛈",
+                    headR: 0.54, headG: 0.66, headB: 0.84,
+                    bodyR: 0.37, bodyG: 0.49, bodyB: 0.69),
+
+    SnakeColorTheme(id: 13, name: "Orchid",  emoji: "🌸",
+                    headR: 0.90, headG: 0.44, headB: 0.86,
+                    bodyR: 0.73, bodyG: 0.30, bodyB: 0.70),
+
+    SnakeColorTheme(id: 14, name: "Toxic",   emoji: "☣️",
+                    headR: 0.72, headG: 0.92, headB: 0.12,
+                    bodyR: 0.48, bodyG: 0.74, bodyB: 0.06),
+
+    SnakeColorTheme(id: 15, name: "Pearl",   emoji: "🫧",
+                    headR: 0.94, headG: 0.96, headB: 1.00,
+                    bodyR: 0.76, bodyG: 0.82, bodyB: 0.92),
 ]
 
 func normalizedSnakeColorIndex(_ index: Int) -> Int {
@@ -84,6 +116,14 @@ enum SnakePattern: Int, CaseIterable {
     case neon    = 5   // Extra bright glow ring
     case camo    = 6   // Dark blotch overlay
     case galaxy  = 7   // Dark base + star sparkle dots
+    case zigzag  = 8   // Angled streaks
+    case ripple  = 9   // Concentric wave rings
+    case split   = 10  // Diagonal two-tone cut
+    case ember   = 11  // Warm sparks and glow
+    case frost   = 12  // Ice-line cross highlights
+    case ringed  = 13  // Bold center ring
+    case toxic   = 14  // Acid blobs
+    case checker = 15  // Checker tiles
 
     var name: String {
         switch self {
@@ -95,6 +135,14 @@ enum SnakePattern: Int, CaseIterable {
         case .neon:    return "Neon"
         case .camo:    return "Camo"
         case .galaxy:  return "Galaxy"
+        case .zigzag:  return "Zigzag"
+        case .ripple:  return "Ripple"
+        case .split:   return "Split"
+        case .ember:   return "Ember"
+        case .frost:   return "Frost"
+        case .ringed:  return "Ringed"
+        case .toxic:   return "Toxic"
+        case .checker: return "Checker"
         }
     }
 
@@ -108,6 +156,14 @@ enum SnakePattern: Int, CaseIterable {
         case .neon:    return "✨"
         case .camo:    return "🌿"
         case .galaxy:  return "🌌"
+        case .zigzag:  return "⚡️"
+        case .ripple:  return "🌀"
+        case .split:   return "◐"
+        case .ember:   return "🔥"
+        case .frost:   return "❄️"
+        case .ringed:  return "◎"
+        case .toxic:   return "☣️"
+        case .checker: return "▦"
         }
     }
 }

@@ -4,6 +4,16 @@ import SpriteKit
 
 final class GameSceneIntegrationTests: XCTestCase {
 
+    private func makeRunningScene() -> GameScene {
+        let scene = GameScene(size: CGSize(width: 390, height: 844))
+        scene.scaleMode = .resizeFill
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        scene.didMove(to: view)
+        scene.gameSetupComplete = true
+        scene.gameStarted = true
+        return scene
+    }
+
     // MARK: - Integration Tests: SpriteKit + SwiftUI Bridge Points
 
     func test_givenFreshScene_whenDidMove_thenInitialStateIsPrepared() {
@@ -19,12 +29,7 @@ final class GameSceneIntegrationTests: XCTestCase {
     }
 
     func test_givenStartedScene_whenUpdateCalled_thenLastUpdateTimeChanges() {
-        let scene = GameScene(size: CGSize(width: 390, height: 844))
-        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        scene.didMove(to: view)
-
-        scene.gameSetupComplete = true
-        scene.gameStarted = true
+        let scene = makeRunningScene()
 
         scene.update(1.0)
 
@@ -32,12 +37,7 @@ final class GameSceneIntegrationTests: XCTestCase {
     }
 
     func test_givenBoostHeldAndZeroScore_whenUpdateCalled_thenBoostDisengages() {
-        let scene = GameScene(size: CGSize(width: 390, height: 844))
-        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        scene.didMove(to: view)
-
-        scene.gameSetupComplete = true
-        scene.gameStarted = true
+        let scene = makeRunningScene()
         scene.score = 0
         scene.isBoostHeld = true
 
@@ -71,15 +71,9 @@ final class GameSceneIntegrationTests: XCTestCase {
     }
 
     func test_givenVeryHighScore_whenUpdatingScene_thenHistoryBuffersStayBounded() {
-        let scene = GameScene(size: CGSize(width: 390, height: 844))
-        scene.scaleMode = .resizeFill
-        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-
-        scene.didMove(to: view)
+        let scene = makeRunningScene()
         scene.score = 1_500
         scene.updateSpeedForScore()
-        scene.gameSetupComplete = true
-        scene.gameStarted = true
 
         for tick in 1...60 {
             scene.update(TimeInterval(tick) / 60.0)
@@ -89,5 +83,56 @@ final class GameSceneIntegrationTests: XCTestCase {
         XCTAssertEqual(scene.bodyPositionCache.count, scene.bodySegments.count)
         XCTAssertLessThanOrEqual(scene.positionHistory.count, scene.positionHistory.capacity)
         XCTAssertGreaterThan(scene.positionHistory.capacity, 0)
+    }
+
+    func test_givenFreshScene_whenDidMove_thenCreatesScorePanelAndLeaderboard() {
+        let scene = makeRunningScene()
+
+        XCTAssertNotNil(scene.scorePanel)
+        XCTAssertNotNil(scene.scoreLabel)
+        XCTAssertEqual(scene.scoreLabel.text, "SCORE 0")
+        XCTAssertNotNil(scene.miniLeaderboard)
+    }
+
+    func test_givenBoostState_whenUpdatingTrailFood_thenOnlyBoostingPlayerLeavesTrail() {
+        let scene = makeRunningScene()
+        scene.score = 20
+        scene.updateSpeedForScore()
+        for index in scene.bots.indices {
+            scene.bots[index].isBoosting = false
+            scene.bots[index].boostCooldown = 999
+            scene.bots[index].trailFoodTimer = 0
+        }
+
+        for tick in 1...6 {
+            scene.update(1.0 + Double(tick) * 0.12)
+        }
+        XCTAssertEqual(scene.foodTypes.filter { $0 == .trail }.count, 0)
+
+        scene.isBoostHeld = true
+        for tick in 7...12 {
+            scene.update(1.0 + Double(tick) * 0.12)
+        }
+
+        XCTAssertGreaterThan(scene.foodTypes.filter { $0 == .trail }.count, 0)
+    }
+
+    func test_givenHeadToHeadCollision_whenUpdatingScene_thenBothPlayerAndBotDie() throws {
+        let scene = makeRunningScene()
+        scene.ghostActive = false
+        scene.ghostTimeLeft = 0
+
+        guard let botIndex = scene.bots.indices.first(where: { scene.bots[$0].isActive && !scene.bots[$0].isDead }) else {
+            return XCTFail("Expected an active bot")
+        }
+
+        scene.bots[botIndex].position = scene.snakeHead.position
+        scene.bots[botIndex].head?.position = scene.snakeHead.position
+        scene.bots[botIndex].bodyPositionCache = [scene.snakeHead.position]
+
+        scene.update(1.0)
+
+        XCTAssertTrue(scene.isGameOver)
+        XCTAssertTrue(scene.bots[botIndex].isDead)
     }
 }

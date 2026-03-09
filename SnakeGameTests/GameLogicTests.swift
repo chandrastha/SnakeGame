@@ -61,12 +61,54 @@ final class GameLogicTests: XCTestCase {
         XCTAssertEqual(GameLogic.calculateSpeed(score: 200), 130)
     }
 
+    func test_givenBoostingBotSpeed_whenCalculatingPlayerBoost_thenMaintainsOnePointFiveTimesLead() {
+        let boostedSpeed = GameLogic.boostedPlayerSpeed(
+            baseSpeed: 120,
+            fastestBoostingBotSpeed: 180
+        )
+        XCTAssertEqual(boostedSpeed, 270, accuracy: 0.001)
+    }
+
     func test_givenExistingScores_whenProcessingLeaderboard_thenReturnsSortedTopTen() {
         let existing = Array(stride(from: 10, through: 120, by: 10))
         let output = GameLogic.processLeaderboardEntry(score: 999, existing: existing)
         XCTAssertEqual(output.count, 10)
         XCTAssertEqual(output.first, 999)
         XCTAssertEqual(output, output.sorted(by: >))
+    }
+
+    func test_givenPlayerOutsideTopFour_whenBuildingLeaderboard_thenIncludesTopFourPlusCurrentPlayer() {
+        let entries = [
+            LeaderboardScoreEntry(name: "A", score: 90, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "B", score: 80, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "C", score: 70, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "D", score: 60, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "Me", score: 15, isCurrentPlayer: true)
+        ]
+
+        let visible = GameLogic.leaderboardDisplayEntries(from: entries)
+
+        XCTAssertEqual(visible.count, 5)
+        XCTAssertEqual(visible.prefix(4).map(\.name), ["A", "B", "C", "D"])
+        XCTAssertEqual(visible.last?.name, "Me")
+        XCTAssertEqual(visible.last?.rank, 5)
+    }
+
+    func test_givenPlayerInsideTopFour_whenBuildingLeaderboard_thenExpandsToTopFive() {
+        let entries = [
+            LeaderboardScoreEntry(name: "A", score: 90, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "Me", score: 85, isCurrentPlayer: true),
+            LeaderboardScoreEntry(name: "C", score: 70, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "D", score: 60, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "E", score: 50, isCurrentPlayer: false),
+            LeaderboardScoreEntry(name: "F", score: 40, isCurrentPlayer: false)
+        ]
+
+        let visible = GameLogic.leaderboardDisplayEntries(from: entries)
+
+        XCTAssertEqual(visible.count, 5)
+        XCTAssertEqual(visible.map(\.rank), [1, 2, 3, 4, 5])
+        XCTAssertEqual(visible[1].name, "Me")
     }
 
     func test_givenBodySegmentsBeyondSkip_whenHeadTouchesTail_thenDetectsCollision() {

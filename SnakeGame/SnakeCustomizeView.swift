@@ -337,6 +337,121 @@ extension View {
                     Circle().fill(Color.white).frame(width: max(2, size * 0.05)).offset(x: -size * 0.10, y:  size * 0.22)
                 }
             )
+
+        case .zigzag:
+            self.overlay(
+                ZStack {
+                    Capsule()
+                        .fill(Color.white.opacity(0.62))
+                        .frame(width: size * 0.18, height: size * 1.05)
+                        .rotationEffect(.degrees(34))
+                        .offset(x: -size * 0.18)
+                    Capsule()
+                        .fill(Color.white.opacity(0.30))
+                        .frame(width: size * 0.16, height: size * 0.92)
+                        .rotationEffect(.degrees(-28))
+                        .offset(x: size * 0.14)
+                }
+                .clipShape(Circle())
+            )
+
+        case .ripple:
+            self.overlay(
+                ZStack {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.68), lineWidth: max(1.5, size * 0.06))
+                        .frame(width: size * 0.82, height: size * 0.82)
+                    Circle()
+                        .strokeBorder(color.opacity(0.45), lineWidth: max(1.0, size * 0.04))
+                        .frame(width: size * 0.48, height: size * 0.48)
+                }
+            )
+
+        case .split:
+            self.overlay(
+                Rectangle()
+                    .fill(Color.white.opacity(0.36))
+                    .frame(width: size * 0.80, height: size * 1.18)
+                    .rotationEffect(.degrees(36))
+                    .offset(x: size * 0.18)
+                    .clipShape(Circle())
+            )
+
+        case .ember:
+            self.overlay(
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 1.0, green: 0.78, blue: 0.22).opacity(0.80))
+                        .frame(width: size * 0.28, height: size * 0.28)
+                        .offset(x: -size * 0.16, y: -size * 0.10)
+                    Circle()
+                        .fill(Color(red: 1.0, green: 0.42, blue: 0.14).opacity(0.72))
+                        .frame(width: size * 0.18, height: size * 0.18)
+                        .offset(x: size * 0.20, y: size * 0.14)
+                }
+            )
+            .shadow(color: Color(red: 1.0, green: 0.55, blue: 0.14).opacity(0.35), radius: 8)
+
+        case .frost:
+            self.overlay(
+                ZStack {
+                    Capsule()
+                        .fill(Color.white.opacity(0.72))
+                        .frame(width: size * 0.12, height: size * 0.72)
+                    Capsule()
+                        .fill(Color.white.opacity(0.50))
+                        .frame(width: size * 0.72, height: size * 0.12)
+                    Capsule()
+                        .fill(Color(red: 0.70, green: 0.92, blue: 1.0).opacity(0.55))
+                        .frame(width: size * 0.56, height: size * 0.10)
+                        .rotationEffect(.degrees(45))
+                }
+                .clipShape(Circle())
+            )
+
+        case .ringed:
+            self.overlay(
+                ZStack {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.78), lineWidth: max(1.5, size * 0.07))
+                        .frame(width: size * 0.70, height: size * 0.70)
+                    Circle()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(width: size * 0.22, height: size * 0.22)
+                }
+            )
+
+        case .toxic:
+            self.overlay(
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.86, green: 1.0, blue: 0.24).opacity(0.78))
+                        .frame(width: size * 0.34, height: size * 0.34)
+                        .offset(x: -size * 0.18, y: size * 0.12)
+                    Circle()
+                        .fill(Color.black.opacity(0.26))
+                        .frame(width: size * 0.18, height: size * 0.18)
+                        .offset(x: size * 0.18, y: -size * 0.18)
+                }
+            )
+
+        case .checker:
+            self.overlay(
+                ZStack {
+                    ForEach(0..<2, id: \.self) { row in
+                        ForEach(0..<2, id: \.self) { column in
+                            Rectangle()
+                                .fill((row + column).isMultiple(of: 2) ? Color.white.opacity(0.55) : Color.clear)
+                                .frame(width: size * 0.30, height: size * 0.30)
+                                .offset(
+                                    x: CGFloat(column == 0 ? -1 : 1) * size * 0.16,
+                                    y: CGFloat(row == 0 ? -1 : 1) * size * 0.16
+                                )
+                        }
+                    }
+                }
+                .clipShape(Circle())
+            )
         }
     }
 }

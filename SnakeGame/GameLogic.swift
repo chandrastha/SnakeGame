@@ -3,6 +3,7 @@
 // Extracted from GameScene so they can be unit tested.
 
 import CoreGraphics
+import Foundation
 
 // MARK: - Bot Enums
 
@@ -109,6 +110,19 @@ struct BotFoodContestSnapshot {
     let rivalLengthAdvantage: CGFloat
     /// 0–1 from personality; higher = willing to contest riskier races.
     let riskTolerance: CGFloat
+}
+
+struct LeaderboardScoreEntry: Equatable {
+    let name: String
+    let score: Int
+    let isCurrentPlayer: Bool
+}
+
+struct LeaderboardDisplayEntry: Equatable {
+    let rank: Int
+    let name: String
+    let score: Int
+    let isCurrentPlayer: Bool
 }
 
 // MARK: - GameLogic
@@ -280,6 +294,17 @@ enum GameLogic {
         return speed
     }
 
+    static func boostedPlayerSpeed(
+        baseSpeed: CGFloat,
+        fastestBoostingBotSpeed: CGFloat?,
+        minimumBoostMultiplier: CGFloat = 1.65,
+        dominanceMultiplier: CGFloat = 1.5
+    ) -> CGFloat {
+        let minimumBoostedSpeed = baseSpeed * minimumBoostMultiplier
+        guard let fastestBoostingBotSpeed else { return minimumBoostedSpeed }
+        return max(minimumBoostedSpeed, fastestBoostingBotSpeed * dominanceMultiplier)
+    }
+
     // MARK: - Leaderboard
 
     /// Inserts `score` into `existing`, sorts descending, and returns the top `maxEntries`.
@@ -290,6 +315,49 @@ enum GameLogic {
     ) -> [Int] {
         let updated = (existing + [score]).sorted(by: >)
         return Array(updated.prefix(maxEntries))
+    }
+
+    static func leaderboardDisplayEntries(
+        from entries: [LeaderboardScoreEntry],
+        topCount: Int = 4,
+        expandedTopCount: Int = 5
+    ) -> [LeaderboardDisplayEntry] {
+        guard !entries.isEmpty else { return [] }
+
+        let ranked = entries.enumerated().sorted { lhs, rhs in
+            if lhs.element.score != rhs.element.score {
+                return lhs.element.score > rhs.element.score
+            }
+            if lhs.element.isCurrentPlayer != rhs.element.isCurrentPlayer {
+                return lhs.element.isCurrentPlayer && !rhs.element.isCurrentPlayer
+            }
+            if lhs.element.name != rhs.element.name {
+                return lhs.element.name.localizedCaseInsensitiveCompare(rhs.element.name) == .orderedAscending
+            }
+            return lhs.offset < rhs.offset
+        }
+        .enumerated()
+        .map { offset, entry in
+            LeaderboardDisplayEntry(
+                rank: offset + 1,
+                name: entry.element.name,
+                score: entry.element.score,
+                isCurrentPlayer: entry.element.isCurrentPlayer
+            )
+        }
+
+        guard let currentPlayerIndex = ranked.firstIndex(where: { $0.isCurrentPlayer }) else {
+            return Array(ranked.prefix(topCount))
+        }
+
+        let baseCount = currentPlayerIndex < topCount ? expandedTopCount : topCount
+        var display = Array(ranked.prefix(baseCount))
+
+        if currentPlayerIndex >= display.count {
+            display.append(ranked[currentPlayerIndex])
+        }
+
+        return display
     }
 
     // MARK: - Self Collision
