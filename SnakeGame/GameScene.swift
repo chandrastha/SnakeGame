@@ -3299,9 +3299,22 @@ class GameScene: SKScene {
             return
         }
 
+        let needsRotation = selectedSnakePattern == .cylinder
+                         || selectedSnakePattern == .armor
+                         || selectedSnakePattern == .leaf
         for (index, segment) in bodySegments.enumerated() {
             if index < bodyPositionCache.count {
                 segment.position = bodyPositionCache[index]
+            }
+            // Orient pill/leaf segments to face the direction of travel
+            if needsRotation && index > 0 && index < bodyPositionCache.count {
+                let prev = bodyPositionCache[index - 1]
+                let curr = bodyPositionCache[index]
+                let dx = prev.x - curr.x
+                let dy = prev.y - curr.y
+                if dx * dx + dy * dy > 0.01 {
+                    segment.zRotation = atan2(dy, dx) - (.pi / 2)
+                }
             }
             let progress = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
             let scale = 1.0 - progress * 0.22
@@ -3331,6 +3344,17 @@ class GameScene: SKScene {
 
     func makePlayerBodySegment(segIndex: Int = 0) -> SKShapeNode {
         let theme = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
+        if selectedSnakePattern == .rainbow {
+            let hue = CGFloat(segIndex % 12) / 12.0
+            let rainbowColor  = SKColor(hue: hue, saturation: 0.85, brightness: 0.95, alpha: 1.0)
+            let rainbowStroke = rainbowColor.darkened(by: 0.20)
+            return makeBodySegment(
+                color: rainbowColor,
+                stroke: rainbowStroke,
+                pattern: .rainbow,
+                segIndex: segIndex
+            )
+        }
         return makeBodySegment(
             color: theme.bodySKColor,
             stroke: theme.bodyStrokeSKColor,
@@ -3425,6 +3449,23 @@ class GameScene: SKScene {
         return p
     }
 
+    func makeLeafPath(radius: CGFloat) -> CGPath {
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: 0, y: radius))
+        p.addCurve(
+            to:       CGPoint(x:  0, y: -radius),
+            control1: CGPoint(x:  radius * 1.0, y:  radius * 0.4),
+            control2: CGPoint(x:  radius * 1.0, y: -radius * 0.4)
+        )
+        p.addCurve(
+            to:       CGPoint(x:  0, y: radius),
+            control1: CGPoint(x: -radius * 1.0, y: -radius * 0.4),
+            control2: CGPoint(x: -radius * 1.0, y:  radius * 0.4)
+        )
+        p.closeSubpath()
+        return p
+    }
+
     func makeRoundedRectPath(size: CGSize, cornerRadius: CGFloat) -> CGPath {
         UIBezierPath(
             roundedRect: CGRect(
@@ -3444,6 +3485,14 @@ class GameScene: SKScene {
         let seg: SKShapeNode
         if pattern == .crystal {
             seg = SKShapeNode(path: makeDiamondPath(radius: bodySegmentRadius))
+        } else if pattern == .cylinder {
+            let pillSize = CGSize(width: bodySegmentRadius * 2.0, height: bodySegmentRadius * 2.6)
+            seg = SKShapeNode(path: makeRoundedRectPath(size: pillSize, cornerRadius: bodySegmentRadius * 0.9))
+        } else if pattern == .armor {
+            let pillSize = CGSize(width: bodySegmentRadius * 2.0, height: bodySegmentRadius * 2.8)
+            seg = SKShapeNode(path: makeRoundedRectPath(size: pillSize, cornerRadius: bodySegmentRadius))
+        } else if pattern == .leaf {
+            seg = SKShapeNode(path: makeLeafPath(radius: bodySegmentRadius))
         } else {
             seg = SKShapeNode(circleOfRadius: bodySegmentRadius)
         }
@@ -3470,6 +3519,15 @@ class GameScene: SKScene {
             seg.strokeColor = stroke.withAlphaComponent(0.92)
         case .toxic:
             seg.fillColor   = color.darkened(by: 0.08)
+            seg.strokeColor = stroke
+        case .diamondGrid:
+            seg.fillColor   = segIndex % 2 == 0 ? color.darkened(by: 0.10) : color.darkened(by: 0.25)
+            seg.strokeColor = stroke
+        case .armor:
+            seg.fillColor   = color.darkened(by: 0.20)
+            seg.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.08, alpha: 0.90)
+        case .sphere, .cylinder, .leaf, .rainbow:
+            seg.fillColor   = color
             seg.strokeColor = stroke
         default:
             seg.fillColor   = color
@@ -3689,6 +3747,134 @@ class GameScene: SKScene {
                 tile.zPosition = 1
                 seg.addChild(tile)
             }
+
+        case .sphere:
+            // Specular highlight — bright ellipse offset upper-left (simulates light source)
+            let highlight = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 0.75,
+                height: bodySegmentRadius * 0.55
+            ))
+            highlight.fillColor   = SKColor(white: 1.0, alpha: 0.70)
+            highlight.strokeColor = .clear
+            highlight.position    = CGPoint(x: -bodySegmentRadius * 0.30, y: bodySegmentRadius * 0.30)
+            highlight.zPosition   = 2
+            seg.addChild(highlight)
+            // Shadow — dark ellipse lower-right for depth
+            let shadow = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 0.90,
+                height: bodySegmentRadius * 0.65
+            ))
+            shadow.fillColor   = SKColor(white: 0.0, alpha: 0.22)
+            shadow.strokeColor = .clear
+            shadow.position    = CGPoint(x: bodySegmentRadius * 0.20, y: -bodySegmentRadius * 0.22)
+            shadow.zPosition   = 2
+            seg.addChild(shadow)
+
+        case .rainbow:
+            // Same 3D sphere highlight — rainbow color is set per-segment in makePlayerBodySegment
+            let rHighlight = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 0.75,
+                height: bodySegmentRadius * 0.55
+            ))
+            rHighlight.fillColor   = SKColor(white: 1.0, alpha: 0.70)
+            rHighlight.strokeColor = .clear
+            rHighlight.position    = CGPoint(x: -bodySegmentRadius * 0.30, y: bodySegmentRadius * 0.30)
+            rHighlight.zPosition   = 2
+            seg.addChild(rHighlight)
+            let rShadow = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 0.90,
+                height: bodySegmentRadius * 0.65
+            ))
+            rShadow.fillColor   = SKColor(white: 0.0, alpha: 0.22)
+            rShadow.strokeColor = .clear
+            rShadow.position    = CGPoint(x: bodySegmentRadius * 0.20, y: -bodySegmentRadius * 0.22)
+            rShadow.zPosition   = 2
+            seg.addChild(rShadow)
+
+        case .diamondGrid:
+            // Full-size diamond overlay alternating light/dark for woven lattice look
+            let d1 = SKShapeNode(path: makeDiamondPath(radius: bodySegmentRadius * 0.90))
+            d1.fillColor   = segIndex % 2 == 0
+                ? SKColor(white: 1.0, alpha: 0.40)
+                : SKColor(white: 0.0, alpha: 0.20)
+            d1.strokeColor = stroke.withAlphaComponent(0.80)
+            d1.lineWidth   = 1.2
+            d1.zPosition   = 1
+            seg.addChild(d1)
+            // Inner highlight diamond for chrome sheen
+            let d2 = SKShapeNode(path: makeDiamondPath(radius: bodySegmentRadius * 0.38))
+            d2.fillColor   = SKColor(white: 1.0, alpha: 0.55)
+            d2.strokeColor = .clear
+            d2.position    = CGPoint(x: 0, y: bodySegmentRadius * 0.18)
+            d2.zPosition   = 2
+            seg.addChild(d2)
+
+        case .cylinder:
+            // Mid-band stripe
+            let band = SKShapeNode(rect: CGRect(
+                x: -bodySegmentRadius,
+                y: -bodySegmentRadius * 0.35,
+                width: bodySegmentRadius * 2.0,
+                height: bodySegmentRadius * 0.70
+            ))
+            band.fillColor   = SKColor(white: 1.0, alpha: 0.30)
+            band.strokeColor = .clear
+            band.zPosition   = 1
+            seg.addChild(band)
+            // Top shine
+            let shine = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 1.60,
+                height: bodySegmentRadius * 0.50
+            ))
+            shine.fillColor   = SKColor(white: 1.0, alpha: 0.42)
+            shine.strokeColor = .clear
+            shine.position    = CGPoint(x: 0, y: bodySegmentRadius * 0.72)
+            shine.zPosition   = 2
+            seg.addChild(shine)
+
+        case .armor:
+            // Gold band ring across the center
+            let ring = SKShapeNode(rect: CGRect(
+                x: -bodySegmentRadius,
+                y: -bodySegmentRadius * 0.22,
+                width: bodySegmentRadius * 2.0,
+                height: bodySegmentRadius * 0.44
+            ))
+            ring.fillColor   = SKColor(red: 1.0, green: 0.78, blue: 0.08, alpha: 0.90)
+            ring.strokeColor = .clear
+            ring.zPosition   = 1
+            seg.addChild(ring)
+            // Highlight on top of gold ring
+            let ringShine = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 1.40,
+                height: bodySegmentRadius * 0.26
+            ))
+            ringShine.fillColor   = SKColor(white: 1.0, alpha: 0.38)
+            ringShine.strokeColor = .clear
+            ringShine.position    = CGPoint(x: 0, y: bodySegmentRadius * 0.08)
+            ringShine.zPosition   = 2
+            seg.addChild(ringShine)
+
+        case .leaf:
+            // Center vein line
+            let veinPath = CGMutablePath()
+            veinPath.move(to:    CGPoint(x: 0, y:  bodySegmentRadius * 0.72))
+            veinPath.addLine(to: CGPoint(x: 0, y: -bodySegmentRadius * 0.72))
+            let vein = SKShapeNode(path: veinPath)
+            vein.strokeColor = SKColor(white: 1.0, alpha: 0.32)
+            vein.lineWidth   = 1.0
+            vein.zPosition   = 1
+            seg.addChild(vein)
+            // Small highlight at top of leaf
+            let leafShine = SKShapeNode(ellipseOf: CGSize(
+                width:  bodySegmentRadius * 0.55,
+                height: bodySegmentRadius * 0.32
+            ))
+            leafShine.fillColor   = SKColor(white: 1.0, alpha: 0.38)
+            leafShine.strokeColor = .clear
+            leafShine.position    = CGPoint(x: -bodySegmentRadius * 0.12, y: bodySegmentRadius * 0.38)
+            leafShine.zPosition   = 2
+            seg.addChild(leafShine)
 
         default: break
         }
@@ -4714,8 +4900,19 @@ class GameScene: SKScene {
         let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
         let halfCount = max(1, bodyCount / 2)
         let boostGlowCount = max(2, bodyCount / 6)
+        let botNeedsRotation = pattern == .cylinder || pattern == .armor || pattern == .leaf
         for (segmentIndex, segment) in bots[index].body.enumerated() {
             segment.position = bots[index].bodyPositionCache[segmentIndex]
+            if botNeedsRotation && segmentIndex > 0
+               && segmentIndex < bots[index].bodyPositionCache.count {
+                let prev = bots[index].bodyPositionCache[segmentIndex - 1]
+                let curr = bots[index].bodyPositionCache[segmentIndex]
+                let dx = prev.x - curr.x
+                let dy = prev.y - curr.y
+                if dx * dx + dy * dy > 0.01 {
+                    segment.zRotation = atan2(dy, dx) - (.pi / 2)
+                }
+            }
             let baseGlow: CGFloat = segmentIndex < halfCount ? leadingGlow : 0
             let desiredGlow: CGFloat = (isBoosting && segmentIndex < boostGlowCount)
                 ? max(baseGlow, 6)
