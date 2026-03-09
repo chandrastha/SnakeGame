@@ -2738,10 +2738,14 @@ class GameScene: SKScene {
     }
     func checkFoodCollisions() {
         let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
-        for (i, food) in foodItems.enumerated().reversed() {
+        let headX = snakeHead.position.x
+        let headY = snakeHead.position.y
+        // stride avoids the temporary reversed-collection allocation that enumerated().reversed() creates.
+        for i in stride(from: foodItems.count - 1, through: 0, by: -1) {
+            let food = foodItems[i]
             guard food.parent != nil else { continue }
-            let dx = snakeHead.position.x - food.position.x
-            let dy = snakeHead.position.y - food.position.y
+            let dx = headX - food.position.x
+            let dy = headY - food.position.y
             if dx * dx + dy * dy < thresholdSq {
                 eatFood(at: i)
                 return
@@ -3058,8 +3062,14 @@ class GameScene: SKScene {
         }
     }
 
+    // Larger cell size reduces Set inserts: with 30 px cells and 14 px segment spacing,
+    // consecutive segments share cells, so unique cell count drops ~3–4×.
+    // The ±1-cell neighbourhood check still covers ±30 px, which comfortably exceeds
+    // the 22 px combined collision radius (collisionRadius + bodySegmentRadius).
+    private let occupancyCellSize: CGFloat = 30.0
+
     private func gridCell(for point: CGPoint) -> GridCell {
-        GridCell(x: Int((point.x / collisionRadius).rounded()), y: Int((point.y / collisionRadius).rounded()))
+        GridCell(x: Int(point.x / occupancyCellSize), y: Int(point.y / occupancyCellSize))
     }
 
     private func bodyOccupancyContains(_ point: CGPoint) -> Bool {
@@ -3090,7 +3100,9 @@ class GameScene: SKScene {
             segment.setScale(scale)
             segment.alpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
             let baseGlow: CGFloat = selectedSnakePattern == .neon ? 10 : (index < max(1, count / 4) ? 3 : 0)
-            segment.glowWidth = ghostActive ? baseGlow * 0.4 : baseGlow
+            let desiredGlow: CGFloat = ghostActive ? baseGlow * 0.4 : baseGlow
+            // Guard: glowWidth triggers SpriteKit re-render every time it's set, even if unchanged.
+            if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
             segment.zPosition = snakeHead.zPosition - 0.04 - CGFloat(index) * 0.0005
         }
 
@@ -3864,23 +3876,45 @@ class GameScene: SKScene {
         return threats
     }
 
-    /// Rebuilds per-food cluster bonuses when the food set changes (lazy, O(n²) once per change).
+    /// Rebuilds per-food cluster bonuses when the food set changes (lazy, O(n) with spatial grid).
     private func rebuildClusterBonusesIfNeeded() {
         guard clusterBonusDirty else { return }
+
+        let clusterRadius: CGFloat = 110
+        // Spatial grid: cell size equals the cluster radius so adjacent cells cover the full range.
+        var grid: [GridCell: [Int]] = [:]
+        grid.reserveCapacity(foodItems.count)
+        for (i, food) in foodItems.enumerated() where food.parent != nil {
+            let cell = GridCell(
+                x: Int(food.position.x / clusterRadius),
+                y: Int(food.position.y / clusterRadius)
+            )
+            grid[cell, default: []].append(i)
+        }
+
         cachedClusterBonuses = Array(repeating: 0, count: foodItems.count)
         for i in foodItems.indices where foodItems[i].parent != nil {
             var bonus: CGFloat = 0
             let px = foodItems[i].position.x
             let py = foodItems[i].position.y
-            for j in foodItems.indices where j != i && foodItems[j].parent != nil {
-                let dx = foodItems[j].position.x - px
-                let dy = foodItems[j].position.y - py
-                if abs(dx) > 110 || abs(dy) > 110 { continue }
-                guard hypot(dx, dy) < 110 else { continue }
-                switch foodTypes[j] {
-                case .death: bonus += 0.55
-                case .trail: bonus += 0.18
-                default:     bonus += 0.10
+            let cx = Int(px / clusterRadius)
+            let cy = Int(py / clusterRadius)
+            // Only inspect 3×3 neighbourhood of cells; at cell size == clusterRadius, items
+            // in cells ≥ 2 away are guaranteed to exceed the radius so no check is needed.
+            for dcx in -1...1 {
+                for dcy in -1...1 {
+                    guard let neighbors = grid[GridCell(x: cx + dcx, y: cy + dcy)] else { continue }
+                    for j in neighbors {
+                        guard j != i else { continue }
+                        let dx = foodItems[j].position.x - px
+                        let dy = foodItems[j].position.y - py
+                        guard dx * dx + dy * dy < clusterRadius * clusterRadius else { continue }
+                        switch foodTypes[j] {
+                        case .death: bonus += 0.55
+                        case .trail: bonus += 0.18
+                        default:     bonus += 0.10
+                        }
+                    }
                 }
             }
             cachedClusterBonuses[i] = min(2.4, bonus)
@@ -3891,9 +3925,14 @@ class GameScene: SKScene {
     private func interestingFoodTargets(for i: Int, limit: Int = 8) -> [BotFoodTarget] {
         let profile = GameLogic.botPersonalityProfile(for: bots[i].personality)
         let position = bots[i].position
-        var targets: [BotFoodTarget] = []
 
         rebuildClusterBonusesIfNeeded()
+
+        // Maintain a bounded buffer of the top `limit` candidates as we scan, replacing the
+        // worst entry when a better one is found. This avoids allocating and sorting the full
+        // candidate array (O(n log n) → O(n · limit) ≈ O(n) for small limit=8).
+        var targets: [BotFoodTarget] = []
+        targets.reserveCapacity(limit + 1)
 
         for (index, food) in foodItems.enumerated() where food.parent != nil {
             let distance = hypot(food.position.x - position.x, food.position.y - position.y)
@@ -3908,11 +3947,18 @@ class GameScene: SKScene {
             ) * max(0.18, 1.0 - distance / profile.foodSearchRadius)
 
             guard utility > 0.5 else { continue }
-            targets.append(BotFoodTarget(index: index, position: food.position, type: foodTypes[index], utility: utility))
+
+            let candidate = BotFoodTarget(index: index, position: food.position, type: foodTypes[index], utility: utility)
+            if targets.count < limit {
+                targets.append(candidate)
+            } else if let worstIdx = targets.indices.min(by: { targets[$0].utility < targets[$1].utility }),
+                      targets[worstIdx].utility < utility {
+                targets[worstIdx] = candidate
+            }
         }
 
         targets.sort { $0.utility > $1.utility }
-        return Array(targets.prefix(limit))
+        return targets
     }
 
     private func interceptPoint(botIndex i: Int, threat: BotThreatSnapshot, cutMode: Bool) -> CGPoint {
@@ -4428,13 +4474,20 @@ class GameScene: SKScene {
             into: &bots[index].bodyPositionCache
         )
         let pattern = SnakePattern(rawValue: bots[index].patternIndex) ?? .solid
+        let bodyCount = bots[index].body.count
+        let isBoosting = bots[index].isBoosting
+        let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
+        let halfCount = max(1, bodyCount / 2)
+        let boostGlowCount = max(2, bodyCount / 6)
         for (segmentIndex, segment) in bots[index].body.enumerated() {
             segment.position = bots[index].bodyPositionCache[segmentIndex]
-            let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
-            let baseGlow = segmentIndex < max(1, bots[index].body.count / 2) ? leadingGlow : 0
-            segment.glowWidth = (bots[index].isBoosting && segmentIndex < max(2, bots[index].body.count / 6))
+            let baseGlow: CGFloat = segmentIndex < halfCount ? leadingGlow : 0
+            let desiredGlow: CGFloat = (isBoosting && segmentIndex < boostGlowCount)
                 ? max(baseGlow, 6)
                 : baseGlow
+            // Guard SpriteKit glow write: setting glowWidth triggers an expensive re-render even
+            // when the value hasn't changed. Only write when the value actually differs.
+            if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
         }
     }
 
@@ -4524,15 +4577,19 @@ class GameScene: SKScene {
         guard bots[botIndex].magnetTimeLeft > 0 else { return }
 
         let strength: CGFloat = 560 * dt
-        let headPos = bots[botIndex].position
+        let headX = bots[botIndex].position.x
+        let headY = bots[botIndex].position.y
         let magnetRadiusSq = magnetRadius * magnetRadius
 
         for (i, food) in foodItems.enumerated() {
             guard food.parent != nil else { continue }
             if foodTypes[i] == .trail || foodTypes[i] == .death { continue }
 
-            let dx = headPos.x - food.position.x
-            let dy = headPos.y - food.position.y
+            let dx = headX - food.position.x
+            // AABB fast-reject before computing squared distance.
+            if abs(dx) >= magnetRadius { continue }
+            let dy = headY - food.position.y
+            if abs(dy) >= magnetRadius { continue }
             let distSq = dx * dx + dy * dy
             guard distSq > 1, distSq < magnetRadiusSq else { continue }
 
@@ -4657,13 +4714,18 @@ class GameScene: SKScene {
     func applyMagnetEffect() {
         let pullStrength: CGFloat   = 5.5
         let magnetRadiusSq: CGFloat = magnetRadius * magnetRadius
+        let headX = snakeHead.position.x
+        let headY = snakeHead.position.y
         for food in foodItems {
             guard food.parent != nil else { continue }
-            let dx     = snakeHead.position.x - food.position.x
-            let dy     = snakeHead.position.y - food.position.y
+            let dx = headX - food.position.x
+            // AABB fast-reject: skip items clearly outside the square bounding box first.
+            if abs(dx) >= magnetRadius { continue }
+            let dy = headY - food.position.y
+            if abs(dy) >= magnetRadius { continue }
             let distSq = dx * dx + dy * dy
             guard distSq > 1, distSq < magnetRadiusSq else { continue }
-            let dist = hypot(dx, dy)   // sqrt only for in-range items
+            let dist = hypot(dx, dy)
             food.position = CGPoint(x: food.position.x + (dx / dist) * pullStrength,
                                     y: food.position.y + (dy / dist) * pullStrength)
         }
@@ -5131,10 +5193,20 @@ class GameScene: SKScene {
             updateSnakeRaceMode(dt: dt)
         } else {
             let simulationStep = CGFloat(1.0 / minimumGameplayFPS)
-            let botDelta = min(frameDelta, 0.2)
-            botUpdateAccumulator += botDelta
-            botCollisionAccumulator += botDelta
-            botHeadCheckAccumulator += botDelta
+            // Use the already-clamped `dt` (capped at maxDeltaTime) instead of raw frameDelta.
+            // This prevents debt runaway: on a slow frame the accumulator can queue at most
+            // ceil(maxDeltaTime / simulationStep) = 3 ticks instead of potentially 6+.
+            botUpdateAccumulator += dt
+            botCollisionAccumulator += dt
+            botHeadCheckAccumulator += dt
+
+            // Hard cap: never run more than 3 simulation steps per render frame.
+            // Extra debt is discarded, which causes bots to slow down gracefully rather than
+            // stacking up expensive catch-up work that makes the next frame even slower.
+            let maxStepsPerFrame: CGFloat = 3 * simulationStep
+            if botUpdateAccumulator    > maxStepsPerFrame { botUpdateAccumulator    = maxStepsPerFrame }
+            if botCollisionAccumulator > maxStepsPerFrame { botCollisionAccumulator = maxStepsPerFrame }
+            if botHeadCheckAccumulator > maxStepsPerFrame { botHeadCheckAccumulator = maxStepsPerFrame }
 
             while botUpdateAccumulator >= simulationStep {
                 updateBots(dt: simulationStep, updateAI: true)
