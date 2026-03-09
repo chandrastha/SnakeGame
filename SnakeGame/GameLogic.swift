@@ -294,6 +294,20 @@ enum GameLogic {
         return speed
     }
 
+    // MARK: - Combo Scoring
+
+    /// Bonus points awarded for eating foods in rapid succession.
+    /// Combo begins at the 2nd consecutive eat within the time window.
+    static func comboBonus(forComboCount count: Int) -> Int {
+        guard count >= 2 else { return 0 }
+        return min(count - 1, 8)   // +1 per consecutive eat, cap at +8
+    }
+
+    /// Returns true when the combo count hits a notable streak milestone.
+    static func isStreakThreshold(_ count: Int) -> Bool {
+        return count == 3 || count == 5 || count == 8 || count % 10 == 0
+    }
+
     static func boostedPlayerSpeed(
         baseSpeed: CGFloat,
         fastestBoostingBotSpeed: CGFloat?,
