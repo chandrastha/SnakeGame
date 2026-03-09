@@ -117,6 +117,36 @@ final class GameSceneIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(scene.foodTypes.filter { $0 == .trail }.count, 0)
     }
 
+    // MARK: - Regression Tests
+
+    /// Regression test for division-by-zero crash in spawnBots() when tapping Play.
+    /// Previously crashed with `i % (snakeColorThemes.count - 1)` when count == 1 → `i % 0`.
+    func test_givenOfflineMode_whenDidMove_thenSpawnBotsDoesNotCrash() {
+        let scene = GameScene(size: CGSize(width: 390, height: 844))
+        scene.scaleMode = .resizeFill
+        scene.gameMode = .offline
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+
+        // Must not crash — this exercises the fixed bot color assignment path.
+        scene.didMove(to: view)
+
+        XCTAssertTrue(scene.gameSetupComplete)
+        XCTAssertEqual(scene.bots.count, scene.totalBots)
+    }
+
+    func test_givenChallengeMode_whenDidMove_thenSpawnBotsDoesNotCrash() {
+        let scene = GameScene(size: CGSize(width: 390, height: 844))
+        scene.scaleMode = .resizeFill
+        scene.gameMode = .challenge
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+
+        // Must not crash — challenge mode spawns totalBots + 1 (nemesis).
+        scene.didMove(to: view)
+
+        XCTAssertTrue(scene.gameSetupComplete)
+        XCTAssertEqual(scene.bots.count, scene.totalBots + 1)
+    }
+
     func test_givenHeadToHeadCollision_whenUpdatingScene_thenBothPlayerAndBotDie() throws {
         let scene = makeRunningScene()
         scene.ghostActive = false
