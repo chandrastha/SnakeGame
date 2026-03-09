@@ -247,6 +247,16 @@ class GameScene: SKScene {
     var leaderArrowUpdateTimer: CGFloat = 0
     var miniLeaderboardNeedsRefresh = true
 
+    // MARK: - Combo / Streak Scoring
+    var comboCount:      Int     = 0
+    var comboTimer:      CGFloat = 0
+    let comboWindowSecs: CGFloat = 2.5
+    let comboMaxDisplay: Int     = 5
+    var comboLabel:      SKLabelNode?
+    var comboPanelNode:  SKShapeNode?
+    var comboFadeTimer:  CGFloat = 0
+    let comboFadeSecs:   CGFloat = 2.0
+
     // MARK: - Game State
     var gameOverOverlay:    SKNode? = nil
     var gameSetupComplete:  Bool    = false
@@ -1024,6 +1034,7 @@ class GameScene: SKScene {
         createSnakeHead()
         createInitialBody()
         createScorePanel()
+        createComboHUD()
         createMiniLeaderboard()
         createMinimap()
         createLeaderArrow()
@@ -1389,7 +1400,8 @@ class GameScene: SKScene {
         boostButtonNode?.setScale(controlScale * (isBoostHeld ? 1.15 : 1.0))
 
         let panelH = scorePanelHeight
-        scorePanel?.position  = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
+        scorePanel?.position   = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
+        comboPanelNode?.position = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH - 42)
         powerUpPanel?.position = CGPoint(x: cx, y: cy - extents.halfH + 170)
         minimapNode?.position = CGPoint(x: cx + extents.halfW - minimapInset.x, y: cy + extents.halfH - minimapInset.y)
         miniLeaderboard?.position = CGPoint(x: cx + extents.halfW - minimapInset.x + 40, y: cy + extents.halfH - minimapInset.y - 132)
@@ -1857,7 +1869,10 @@ class GameScene: SKScene {
                     raceCheckpoints[raceCurrentCheckpoint].glowWidth = 12
                 } else {
                     raceIsFinished = true
-                    score += Int(max(0, raceTimeRemaining) * 2)
+                    let timeBonusCap: Int = 40
+                    let timeBonus = min(timeBonusCap, Int(max(0, raceTimeRemaining) * 0.5))
+                    score += timeBonus
+                    spawnFloatingText("⏱ Time Bonus +\(timeBonus)!", at: snakeHead.position)
                     updateScoreDisplay()
                     runModeImpactVFX(color: .green)
                     completeSpecialMode(success: true)
@@ -1886,6 +1901,7 @@ class GameScene: SKScene {
         }
 
         isGameOver         = true
+        comboCount = 0; comboTimer = 0; updateComboDisplay()
         spawnDeathFood(at: bodyPositionCache,
                        colorIndex: selectedSnakeColorIndex,
                        patternIndex: selectedSnakePatternIndex)   // body scatters as death food
@@ -2253,6 +2269,63 @@ class GameScene: SKScene {
         )
         scoreLabel.position = CGPoint(x: hPad, y: panelH / 2)
         miniLeaderboardNeedsRefresh = true
+    }
+
+    // MARK: - Combo System
+
+    func incrementCombo() {
+        comboCount    += 1
+        comboTimer     = 0
+        comboFadeTimer = comboFadeSecs
+        updateComboDisplay()
+    }
+
+    func tickCombo(dt: CGFloat) {
+        guard comboCount > 0 else { return }
+        comboTimer += dt
+        if comboTimer >= comboWindowSecs {
+            comboCount = 0
+            comboTimer = 0
+            updateComboDisplay()
+            return
+        }
+        comboFadeTimer = max(0, comboFadeTimer - dt)
+        if comboFadeTimer <= 0 {
+            comboLabel?.alpha      = 0
+            comboPanelNode?.alpha  = 0
+        }
+    }
+
+    func updateComboDisplay() {
+        guard comboCount >= 2 else {
+            comboLabel?.alpha     = 0
+            comboPanelNode?.alpha = 0
+            return
+        }
+        let stars = String(repeating: "★", count: min(comboCount, comboMaxDisplay))
+        comboLabel?.text  = "COMBO \(comboCount)× \(stars)"
+        comboLabel?.alpha     = 1
+        comboPanelNode?.alpha = 1
+    }
+
+    func createComboHUD() {
+        let panel = SKShapeNode(rect: CGRect(x: 0, y: 0, width: 190, height: 34), cornerRadius: 10)
+        panel.fillColor   = SKColor(red: 1.0, green: 0.75, blue: 0.0, alpha: 0.85)
+        panel.strokeColor = .clear
+        panel.zPosition   = 501
+        panel.alpha       = 0
+        addChild(panel)
+        comboPanelNode = panel
+
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.fontSize                = 14
+        label.fontColor               = SKColor(red: 0.1, green: 0.05, blue: 0.0, alpha: 1.0)
+        label.verticalAlignmentMode   = .center
+        label.horizontalAlignmentMode = .center
+        label.position                = CGPoint(x: 95, y: 17)
+        label.zPosition               = 502
+        panel.addChild(label)
+        comboLabel = label
     }
 
     private func historyCapacity(forSegmentCount count: Int) -> Int {
@@ -2771,10 +2844,12 @@ class GameScene: SKScene {
         case .shield:
             shieldActive = true
             showShieldGlow()
+            spawnFloatingText("🛡 Shield!", at: CGPoint(x: foodPos.x, y: foodPos.y + 60))
         case .multiplier:
             multiplierActive   = true
-            multiplierTimeLeft = 10.0
+            multiplierTimeLeft = 15.0
             scoreMultiplier    = 2
+            spawnFloatingText("⭐ ×2 Score (15s)!", at: CGPoint(x: foodPos.x, y: foodPos.y + 60))
         case .magnet:
             magnetActive   = true
             magnetTimeLeft = 6.0
@@ -2787,16 +2862,28 @@ class GameScene: SKScene {
             applyShrink()
         }
 
-        // Per-type point values — power-ups are pure utility (0 pts)
+        // Per-type point values; power-ups award 2 pts (parity with botNutrition)
         let pts: Int
         switch type {
         case .regular:                           pts = 2
         case .trail:                             pts = 1
         case .death:                             pts = 5
         case .shield, .multiplier,
-             .magnet, .ghost, .shrink:           pts = 0
+             .magnet, .ghost:                    pts = 2
+        case .shrink:                            pts = 0  // shrink scores via applyShrink()
         }
-        score += pts * scoreMultiplier
+        incrementCombo()
+        let base  = pts * scoreMultiplier
+        let bonus = GameLogic.comboBonus(forComboCount: comboCount)
+        let total = base + bonus
+        score += total
+        if total > 0 {
+            let text  = bonus > 0 ? "+\(total) combo!" : "+\(total)"
+            let color: SKColor = bonus > 0
+                ? SKColor(red: 0.2, green: 1.0, blue: 0.4, alpha: 1.0)
+                : SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+            spawnFloatingText(text, at: foodPos, color: color)
+        }
         updateScoreDisplay()
         updateSpeedForScore()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -2815,11 +2902,11 @@ class GameScene: SKScene {
     }
 
     // MARK: - Floating Score Text
-    func spawnFloatingText(_ text: String, at position: CGPoint) {
+    func spawnFloatingText(_ text: String, at position: CGPoint, color: SKColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)) {
         let label = SKLabelNode(fontNamed: "Arial-BoldMT")
         label.text                    = text
         label.fontSize                = 24
-        label.fontColor               = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+        label.fontColor               = color
         label.horizontalAlignmentMode = .center
         label.verticalAlignmentMode   = .center
         label.position                = position
@@ -4563,7 +4650,7 @@ class GameScene: SKScene {
         case .shield:
             bots[botIndex].shieldCharges = min(2, bots[botIndex].shieldCharges + 1)
         case .multiplier:
-            bots[botIndex].multiplierTimeLeft = 10.0
+            bots[botIndex].multiplierTimeLeft = 15.0
         case .magnet:
             bots[botIndex].magnetTimeLeft = 6.0
         case .ghost:
@@ -4605,7 +4692,7 @@ class GameScene: SKScene {
         switch type {
         case .regular:                   return (1, 2 * scoreMultiplier)
         case .trail:                     return (1, 1 * scoreMultiplier)
-        case .death:                     return (2, 5 * scoreMultiplier)
+        case .death:                     return (1, 5 * scoreMultiplier)
         case .shield, .multiplier,
              .magnet, .ghost:            return (1, 2 * scoreMultiplier)
         case .shrink:                    return (0, 0)
@@ -4731,15 +4818,17 @@ class GameScene: SKScene {
         }
     }
 
-    /// ✂️ Shrink — reduce score by ~10% so that syncSnakeLength() contracts the body accordingly.
+    /// ✂️ Shrink — consolation bonus first, then reduce score by ~10% so syncSnakeLength() contracts body.
     func applyShrink() {
         guard score > 0 else { return }
+        let bonus      = 3
+        score         += bonus * scoreMultiplier       // consolation before reduction
         let reduction  = max(1, score * 10 / 100)
         score          = max(0, score - reduction)
         updateScoreDisplay()
         updateSpeedForScore()   // calls syncSnakeLength() → body contracts
-        invincibleTimeLeft = 0.8   // brief safety window after shrink
-        spawnFloatingText("✂️ Shrink!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 60))
+        invincibleTimeLeft = 1.5   // extended escape window (was 0.8s)
+        spawnFloatingText("✂️ -\(reduction) pts", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 60))
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
@@ -5034,6 +5123,7 @@ class GameScene: SKScene {
         lastUpdateTime = currentTime
 
         updatePowerUps(dt: dt)
+        tickCombo(dt: dt)
         frameCounter += 1
 
         // --- Boost Drain ---
