@@ -3701,12 +3701,17 @@ class GameScene: SKScene {
         let namePool = GameScene.botNamePool
         let botCount = localBotTargetCount
         let nemesisIndex = gameMode == .challenge ? botCount - 1 : -1
+        let themeCount = snakeColorThemes.count
+        let hasMultipleThemes = themeCount > 1
 
         for i in 0..<botCount {
             let playerColorIndex = normalizedSnakeColorIndex(selectedSnakeColorIndex)
-            var colorIndex = (playerColorIndex + 1 + (i % (snakeColorThemes.count - 1))) % snakeColorThemes.count
-            if colorIndex == playerColorIndex {
-                colorIndex = (colorIndex + 1) % snakeColorThemes.count
+            var colorIndex = playerColorIndex
+            if hasMultipleThemes {
+                colorIndex = (playerColorIndex + 1 + (i % (themeCount - 1))) % themeCount
+                if colorIndex == playerColorIndex {
+                    colorIndex = (colorIndex + 1) % themeCount
+                }
             }
             let isNemesis = i == nemesisIndex
             let name = isNemesis ? "NEMESIS" : namePool[i % namePool.count]
