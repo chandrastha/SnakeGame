@@ -546,6 +546,45 @@ extension View {
                 }
                 .clipShape(Circle())
             )
+        case .square:
+            self.overlay(
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.15)
+                        .fill(Color.white.opacity(0.30))
+                        .frame(width: size * 0.70, height: size * 0.70)
+                    Ellipse()
+                        .fill(Color.white.opacity(0.55))
+                        .frame(width: size * 0.30, height: size * 0.20)
+                        .offset(x: -size * 0.12, y: -size * 0.14)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.15))
+            )
+        case .stadium:
+            self.overlay(
+                ZStack {
+                    Capsule()
+                        .fill(Color.white.opacity(0.28))
+                        .frame(width: size * 0.75, height: size * 0.45)
+                    Ellipse()
+                        .fill(Color.white.opacity(0.55))
+                        .frame(width: size * 0.28, height: size * 0.16)
+                        .offset(x: -size * 0.15, y: -size * 0.10)
+                }
+                .clipShape(Capsule())
+            )
+        case .hexagon:
+            self.overlay(
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.25))
+                        .frame(width: size * 0.65, height: size * 0.65)
+                    Ellipse()
+                        .fill(Color.white.opacity(0.55))
+                        .frame(width: size * 0.28, height: size * 0.18)
+                        .offset(x: -size * 0.12, y: -size * 0.14)
+                }
+                .clipShape(Circle())
+            )
         }
     }
 }
