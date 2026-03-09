@@ -28,6 +28,11 @@ final class SnakeColorsTests: XCTestCase {
         }
     }
 
+    func test_givenExpandedSkinCatalog_whenInspectingCounts_thenIncludesSixteenThemesAndPatterns() {
+        XCTAssertEqual(snakeColorThemes.count, 16)
+        XCTAssertEqual(SnakePattern.allCases.count, 16)
+    }
+
     func test_givenNegativeColorIndex_whenNormalizing_thenReturnsZero() {
         XCTAssertEqual(normalizedSnakeColorIndex(-5), 0)
     }
