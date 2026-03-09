@@ -19,23 +19,13 @@ final class SnakeGameUITests: XCTestCase {
     @MainActor
     func test_givenFreshLaunch_whenViewingStartScreen_thenCoreControlsAreReachable() {
         XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["modeOffline"].exists)
-        XCTAssertTrue(app.buttons["modeChallenge"].exists)
-        XCTAssertTrue(app.buttons["leaderboardButton"].exists)
+        XCTAssertTrue(app.buttons["modeCasual"].exists)
+        XCTAssertTrue(app.buttons["modeExpert"].exists)
     }
 
     @MainActor
-    func test_givenStartScreen_whenOpeningAndClosingLeaderboard_thenReturnsToStartScreen() {
-        app.buttons["leaderboardButton"].tap()
-        XCTAssertTrue(app.staticTexts["leaderboardTitle"].waitForExistence(timeout: 5))
-
-        app.buttons["closeButton"].tap()
-        XCTAssertTrue(app.buttons["playButton"].waitForExistence(timeout: 5))
-    }
-
-    @MainActor
-    func test_givenOfflineMode_whenTappingPlay_thenTransitionsToGame() {
-        app.buttons["modeOffline"].tap()
+    func test_givenCasualMode_whenTappingPlay_thenTransitionsToGame() {
+        app.buttons["modeCasual"].tap()
         let playButton = app.buttons["playButton"]
         playButton.tap()
 
@@ -46,14 +36,14 @@ final class SnakeGameUITests: XCTestCase {
 
     @MainActor
     func test_givenModeButtons_whenTogglingModes_thenControlsRemainInteractable() {
-        let offline = app.buttons["modeOffline"]
-        let challenge = app.buttons["modeChallenge"]
+        let casual = app.buttons["modeCasual"]
+        let expert = app.buttons["modeExpert"]
 
-        offline.tap()
-        XCTAssertTrue(offline.isHittable)
+        casual.tap()
+        XCTAssertTrue(casual.isHittable)
 
-        challenge.tap()
-        XCTAssertTrue(challenge.isHittable)
+        expert.tap()
+        XCTAssertTrue(expert.isHittable)
     }
 
     @MainActor
@@ -62,19 +52,11 @@ final class SnakeGameUITests: XCTestCase {
     }
 
     @MainActor
-    func test_givenOfflineMode_whenTappingPlay_thenOnlineMatchmakingIsNotPresented() {
-        app.buttons["modeOffline"].tap()
+    func test_givenCasualMode_whenTappingPlay_thenOnlineMatchmakingIsNotPresented() {
+        app.buttons["modeCasual"].tap()
         app.buttons["playButton"].tap()
 
         XCTAssertFalse(app.staticTexts["🌐  ONLINE"].waitForExistence(timeout: 1))
-    }
-
-    @MainActor
-    func test_givenLeaderboardWithoutScores_whenPresented_thenShowsEmptyStateMessage() {
-        app.buttons["leaderboardButton"].tap()
-
-        let emptyStateText = app.staticTexts["No scores yet.\nPlay a game to get started!"]
-        XCTAssertTrue(emptyStateText.waitForExistence(timeout: 5))
     }
 
     // MARK: - UI Tests: Orientation
