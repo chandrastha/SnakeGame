@@ -174,7 +174,7 @@ class GameScene: SKScene {
     let initialBodyCount:        Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
-    let foodCount:               Int     = 340
+    let foodCount:               Int     = 620
     let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
@@ -230,7 +230,7 @@ class GameScene: SKScene {
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
-    let maxTrailFoodItems:   Int     = 220    // hard cap on active .trail nodes
+    let maxTrailFoodItems:   Int     = 300    // hard cap on active .trail nodes
     // Trail food: makeTrailFoodNode — scaled body segment matching player skin + pattern
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
@@ -778,7 +778,7 @@ class GameScene: SKScene {
 
     // MARK: - Bots (Offline mode)
     var bots: [BotState] = []
-    let totalBots = 50
+    let totalBots = 60
     let challengeNemesisScore = 1000
     let expertNemesisInitialDelay: CGFloat = 30.0   // was 60 — Nemesis arrives sooner in Expert
     let expertNemesisRespawnDelay: CGFloat = 60.0   // was 120 — Nemesis comes back faster
@@ -876,7 +876,7 @@ class GameScene: SKScene {
     }
 
     private func joystickMargins() -> CGPoint {
-        isLandscapeLayout ? CGPoint(x: 128, y: 190) : CGPoint(x: 132, y: 176)
+        isLandscapeLayout ? CGPoint(x: 165, y: 190) : CGPoint(x: 168, y: 176)
     }
 
     private func boostMargins() -> CGPoint {
@@ -2439,7 +2439,7 @@ class GameScene: SKScene {
             score: score,
             isCurrentPlayer: true
         )]
-        for i in 0..<bots.count where bots[i].isActive && !bots[i].isDead {
+        for i in 0..<bots.count {
             entries.append(LeaderboardScoreEntry(name: bots[i].name, score: bots[i].score, isCurrentPlayer: false))
         }
         let visibleEntries = GameLogic.leaderboardDisplayEntries(from: entries)
@@ -3468,6 +3468,31 @@ class GameScene: SKScene {
         ).cgPath
     }
 
+    func makeSquarePath(radius: CGFloat) -> CGPath {
+        let side = radius * 1.72
+        return CGPath(roundedRect: CGRect(x: -side/2, y: -side/2, width: side, height: side),
+                      cornerWidth: radius * 0.22, cornerHeight: radius * 0.22, transform: nil)
+    }
+
+    func makeStadiumPath(radius: CGFloat) -> CGPath {
+        // Horizontal capsule - circle chopped on left and right
+        let w = radius * 2.1
+        let h = radius * 1.5
+        return CGPath(roundedRect: CGRect(x: -w/2, y: -h/2, width: w, height: h),
+                      cornerWidth: h/2, cornerHeight: h/2, transform: nil)
+    }
+
+    func makeHexagonPath(radius: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        for i in 0..<6 {
+            let angle = CGFloat(i) * .pi / 3.0 - .pi / 6.0
+            let pt = CGPoint(x: radius * cos(angle), y: radius * sin(angle))
+            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+        }
+        path.closeSubpath()
+        return path
+    }
+
     func makeBodySegment(color: SKColor, stroke: SKColor,
                          pattern: SnakePattern = .solid,
                          segIndex: Int = 0) -> SKShapeNode {
@@ -3483,6 +3508,12 @@ class GameScene: SKScene {
             seg = SKShapeNode(path: makeRoundedRectPath(size: pillSize, cornerRadius: bodySegmentRadius))
         } else if pattern == .leaf {
             seg = SKShapeNode(path: makeLeafPath(radius: bodySegmentRadius))
+        } else if pattern == .square {
+            seg = SKShapeNode(path: makeSquarePath(radius: bodySegmentRadius))
+        } else if pattern == .stadium {
+            seg = SKShapeNode(path: makeStadiumPath(radius: bodySegmentRadius))
+        } else if pattern == .hexagon {
+            seg = SKShapeNode(path: makeHexagonPath(radius: bodySegmentRadius))
         } else {
             seg = SKShapeNode(circleOfRadius: bodySegmentRadius)
         }
@@ -3517,6 +3548,9 @@ class GameScene: SKScene {
             seg.fillColor   = color.darkened(by: 0.20)
             seg.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.08, alpha: 0.90)
         case .sphere, .cylinder, .leaf, .rainbow:
+            seg.fillColor   = color
+            seg.strokeColor = stroke
+        case .square, .stadium, .hexagon:
             seg.fillColor   = color
             seg.strokeColor = stroke
         default:
@@ -3868,6 +3902,24 @@ class GameScene: SKScene {
 
         default: break
         }
+
+        // Highlight node (upper-left) — applied to ALL body segments
+        let highlight = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.38)
+        highlight.fillColor = SKColor(white: 1.0, alpha: 0.28)
+        highlight.strokeColor = .clear
+        highlight.position = CGPoint(x: -bodySegmentRadius * 0.28, y: bodySegmentRadius * 0.28)
+        highlight.zPosition = 0.1
+        highlight.isUserInteractionEnabled = false
+        seg.addChild(highlight)
+
+        // Shadow node (lower-right)
+        let segShadow = SKShapeNode(ellipseOf: CGSize(width: bodySegmentRadius * 0.80, height: bodySegmentRadius * 0.55))
+        segShadow.fillColor = SKColor(red: 0, green: 0, blue: 0, alpha: 0.20)
+        segShadow.strokeColor = .clear
+        segShadow.position = CGPoint(x: bodySegmentRadius * 0.20, y: -bodySegmentRadius * 0.22)
+        segShadow.zPosition = 0.1
+        segShadow.isUserInteractionEnabled = false
+        seg.addChild(segShadow)
 
         return seg
     }

@@ -130,6 +130,9 @@ enum SnakePattern: Int, CaseIterable {
     case armor       = 19  // Dark capsule with gold band rings
     case leaf        = 20  // Organic leaf-shaped segments with vein
     case rainbow     = 21  // Each segment cycles through rainbow hues
+    case square      = 22  // Rounded square segments
+    case stadium     = 23  // Horizontal capsule segments
+    case hexagon     = 24  // Hexagonal segments
 
     var name: String {
         switch self {
@@ -155,6 +158,9 @@ enum SnakePattern: Int, CaseIterable {
         case .armor:       return "Armor"
         case .leaf:        return "Leaf"
         case .rainbow:     return "Rainbow"
+        case .square:      return "Square"
+        case .stadium:     return "Stadium"
+        case .hexagon:     return "Hexagon"
         }
     }
 
@@ -182,6 +188,9 @@ enum SnakePattern: Int, CaseIterable {
         case .armor:       return "🛡️"
         case .leaf:        return "🍃"
         case .rainbow:     return "🌈"
+        case .square:      return "⬛"
+        case .stadium:     return "💊"
+        case .hexagon:     return "⬡"
         }
     }
 }
