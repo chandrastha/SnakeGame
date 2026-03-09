@@ -547,45 +547,48 @@ extension View {
                 .clipShape(Circle())
             )
         case .square:
-            self.overlay(
-                ZStack {
-                    RoundedRectangle(cornerRadius: size * 0.15)
-                        .fill(Color.white.opacity(0.30))
-                        .frame(width: size * 0.70, height: size * 0.70)
+            self
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.18))
+                .overlay(
                     Ellipse()
-                        .fill(Color.white.opacity(0.55))
-                        .frame(width: size * 0.30, height: size * 0.20)
+                        .fill(Color.white.opacity(0.50))
+                        .frame(width: size * 0.32, height: size * 0.20)
                         .offset(x: -size * 0.12, y: -size * 0.14)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: size * 0.15))
-            )
+                )
         case .stadium:
-            self.overlay(
-                ZStack {
-                    Capsule()
-                        .fill(Color.white.opacity(0.28))
-                        .frame(width: size * 0.75, height: size * 0.45)
+            self
+                .clipShape(Capsule())
+                .overlay(
                     Ellipse()
-                        .fill(Color.white.opacity(0.55))
+                        .fill(Color.white.opacity(0.50))
                         .frame(width: size * 0.28, height: size * 0.16)
                         .offset(x: -size * 0.15, y: -size * 0.10)
-                }
-                .clipShape(Capsule())
-            )
+                )
         case .hexagon:
-            self.overlay(
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.25))
-                        .frame(width: size * 0.65, height: size * 0.65)
+            self
+                .clipShape(HexagonShape())
+                .overlay(
                     Ellipse()
-                        .fill(Color.white.opacity(0.55))
-                        .frame(width: size * 0.28, height: size * 0.18)
+                        .fill(Color.white.opacity(0.50))
+                        .frame(width: size * 0.30, height: size * 0.18)
                         .offset(x: -size * 0.12, y: -size * 0.14)
-                }
-                .clipShape(Circle())
-            )
+                )
         }
+    }
+}
+
+private struct HexagonShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let r = min(rect.width, rect.height) / 2
+        for i in 0..<6 {
+            let angle = CGFloat(i) * .pi / 3 - .pi / 6
+            let pt = CGPoint(x: center.x + r * cos(angle), y: center.y + r * sin(angle))
+            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+        }
+        path.closeSubpath()
+        return path
     }
 }
 

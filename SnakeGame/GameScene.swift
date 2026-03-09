@@ -64,7 +64,6 @@ struct BotState {
     var isNemesis: Bool
     var isCircled: Bool = false
     var circledTimer: CGFloat = 0
-    var isExiting: Bool = false
 
     init(id: Int, position: CGPoint, colorIndex: Int, name: String) {
         self.id           = id
@@ -183,7 +182,7 @@ class GameScene: SKScene {
     let initialBodyCount:        Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
-    let foodCount:               Int     = 620
+    let foodCount:               Int     = 340
     let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
@@ -239,7 +238,7 @@ class GameScene: SKScene {
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
-    let maxTrailFoodItems:   Int     = 300    // hard cap on active .trail nodes
+    let maxTrailFoodItems:   Int     = 220    // hard cap on active .trail nodes
     // Trail food: makeTrailFoodNode — scaled body segment matching player skin + pattern
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
@@ -806,9 +805,8 @@ class GameScene: SKScene {
     let expertBotBoostCooldownRange: ClosedRange<CGFloat> = 0.65...1.50
     let botDetailedAIRadius: CGFloat = 1200.0
     let botCollisionBroadPhaseRadius: CGFloat = 260.0
-    let botActivationDistance: CGFloat = 1500.0
-    let botDeactivationDistance: CGFloat = 1800.0
-    var botExitDeactivationDistSq: CGFloat { 2200 * 2200 }
+    let botActivationDistance: CGFloat = 920.0
+    let botDeactivationDistance: CGFloat = 1120.0
     var botVisibilityUpdateTimer: CGFloat = 0
     var circledDetectionTimer: CGFloat = 0
     var frameCounter = 0
@@ -2493,7 +2491,7 @@ class GameScene: SKScene {
             score: score,
             isCurrentPlayer: true
         )]
-        for i in 0..<bots.count {
+        for i in 0..<bots.count where bots[i].isActive && !bots[i].isDead {
             entries.append(LeaderboardScoreEntry(name: bots[i].name, score: bots[i].score, isCurrentPlayer: false))
         }
         let visibleEntries = GameLogic.leaderboardDisplayEntries(from: entries)
@@ -4146,20 +4144,7 @@ class GameScene: SKScene {
             let distSq = dx * dx + dy * dy
 
             if bots[i].isActive {
-                if distSq > deactivateSq && !bots[i].isExiting {
-                    bots[i].isExiting = true
-                    // Point bot away from player to slither off-screen naturally
-                    let awayAngle = atan2(bots[i].position.y - playerPos.y,
-                                          bots[i].position.x - playerPos.x)
-                    bots[i].focusPoint = CGPoint(
-                        x: bots[i].position.x + cos(awayAngle) * 800,
-                        y: bots[i].position.y + sin(awayAngle) * 800
-                    )
-                    bots[i].intent = .roam
-                } else if bots[i].isExiting && distSq > botExitDeactivationDistSq {
-                    bots[i].isExiting = false
-                    deactivateBot(i)
-                }
+                if distSq > deactivateSq { deactivateBot(i) }
             } else {
                 if distSq < activateSq { activateBot(i) }
             }
@@ -4322,7 +4307,6 @@ class GameScene: SKScene {
         cacheBodyPositions(from: bots[index].body, into: &bots[index].bodyPositionCache)
         updateBotBodyScales(index)
         bots[index].isActive = true
-        bots[index].isExiting = false
         bots[index].isCircled = false
         bots[index].circledTimer = 0
         miniLeaderboardNeedsRefresh = true
@@ -4396,7 +4380,6 @@ class GameScene: SKScene {
         bots[index].focusPoint = nil
         bots[index].focusTimer = 0
         bots[index].intent = .roam
-        bots[index].isExiting = false
         bots[index].isCircled = false
         bots[index].circledTimer = 0
         if bots[index].isNemesis && gameMode == .challenge {
