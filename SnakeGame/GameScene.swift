@@ -252,7 +252,7 @@ class GameScene: SKScene {
     var isGameOver: Bool = false
 
     // MARK: - Score & HUD
-    var scorePanel:       SKShapeNode!
+    var scorePanel:       SKShapeNode?
     var scoreLabel:       SKLabelNode!
     var scorePanelHeight: CGFloat = 40
     var miniLeaderboard:  SKNode?
@@ -1428,9 +1428,8 @@ class GameScene: SKScene {
         boostButtonNode?.position = boostButtonCenter
         boostButtonNode?.setScale(controlScale * (isBoostHeld ? 1.15 : 1.0))
 
-        let panelH = scorePanelHeight
-        scorePanel?.position   = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
-        comboPanelNode?.position = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH - 42)
+        scoreLabel?.position     = CGPoint(x: cx, y: cy + extents.halfH - 20)
+        comboPanelNode?.position = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 70)
         powerUpPanel?.position = CGPoint(x: cx, y: cy - extents.halfH + 170)
         minimapNode?.position = CGPoint(x: cx + extents.halfW - minimapInset.x, y: cy + extents.halfH - minimapInset.y)
         miniLeaderboard?.position = CGPoint(x: cx + extents.halfW - minimapInset.x + 40, y: cy + extents.halfH - minimapInset.y - 132)
@@ -2258,45 +2257,36 @@ class GameScene: SKScene {
 
     // MARK: - Score Panel
     func createScorePanel() {
+        // Shadow for readability on any background
+        let shadow = SKLabelNode(fontNamed: "Arial-BoldMT")
+        shadow.text                    = "0"
+        shadow.fontSize                = 32
+        shadow.fontColor               = SKColor(red: 0, green: 0, blue: 0, alpha: 0.55)
+        shadow.horizontalAlignmentMode = .center
+        shadow.verticalAlignmentMode   = .top
+        shadow.position                = CGPoint(x: 2, y: -2)
+        shadow.zPosition               = -1
+        shadow.name                    = "scoreShadow"
+
         scoreLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        scoreLabel.text                    = "SCORE 0"
-        scoreLabel.fontSize                = 18
+        scoreLabel.text                    = "0"
+        scoreLabel.fontSize                = 32
         scoreLabel.fontColor               = .white
-        scoreLabel.horizontalAlignmentMode = .left
-        scoreLabel.verticalAlignmentMode   = .center
-
-        let hPad: CGFloat = 16, vPad: CGFloat = 10
-        let panelW = max(scoreLabel.frame.width + hPad * 2, 118)
-        let panelH = scoreLabel.frame.height + vPad * 2
-        scorePanelHeight = panelH
-
-        scorePanel = SKShapeNode(rect: CGRect(x: 0, y: 0, width: panelW, height: panelH), cornerRadius: 12)
-        scorePanel.fillColor   = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.85)
-        scorePanel.strokeColor = SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.45)
-        scorePanel.lineWidth   = 1.0
-        scorePanel.zPosition   = 500
+        scoreLabel.horizontalAlignmentMode = .center
+        scoreLabel.verticalAlignmentMode   = .top
+        scoreLabel.zPosition               = 501
+        scoreLabel.addChild(shadow)
 
         let cx = worldSize / 2, cy = worldSize / 2
-        scorePanel.position = CGPoint(x: cx - size.width/2 + 20, y: cy + size.height/2 - 60 - panelH)
-
-        scoreLabel.position = CGPoint(x: hPad, y: panelH / 2)
-        scorePanel.addChild(scoreLabel)
-        addChild(scorePanel)
+        scoreLabel.position = CGPoint(x: cx, y: cy + size.height / 2 - 20)
+        addChild(scoreLabel)
     }
 
 
     func updateScoreDisplay() {
-        guard scoreLabel != nil, scorePanel != nil else { return }
-        scoreLabel.text = "SCORE \(score)"
-        let hPad: CGFloat = 16, vPad: CGFloat = 10
-        let panelW = max(scoreLabel.frame.width + hPad * 2, 118)
-        let panelH = scoreLabel.frame.height + vPad * 2
-        scorePanelHeight = panelH
-        scorePanel.path = CGPath(
-            roundedRect: CGRect(x: 0, y: 0, width: panelW, height: panelH),
-            cornerWidth: 12, cornerHeight: 12, transform: nil
-        )
-        scoreLabel.position = CGPoint(x: hPad, y: panelH / 2)
+        guard scoreLabel != nil else { return }
+        scoreLabel.text = "\(score)"
+        (scoreLabel.childNode(withName: "scoreShadow") as? SKLabelNode)?.text = "\(score)"
         miniLeaderboardNeedsRefresh = true
     }
 
