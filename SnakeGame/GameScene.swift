@@ -3195,6 +3195,36 @@ class GameScene: SKScene {
         ]))
     }
 
+    // MARK: - Nemesis Banner
+    private func spawnNemesisBanner() {
+        guard let cam = camera else {
+            spawnFloatingText("⚠️ NEMESIS HAS ARRIVED", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 120),
+                              color: SKColor(red: 1.0, green: 0.18, blue: 0.18, alpha: 1.0))
+            return
+        }
+        let bg = SKShapeNode(rectOf: CGSize(width: size.width, height: 64), cornerRadius: 8)
+        bg.fillColor   = SKColor(red: 0.12, green: 0, blue: 0, alpha: 0.88)
+        bg.strokeColor = SKColor(red: 0.88, green: 0.18, blue: 0.18, alpha: 1.0)
+        bg.lineWidth   = 2
+        bg.glowWidth   = 8
+        bg.zPosition   = 900
+        let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+        lbl.text                    = "  NEMESIS HAS ARRIVED  "
+        lbl.fontSize                = 28
+        lbl.fontColor               = SKColor(red: 1.0, green: 0.25, blue: 0.25, alpha: 1.0)
+        lbl.horizontalAlignmentMode = .center
+        lbl.verticalAlignmentMode   = .center
+        bg.addChild(lbl)
+        bg.position = CGPoint(x: 0, y: size.height / 2 + 64)
+        cam.addChild(bg)
+        bg.run(SKAction.sequence([
+            SKAction.moveTo(y: size.height * 0.28, duration: 0.35),
+            SKAction.wait(forDuration: 1.8),
+            SKAction.moveTo(y: -(size.height / 2 + 64), duration: 0.40),
+            SKAction.removeFromParent()
+        ]))
+    }
+
     // MARK: - Particle Effects
     func spawnEatParticles(at position: CGPoint) {
         let colors: [SKColor] = [
@@ -4488,12 +4518,29 @@ class GameScene: SKScene {
         head.zRotation   = (bot.angle * 180 / .pi - 90) * .pi / 180
         addChild(head)
         addEyes(to: head)
+        if bots[index].isNemesis {
+            head.setScale(1.35)
+            head.glowWidth = 18
+            head.lineWidth = 3.5
+            let ring = SKShapeNode(circleOfRadius: headRadius + 7)
+            ring.fillColor   = .clear
+            ring.strokeColor = SKColor(white: 1.0, alpha: 0.75)
+            ring.lineWidth   = 2.5
+            ring.glowWidth   = 10
+            ring.name        = "nemesisShieldRing"
+            ring.isHidden    = bots[index].shieldCharges <= 0
+            head.addChild(ring)
+        }
         bots[index].head = head
 
         let nameLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         nameLabel.text      = bot.name
         nameLabel.fontSize  = 12
         nameLabel.fontColor = SKColor(white: 1, alpha: 0.80)
+        if bots[index].isNemesis {
+            nameLabel.fontSize  = 16
+            nameLabel.fontColor = SKColor(red: 1.0, green: 0.3, blue: 0.3, alpha: 1.0)
+        }
         nameLabel.horizontalAlignmentMode = .center
         nameLabel.verticalAlignmentMode   = .bottom
         nameLabel.position  = CGPoint(x: 0, y: headRadius + 4)
@@ -4663,7 +4710,7 @@ class GameScene: SKScene {
         configureBotIdentity(index: index, preservePersonality: true)
         activateBot(index)
         if bots[index].isNemesis && gameMode == .challenge {
-            spawnFloatingText("⚠️ Nemesis has entered!", at: CGPoint(x: snakeHead.position.x, y: snakeHead.position.y + 90))
+            spawnNemesisBanner()
         }
         miniLeaderboardNeedsRefresh = true
     }
@@ -4678,7 +4725,7 @@ class GameScene: SKScene {
         let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
         let scoreFraction = CGFloat(min(bots[index].score, botSpeedScoreCap)) / CGFloat(botSpeedScoreCap * 2)
         var speed = base * (1.0 + scoreFraction) * profile.cruiseSpeedMultiplier
-        if bots[index].isNemesis { speed *= 1.18 }
+        if bots[index].isNemesis { speed *= 1.28 }
         // Expert mode: all bots are faster, making gameplay harder.
         if gameMode == .challenge { speed *= expertBotSpeedMultiplier }
         if includeBoost && bots[index].isBoosting {
@@ -5377,10 +5424,31 @@ class GameScene: SKScene {
         head.position = bots[index].position
         head.zRotation = (bots[index].angle * 180 / .pi - 90) * .pi / 180
         // Guard SpriteKit property writes: setting unchanged values still triggers internal state dirty.
-        let targetGlow: CGFloat = bots[index].isBoosting ? 10 : 5
-        if head.glowWidth != targetGlow { head.glowWidth = targetGlow }
-        let targetScale: CGFloat = bots[index].isBoosting ? 1.04 : 1.0
-        if head.xScale != targetScale { head.setScale(targetScale) }
+        // Nemesis uses its own glow/scale values to preserve the larger imposing look.
+        if bots[index].isNemesis {
+            let targetGlow: CGFloat = bots[index].isBoosting ? 26 : 18
+            if head.glowWidth != targetGlow { head.glowWidth = targetGlow }
+            let targetScale: CGFloat = bots[index].isBoosting ? 1.35 * 1.04 : 1.35
+            if head.xScale != targetScale { head.setScale(targetScale) }
+            // Shield ring: show/hide only when charge state changes
+            if let ring = head.childNode(withName: "nemesisShieldRing") as? SKShapeNode {
+                let shouldShow = bots[index].shieldCharges > 0
+                if ring.isHidden == shouldShow {
+                    ring.isHidden = !shouldShow
+                    if shouldShow {
+                        ring.run(SKAction.sequence([
+                            SKAction.scale(to: 1.3, duration: 0.12),
+                            SKAction.scale(to: 1.0, duration: 0.12)
+                        ]))
+                    }
+                }
+            }
+        } else {
+            let targetGlow: CGFloat = bots[index].isBoosting ? 10 : 5
+            if head.glowWidth != targetGlow { head.glowWidth = targetGlow }
+            let targetScale: CGFloat = bots[index].isBoosting ? 1.04 : 1.0
+            if head.xScale != targetScale { head.setScale(targetScale) }
+        }
 
         fillArcPositions(
             history: bots[index].posHistory,
