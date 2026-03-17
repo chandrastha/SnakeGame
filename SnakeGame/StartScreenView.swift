@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import GameController
 
 struct StartScreenView: View {
     @Binding var isPlaying:        Bool
@@ -18,8 +19,10 @@ struct StartScreenView: View {
     @State private var showImagePicker:   Bool = false
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showSourcePicker:  Bool = false
-    @State private var showCustomize:     Bool = false
+    @State private var showCustomize:          Bool = false
+    @State private var showPlayAreaCustomize:  Bool = false
     @State private var pulsePlay:         Bool = false
+    @State private var controllerConnected: Bool = false
 
     // Detect compact vertical class = iPhone landscape
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -33,12 +36,11 @@ struct StartScreenView: View {
             // Layered gradient background
             LinearGradient(
                 colors: [
-                    Color(red: 0.05, green: 0.07, blue: 0.14),
-                    Color(red: 0.10, green: 0.08, blue: 0.18),
-                    Color(red: 0.05, green: 0.07, blue: 0.14)
+                    Color(red: 0.08, green: 0.12, blue: 0.22),
+                    Color(red: 0.15, green: 0.22, blue: 0.38)
                 ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                startPoint: .top,
+                endPoint: .bottom
             )
             .ignoresSafeArea()
 
@@ -64,6 +66,18 @@ struct StartScreenView: View {
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                 pulsePlay = true
             }
+            if let controller = GCController.controllers().first {
+                controllerConnected = true
+                registerControllerHandlers(controller)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidConnect)) { note in
+            guard let controller = note.object as? GCController else { return }
+            controllerConnected = true
+            registerControllerHandlers(controller)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidDisconnect)) { _ in
+            controllerConnected = false
         }
         // Image picker
         .confirmationDialog("Choose Photo", isPresented: $showSourcePicker, titleVisibility: .visible) {
@@ -78,7 +92,8 @@ struct StartScreenView: View {
                 playerImage = AvatarStore.save(image) ?? image
             }
         }
-        .sheet(isPresented: $showCustomize)   { SnakeCustomizeView() }
+        .sheet(isPresented: $showCustomize)          { SnakeCustomizeView() }
+        .sheet(isPresented: $showPlayAreaCustomize) { PlayAreaCustomizeView() }
     }
 
     // ─────────────────────────────────────────────
@@ -252,6 +267,17 @@ struct StartScreenView: View {
                 .background(Color(red: 0.75, green: 0.52, blue: 1.0).opacity(0.14))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
+
+            Button(action: { showPlayAreaCustomize = true }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "squares.leading.rectangle").font(.system(size: 12, weight: .bold))
+                    Text("Layout").font(.system(size: 12, weight: .bold))
+                }
+                .foregroundStyle(Color(red: 0.3, green: 0.75, blue: 1.0))
+                .padding(.horizontal, 11).padding(.vertical, 9)
+                .background(Color(red: 0.3, green: 0.75, blue: 1.0).opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
         }
     }
 
@@ -274,41 +300,59 @@ struct StartScreenView: View {
     }
 
     private var playButton: some View {
-        Button(action: { onPlayTapped() }) {
-            Text("PLAY")
-                .font(.system(size: 28, weight: .black))
-                .foregroundStyle(Color.white)
-                .frame(width: 220, height: 65)
-                .background(LinearGradient(
-                    colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
-                    startPoint: .top, endPoint: .bottom
-                ))
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.65), radius: 18, x: 0, y: 4)
+        VStack(spacing: 6) {
+            Button(action: { onPlayTapped() }) {
+                Text("PLAY")
+                    .font(.system(size: 28, weight: .black))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 220, height: 65)
+                    .background(LinearGradient(
+                        colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
+                        startPoint: .top, endPoint: .bottom
+                    ))
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(
+                        controllerConnected ? Color.white.opacity(0.75) : Color.white.opacity(0.25), lineWidth: controllerConnected ? 2 : 1
+                    ))
+                    .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.65), radius: 18, x: 0, y: 4)
+            }
+            .scaleEffect(pulsePlay ? 1.035 : 1.0)
+            .accessibilityIdentifier("playButton")
+            if controllerConnected {
+                Text("🎮  Ⓐ Play  ·  ◀ ▶ Switch Mode")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.white.opacity(0.40))
+            }
         }
-        .scaleEffect(pulsePlay ? 1.035 : 1.0)
-        .accessibilityIdentifier("playButton")
     }
 
     /// Compact version of the play button used in landscape
     private var playButtonCompact: some View {
-        Button(action: { onPlayTapped() }) {
-            Text("▶  PLAY")
-                .font(.system(size: 22, weight: .black))
-                .foregroundStyle(Color.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(LinearGradient(
-                    colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
-                    startPoint: .top, endPoint: .bottom
-                ))
-                .clipShape(RoundedRectangle(cornerRadius: 15))
-                .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.6), radius: 14, x: 0, y: 3)
+        VStack(spacing: 5) {
+            Button(action: { onPlayTapped() }) {
+                Text("▶  PLAY")
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(Color.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(LinearGradient(
+                        colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
+                        startPoint: .top, endPoint: .bottom
+                    ))
+                    .clipShape(RoundedRectangle(cornerRadius: 15))
+                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(
+                        controllerConnected ? Color.white.opacity(0.75) : Color.white.opacity(0.25), lineWidth: controllerConnected ? 2 : 1
+                    ))
+                    .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.6), radius: 14, x: 0, y: 3)
+            }
+            .scaleEffect(pulsePlay ? 1.035 : 1.0)
+            .accessibilityIdentifier("playButton")
+            if controllerConnected {
+                Text("🎮  Ⓐ Play  ·  ◀ ▶ Mode")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.white.opacity(0.40))
+            }
         }
-        .scaleEffect(pulsePlay ? 1.035 : 1.0)
-        .accessibilityIdentifier("playButton")
     }
 
     private var instructionLabel: some View {
@@ -322,6 +366,21 @@ struct StartScreenView: View {
         switch selectedGameMode {
         case .offline: return "99 bots · Casual mode"
         case .challenge: return "Expert mode · delayed nemesis · survive the hunt"
+        }
+    }
+
+    private func registerControllerHandlers(_ controller: GCController) {
+        controller.extendedGamepad?.buttonA.pressedChangedHandler = { _, _, pressed in
+            guard pressed else { return }
+            DispatchQueue.main.async { onPlayTapped() }
+        }
+        controller.extendedGamepad?.dpad.left.pressedChangedHandler = { _, _, pressed in
+            guard pressed else { return }
+            DispatchQueue.main.async { selectedGameMode = .offline }
+        }
+        controller.extendedGamepad?.dpad.right.pressedChangedHandler = { _, _, pressed in
+            guard pressed else { return }
+            DispatchQueue.main.async { selectedGameMode = .challenge }
         }
     }
 }

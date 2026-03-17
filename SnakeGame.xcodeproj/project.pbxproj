@@ -6,9 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		E539AB952F4E15A700A78880 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -32,9 +29,22 @@
 		E539AB9E2F4E15A700A78880 /* SnakeGameUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SnakeGameUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		E5FB394F2F69FBA100377B00 /* Exceptions for "SnakeGame" folder in "SnakeGame" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = E539AB862F4E15A400A78880 /* SnakeGame */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E539AB892F4E15A400A78880 /* SnakeGame */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E5FB394F2F69FBA100377B00 /* Exceptions for "SnakeGame" folder in "SnakeGame" target */,
+			);
 			path = SnakeGame;
 			sourceTree = "<group>";
 		};
@@ -405,8 +415,10 @@
 				DEVELOPMENT_TEAM = UNB3YS9PAB;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SnakeGame/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = VipeRun;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
+				INFOPLIST_KEY_GCSupportsControllerUserInteraction = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.adventure-games";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take a selfie as your snake head";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Used to take a selfie as your snake head";
@@ -439,8 +451,10 @@
 				DEVELOPMENT_TEAM = UNB3YS9PAB;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SnakeGame/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = VipeRun;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
+				INFOPLIST_KEY_GCSupportsControllerUserInteraction = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.adventure-games";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Used to take a selfie as your snake head";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Used to take a selfie as your snake head";
@@ -575,12 +589,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E539AB7F2F4E15A400A78880 /* Project object */;
 }

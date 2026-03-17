@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var selectedGameMode: GameMode = .offline
 
     @State private var playerImage: UIImage? = AvatarStore.load()
+    @ObservedObject private var layoutStore = PlayAreaLayoutStore.shared
 
     @AppStorage("selectedSnakeColorIndex")  private var selectedSnakeColorIndex: Int = 0
     @AppStorage("selectedSnakePatternIndex") private var selectedSnakePatternIndex: Int = 0
@@ -29,6 +30,7 @@ struct ContentView: View {
                     patternIndex: selectedSnakePatternIndex,
                     playerName:   playerName,
                     playerImage:  playerImage,
+                    activeLayout: layoutStore.activeLayout,
                     onGameOver: { _ in
                         withAnimation(.easeInOut(duration: 0.4)) { isPlaying = false }
                     }
@@ -56,6 +58,7 @@ struct GameView: UIViewRepresentable {
     let patternIndex: Int
     let playerName:  String
     let playerImage: UIImage?
+    let activeLayout: PlayAreaLayout
     let onGameOver:  (Int) -> Void
 
     func makeUIView(context: Context) -> SKView {
@@ -72,6 +75,7 @@ struct GameView: UIViewRepresentable {
         scene.selectedSnakePatternIndex = patternIndex
         scene.playerName               = playerName
         scene.playerHeadImage          = playerImage
+        scene.activeLayout             = activeLayout
         scene.onGameOver               = onGameOver
 
         skView.presentScene(scene)
@@ -79,9 +83,13 @@ struct GameView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SKView, context: Context) {
-        if let scene = uiView.scene {
+        if let scene = uiView.scene as? GameScene {
             let newSize = uiView.bounds.size
             if newSize != .zero && scene.size != newSize { scene.size = newSize }
+            if scene.activeLayout != activeLayout {
+                scene.activeLayout = activeLayout
+                scene.repositionUI()
+            }
         }
     }
 
