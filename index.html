@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VipeRun - Classic Snake Game Reimagined</title>
+    <meta name="description" content="Experience the classic snake game with a modern twist. Download VipeRun on iOS - customize your snake, master different game modes, and compete for high scores!">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        header {
+            padding: 60px 0;
+            text-align: center;
+            color: white;
+        }
+        
+        .logo {
+            font-size: 3.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .tagline {
+            font-size: 1.3em;
+            opacity: 0.95;
+            margin-bottom: 30px;
+        }
+        
+        .app-store-badge {
+            display: inline-block;
+            margin-top: 20px;
+        }
+        
+        .app-store-badge img {
+            height: 50px;
+            transition: transform 0.2s;
+        }
+        
+        .app-store-badge img:hover {
+            transform: scale(1.05);
+        }
+        
+        .hero {
+            background: white;
+            border-radius: 20px;
+            padding: 60px 40px;
+            margin: -40px 20px 60px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin: 40px 0;
+        }
+        
+        .feature {
+            text-align: center;
+            padding: 30px 20px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            transition: transform 0.2s;
+        }
+        
+        .feature:hover {
+            transform: translateY(-5px);
+        }
+        
+        .feature-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+        
+        .feature h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+        
+        .support-section {
+            background: white;
+            border-radius: 20px;
+            padding: 50px 40px;
+            margin: 40px 20px;
+        }
+        
+        .faq-item {
+            margin-bottom: 25px;
+            padding-bottom: 25px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .faq-item:last-child {
+            border-bottom: none;
+        }
+        
+        .faq-item h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+        
+        .contact {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+            border-radius: 20px;
+            margin: 40px 20px;
+        }
+        
+        .contact h2 {
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+        
+        .contact a {
+            color: white;
+            text-decoration: none;
+            font-size: 1.2em;
+            font-weight: bold;
+            border: 2px solid white;
+            padding: 15px 40px;
+            display: inline-block;
+            border-radius: 30px;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+        
+        .contact a:hover {
+            background: white;
+            color: #667eea;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: white;
+            opacity: 0.8;
+        }
+        
+        .privacy-link {
+            color: white;
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255,255,255,0.5);
+            transition: opacity 0.3s;
+        }
+        
+        .privacy-link:hover {
+            opacity: 0.7;
+        }
+        
+        @media (max-width: 768px) {
+            .logo {
+                font-size: 2.5em;
+            }
+            
+            .hero, .support-section {
+                padding: 40px 25px;
+                margin: 20px 10px;
+            }
+            
+            .features {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">🐍 VipeRun</div>
+            <p class="tagline">Classic snake game reimagined for iOS</p>
+            <div class="app-store-badge">
+                <!-- Replace with your actual App Store link when published -->
+                <a href="https://apps.apple.com" target="_blank">
+                    <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83" alt="Download on the App Store">
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="hero">
+            <h2 style="text-align: center; color: #667eea; font-size: 2.5em; margin-bottom: 40px;">Experience Snake Like Never Before</h2>
+            
+            <div class="features">
+                <div class="feature">
+                    <div class="feature-icon">🎨</div>
+                    <h3>Customize Your Snake</h3>
+                    <p>Choose from various colors and patterns to make your snake unique</p>
+                </div>
+                
+                <div class="feature">
+                    <div class="feature-icon">🎮</div>
+                    <h3>Multiple Game Modes</h3>
+                    <p>Challenge yourself with different difficulty levels and gameplay variations</p>
+                </div>
+                
+                <div class="feature">
+                    <div class="feature-icon">🏆</div>
+                    <h3>High Scores</h3>
+                    <p>Track your progress and compete with your personal best</p>
+                </div>
+                
+                <div class="feature">
+                    <div class="feature-icon">📱</div>
+                    <h3>Smooth Gameplay</h3>
+                    <p>Optimized for iOS with intuitive touch controls</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="support-section">
+            <h2 style="text-align: center; color: #667eea; font-size: 2.5em; margin-bottom: 40px;">Support & FAQ</h2>
+            
+            <div class="faq-item">
+                <h3>How do I play?</h3>
+                <p>Swipe in any direction to control your snake. Eat food to grow longer and score points. Avoid hitting the walls or your own tail!</p>
+            </div>
+            
+            <div class="faq-item">
+                <h3>Can I customize my snake?</h3>
+                <p>Yes! Tap the customize button on the main menu to choose different colors and patterns for your snake.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h3>The game is running slowly. What should I do?</h3>
+                <p>Try closing other apps running in the background. VipeRun is optimized for the latest iOS devices. Make sure your device is updated to the latest iOS version.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h3>How do I restore my purchases?</h3>
+                <p>Go to Settings within the app and tap "Restore Purchases". Make sure you're signed in with the same Apple ID you used for the original purchase.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h3>I found a bug. How can I report it?</h3>
+                <p>Please contact us using the email below with details about the issue, including your device model and iOS version. We appreciate your feedback!</p>
+            </div>
+            
+            <div class="faq-item">
+                <h3>What are the system requirements?</h3>
+                <p>VipeRun requires iOS 15.0 or later and is compatible with iPhone and iPad.</p>
+            </div>
+        </div>
+
+        <div class="contact">
+            <h2>Need Help?</h2>
+            <p style="font-size: 1.1em; margin-bottom: 10px;">We're here to help! Reach out to us for support or feedback.</p>
+            <!-- Replace with your actual support email -->
+            <a href="mailto:support@viperun.com">Contact Support</a>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 VipeRun. All rights reserved.</p>
+            <p style="margin-top: 10px;">
+                <a href="#privacy" class="privacy-link">Privacy Policy</a>
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
