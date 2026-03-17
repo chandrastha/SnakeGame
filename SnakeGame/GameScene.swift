@@ -787,7 +787,7 @@ class GameScene: SKScene {
 
     // MARK: - Bots (Offline mode)
     var bots: [BotState] = []
-    let totalBots = 50
+    let totalBots = 60
     let challengeNemesisScore = 1000
     let expertNemesisInitialDelay: CGFloat = 30.0   // was 60 — Nemesis arrives sooner in Expert
     let expertNemesisRespawnDelay: CGFloat = 60.0   // was 120 — Nemesis comes back faster
@@ -884,20 +884,36 @@ class GameScene: SKScene {
         cameraScale()
     }
 
+    /// Returns safe-area insets from the current window scene (falls back to zero if unavailable).
+    private var safeInsets: UIEdgeInsets {
+        view?.window?.safeAreaInsets ?? .zero
+    }
+
     private func joystickMargins() -> CGPoint {
-        isLandscapeLayout ? CGPoint(x: 128, y: 190) : CGPoint(x: 132, y: 176)
+        let si = safeInsets
+        let baseX: CGFloat = isLandscapeLayout ? 128 : 132
+        let baseY: CGFloat = isLandscapeLayout ? 190 : 176
+        // Respect home-indicator / notch padding so thumb never clips into the safe area.
+        return CGPoint(x: baseX + si.left, y: baseY + si.bottom)
     }
 
     private func boostMargins() -> CGPoint {
-        isLandscapeLayout ? CGPoint(x: 148, y: 200) : CGPoint(x: 138, y: 176)
+        let si = safeInsets
+        let baseX: CGFloat = isLandscapeLayout ? 148 : 138
+        let baseY: CGFloat = isLandscapeLayout ? 200 : 176
+        return CGPoint(x: baseX + si.right, y: baseY + si.bottom)
     }
 
     private func minimapMargins() -> CGPoint {
-        isLandscapeLayout ? CGPoint(x: 106, y: 78) : CGPoint(x: 88, y: 68)
+        let si = safeInsets
+        let baseX: CGFloat = isLandscapeLayout ? 106 : 88
+        let baseY: CGFloat = isLandscapeLayout ? 78 : 68
+        return CGPoint(x: baseX + si.right, y: baseY + si.top)
     }
 
     private func leaderArrowMarginTop() -> CGFloat {
-        isLandscapeLayout ? 68 : 74
+        let si = safeInsets
+        return (isLandscapeLayout ? 68 : 74) + si.top
     }
 
     private var selectedSnakePattern: SnakePattern {
@@ -1144,27 +1160,48 @@ class GameScene: SKScene {
                     : SKColor(red: 0.07, green: 0.34, blue: 0.38, alpha: 0.14)
             } else {
                 band.fillColor = bandIndex.isMultiple(of: 2)
-                    ? (isChallengeMode ? SKColor(red: 0.52, green: 0.14, blue: 0.12, alpha: 0.24) : SKColor(red: 0.28, green: 0.37, blue: 0.43, alpha: 0.18))
-                    : (isChallengeMode ? SKColor(red: 0.16, green: 0.04, blue: 0.04, alpha: 0.22) : SKColor(red: 0.12, green: 0.19, blue: 0.25, alpha: 0.16))
+                    ? (isChallengeMode ? SKColor(red: 0.65, green: 0.16, blue: 0.12, alpha: 0.30) : SKColor(red: 0.30, green: 0.45, blue: 0.58, alpha: 0.22))
+                    : (isChallengeMode ? SKColor(red: 0.18, green: 0.05, blue: 0.04, alpha: 0.26) : SKColor(red: 0.14, green: 0.24, blue: 0.34, alpha: 0.18))
             }
             band.strokeColor = .clear
             band.zPosition = -10.8
             addChild(band)
         }
 
-        let glowCenters: [CGPoint] = [
-            CGPoint(x: worldSize * 0.22, y: worldSize * 0.24),
-            CGPoint(x: worldSize * 0.78, y: worldSize * 0.30),
-            CGPoint(x: worldSize * 0.36, y: worldSize * 0.74),
-            CGPoint(x: worldSize * 0.74, y: worldSize * 0.82)
+        // Ambient glow orbs — larger, brighter, with an outer soft ring for depth
+        let glowData: [(CGPoint, CGFloat)] = [
+            (CGPoint(x: worldSize * 0.22, y: worldSize * 0.24), 340),
+            (CGPoint(x: worldSize * 0.78, y: worldSize * 0.30), 270),
+            (CGPoint(x: worldSize * 0.36, y: worldSize * 0.74), 300),
+            (CGPoint(x: worldSize * 0.74, y: worldSize * 0.82), 260),
+            // Extra orbs for visual richness
+            (CGPoint(x: worldSize * 0.50, y: worldSize * 0.50), 420),
+            (CGPoint(x: worldSize * 0.12, y: worldSize * 0.65), 200),
+            (CGPoint(x: worldSize * 0.88, y: worldSize * 0.55), 210),
         ]
-        for (index, center) in glowCenters.enumerated() {
-            let glow = SKShapeNode(circleOfRadius: index.isMultiple(of: 2) ? 300 : 240)
+        for (index, (center, radius)) in glowData.enumerated() {
+            let isLarge = index.isMultiple(of: 2)
+            // Outer soft halo
+            let halo = SKShapeNode(circleOfRadius: radius * 1.6)
+            halo.position = center
+            halo.fillColor = isLarge
+                ? (isChallengeMode ? SKColor(red: 0.80, green: 0.18, blue: 0.10, alpha: 0.06) : SKColor(red: 0.30, green: 0.60, blue: 0.80, alpha: 0.04))
+                : (isChallengeMode ? SKColor(red: 0.55, green: 0.08, blue: 0.08, alpha: 0.07) : SKColor(red: 0.20, green: 0.45, blue: 0.65, alpha: 0.05))
+            halo.strokeColor = .clear
+            halo.zPosition = -10.9
+            addChild(halo)
+
+            // Inner vivid glow
+            let glow = SKShapeNode(circleOfRadius: radius)
             glow.position = center
-            glow.fillColor = index.isMultiple(of: 2)
-                ? (isChallengeMode ? SKColor(red: 0.95, green: 0.32, blue: 0.22, alpha: 0.12) : SKColor(red: 0.60, green: 0.78, blue: 0.82, alpha: 0.07))
-                : (isChallengeMode ? SKColor(red: 0.38, green: 0.09, blue: 0.10, alpha: 0.16) : SKColor(red: 0.15, green: 0.23, blue: 0.31, alpha: 0.10))
-            glow.strokeColor = .clear
+            glow.fillColor = isLarge
+                ? (isChallengeMode ? SKColor(red: 0.98, green: 0.35, blue: 0.18, alpha: 0.20) : SKColor(red: 0.45, green: 0.72, blue: 0.90, alpha: 0.13))
+                : (isChallengeMode ? SKColor(red: 0.65, green: 0.12, blue: 0.12, alpha: 0.22) : SKColor(red: 0.28, green: 0.55, blue: 0.75, alpha: 0.14))
+            glow.strokeColor = isLarge
+                ? (isChallengeMode ? SKColor(red: 1.0, green: 0.45, blue: 0.20, alpha: 0.10) : SKColor(red: 0.55, green: 0.85, blue: 1.0, alpha: 0.08))
+                : .clear
+            glow.lineWidth   = 1.5
+            glow.glowWidth   = isLarge ? 24 : 14
             glow.zPosition = -10.7
             addChild(glow)
         }
@@ -1239,8 +1276,8 @@ class GameScene: SKScene {
 
         let grid = SKShapeNode(path: path)
         grid.strokeColor = isChallengeMode
-            ? SKColor(red: 0.96, green: 0.50, blue: 0.42, alpha: 0.11)
-            : SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.10)
+            ? SKColor(red: 1.0, green: 0.42, blue: 0.30, alpha: 0.18)
+            : SKColor(red: 0.72, green: 0.90, blue: 1.0, alpha: 0.16)
         grid.lineWidth   = 1
         grid.fillColor   = .clear
         grid.zPosition   = -10
@@ -1264,9 +1301,10 @@ class GameScene: SKScene {
 
         let accentGrid = SKShapeNode(path: accentPath)
         accentGrid.strokeColor = isChallengeMode
-            ? SKColor(red: 0.35, green: 0.08, blue: 0.07, alpha: 0.30)
-            : SKColor(red: 0.10, green: 0.18, blue: 0.24, alpha: 0.22)
+            ? SKColor(red: 0.90, green: 0.28, blue: 0.18, alpha: 0.38)
+            : SKColor(red: 0.40, green: 0.72, blue: 1.0, alpha: 0.28)
         accentGrid.lineWidth = 2
+        accentGrid.glowWidth = isChallengeMode ? 3 : 2
         accentGrid.fillColor = .clear
         accentGrid.zPosition = -9.95
         addChild(accentGrid)
@@ -1285,7 +1323,9 @@ class GameScene: SKScene {
             dx += step
         }
         let dots = SKShapeNode(path: dotPath)
-        dots.fillColor   = SKColor(red: 0.94, green: 0.98, blue: 1.0, alpha: 0.14)
+        dots.fillColor   = isChallengeMode
+            ? SKColor(red: 1.0, green: 0.58, blue: 0.40, alpha: 0.30)
+            : SKColor(red: 0.80, green: 0.95, blue: 1.0, alpha: 0.26)
         dots.strokeColor = .clear
         dots.zPosition   = -10
         addChild(dots)
@@ -1440,12 +1480,19 @@ class GameScene: SKScene {
         boostButtonNode?.position = boostButtonCenter
         boostButtonNode?.setScale(controlScale * (isBoostHeld ? 1.15 : 1.0))
 
-        let panelH = scorePanelHeight
-        scorePanel?.position   = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH)
-        comboPanelNode?.position = CGPoint(x: cx - extents.halfW + 20, y: cy + extents.halfH - 60 - panelH - 42)
-        powerUpPanel?.position = CGPoint(x: cx, y: cy - extents.halfH + 170)
+        let si        = safeInsets
+        let topInset  = si.top
+        let leftInset = si.left
+        let panelH    = scorePanelHeight
+        scorePanel?.position   = CGPoint(x: cx - extents.halfW + 20 + leftInset, y: cy + extents.halfH - 60 - panelH - topInset)
+        comboPanelNode?.position = CGPoint(x: cx - extents.halfW + 20 + leftInset, y: cy + extents.halfH - 60 - panelH - 42 - topInset)
+        powerUpPanel?.position = CGPoint(x: cx, y: cy - extents.halfH + 170 + si.bottom)
         minimapNode?.position = CGPoint(x: cx + extents.halfW - minimapInset.x, y: cy + extents.halfH - minimapInset.y)
-        miniLeaderboard?.position = CGPoint(x: cx + extents.halfW - minimapInset.x + 40, y: cy + extents.halfH - minimapInset.y - 132)
+        // Leaderboard: align its right edge flush with the minimap right edge (no +40 overflow).
+        // Panel width = 168; centre it so right edge = cx + extents.halfW - minimapInset.x + (minimap half-width ~36)
+        let lbRightEdge  = cx + extents.halfW - minimapInset.x + 36
+        let lbCentreX    = lbRightEdge - 84   // 84 = leaderboard panel half-width (168/2)
+        miniLeaderboard?.position = CGPoint(x: lbCentreX, y: cy + extents.halfH - minimapInset.y - 132)
         leaderArrowNode?.position = CGPoint(x: cx, y: cy + extents.halfH - leaderArrowMarginTop())
     }
 
@@ -2086,113 +2133,149 @@ class GameScene: SKScene {
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
         let canRevive = !hasUsedRevive
+        let isExpert  = gameMode == .challenge
 
         let overlay = SKNode()
         overlay.zPosition = 1000
         overlay.name      = "gameOverOverlay"
 
+        // Dimmed full-screen background
         let bg = SKShapeNode(rectOf: CGSize(width: size.width * 2, height: size.height * 2))
-        bg.fillColor   = SKColor(red: 0.03, green: 0.05, blue: 0.12, alpha: 0.88)
+        bg.fillColor   = SKColor(red: 0.02, green: 0.03, blue: 0.10, alpha: 0.92)
         bg.strokeColor = .clear
         bg.position    = CGPoint(x: cx, y: cy)
         overlay.addChild(bg)
 
-        // Card — taller when revive is available
-        let cardH: CGFloat = canRevive ? 330 : 290
-        let card = SKShapeNode(rectOf: CGSize(width: 280, height: cardH), cornerRadius: 22)
-        card.fillColor   = SKColor(red: 0.08, green: 0.10, blue: 0.18, alpha: 0.95)
-        card.strokeColor = canRevive
-            ? SKColor(red: 1.0, green: 0.80, blue: 0.0, alpha: 0.40)
-            : SKColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.30)
+        // Card layout constants — all positions relative to card centre (cx, cy)
+        let cardW: CGFloat = min(300, size.width * 0.82)
+        let cardH: CGFloat = canRevive ? 370 : 320
+        let cardCY = cy   // card vertically centred on screen
+
+        // Card glow ring (outside the card for depth)
+        let glowRing = SKShapeNode(rectOf: CGSize(width: cardW + 12, height: cardH + 12), cornerRadius: 26)
+        glowRing.fillColor   = .clear
+        glowRing.strokeColor = isExpert
+            ? SKColor(red: 1.0, green: 0.45, blue: 0.20, alpha: 0.35)
+            : SKColor(red: 0.35, green: 0.90, blue: 0.50, alpha: 0.35)
+        glowRing.lineWidth   = 2
+        glowRing.glowWidth   = 14
+        glowRing.position    = CGPoint(x: cx, y: cardCY)
+        overlay.addChild(glowRing)
+
+        // Main card
+        let card = SKShapeNode(rectOf: CGSize(width: cardW, height: cardH), cornerRadius: 22)
+        card.fillColor   = SKColor(red: 0.07, green: 0.09, blue: 0.18, alpha: 0.97)
+        card.strokeColor = isExpert
+            ? SKColor(red: 1.0, green: 0.60, blue: 0.20, alpha: 0.30)
+            : SKColor(red: 0.30, green: 0.85, blue: 0.45, alpha: 0.30)
         card.lineWidth   = 1.5
-        card.position    = CGPoint(x: cx, y: cy - 10)
+        card.position    = CGPoint(x: cx, y: cardCY)
         overlay.addChild(card)
 
         // Title
         let titleLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
         titleLabel.text                    = title
-        titleLabel.fontSize                = 38
+        titleLabel.fontSize                = 34
         titleLabel.fontColor               = .white
         titleLabel.horizontalAlignmentMode = .center
         titleLabel.verticalAlignmentMode   = .center
-        titleLabel.position                = CGPoint(x: cx, y: cy + (canRevive ? 118 : 98))
+        titleLabel.position                = CGPoint(x: cx, y: cardCY + cardH / 2 - 46)
         overlay.addChild(titleLabel)
 
-        // Revive button (only if eligible)
-        let playBtnY: CGFloat
-        let menuBtnY: CGFloat
-        if canRevive {
-            playBtnY = cy - 60
-            menuBtnY = cy - 125
+        // Score display
+        let scoreLine = SKLabelNode(fontNamed: "Arial-BoldMT")
+        scoreLine.text                    = "Score  \(score)"
+        scoreLine.fontSize                = 28
+        scoreLine.fontColor               = isExpert
+            ? SKColor(red: 1.0, green: 0.72, blue: 0.35, alpha: 1.0)
+            : SKColor(red: 0.55, green: 1.0, blue: 0.65, alpha: 1.0)
+        scoreLine.horizontalAlignmentMode = .center
+        scoreLine.verticalAlignmentMode   = .center
+        scoreLine.position                = CGPoint(x: cx, y: cardCY + cardH / 2 - 96)
+        overlay.addChild(scoreLine)
 
-            let reviveBtnY = cy - 2
-            let reviveBg = SKShapeNode(rectOf: CGSize(width: 220, height: 48), cornerRadius: 14)
-            reviveBg.fillColor   = SKColor(red: 0.85, green: 0.60, blue: 0.0, alpha: 1.0)
-            reviveBg.strokeColor = SKColor(red: 1.0, green: 0.90, blue: 0.2, alpha: 0.60)
-            reviveBg.lineWidth   = 1.5
-            reviveBg.glowWidth   = 8
-            reviveBg.position    = CGPoint(x: cx, y: reviveBtnY)
-            reviveBg.name        = "reviveButton"
-            overlay.addChild(reviveBg)
+        // Divider line
+        let divPath = CGMutablePath()
+        divPath.move(to: CGPoint(x: cx - cardW * 0.36, y: cardCY + cardH / 2 - 120))
+        divPath.addLine(to: CGPoint(x: cx + cardW * 0.36, y: cardCY + cardH / 2 - 120))
+        let div = SKShapeNode(path: divPath)
+        div.strokeColor = SKColor(white: 1.0, alpha: 0.12)
+        div.lineWidth   = 1
+        overlay.addChild(div)
 
-            let reviveLbl = SKLabelNode(fontNamed: "Arial-BoldMT")
-            reviveLbl.text                    = "REVIVE"
-            reviveLbl.fontSize                = 18
-            reviveLbl.fontColor               = .white
-            reviveLbl.horizontalAlignmentMode = .center
-            reviveLbl.verticalAlignmentMode   = .center
-            reviveLbl.position                = CGPoint(x: cx, y: reviveBtnY)
-            reviveLbl.name                    = "reviveButton"
-            overlay.addChild(reviveLbl)
-        } else {
-            playBtnY = cy - 52
-            menuBtnY = cy - 115
+        // Button Y positions (inside card, below score/divider)
+        let buttonSpacing: CGFloat = 62
+        let firstBtnY = canRevive
+            ? cardCY - cardH / 2 + 194   // leave room for 3 buttons
+            : cardCY - cardH / 2 + 152   // 2 buttons
+
+        // Helper to build a pill button
+        func makeButton(label: String, fillColor: SKColor, strokeColor: SKColor,
+                        glowW: CGFloat, yPos: CGFloat, name: String) {
+            let btnBg = SKShapeNode(rectOf: CGSize(width: cardW - 56, height: 50), cornerRadius: 14)
+            btnBg.fillColor   = fillColor
+            btnBg.strokeColor = strokeColor
+            btnBg.lineWidth   = 1.5
+            btnBg.glowWidth   = glowW
+            btnBg.position    = CGPoint(x: cx, y: yPos)
+            btnBg.name        = name
+            overlay.addChild(btnBg)
+
+            // Specular highlight strip on button
+            let btnSheen = SKShapeNode(rectOf: CGSize(width: cardW - 80, height: 10), cornerRadius: 5)
+            btnSheen.fillColor   = SKColor(white: 1.0, alpha: 0.14)
+            btnSheen.strokeColor = .clear
+            btnSheen.position    = CGPoint(x: cx, y: yPos + 14)
+            btnSheen.zPosition   = 0.5
+            overlay.addChild(btnSheen)
+
+            let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+            lbl.text                    = label
+            lbl.fontSize                = 19
+            lbl.fontColor               = .white
+            lbl.horizontalAlignmentMode = .center
+            lbl.verticalAlignmentMode   = .center
+            lbl.position                = CGPoint(x: cx, y: yPos)
+            lbl.name                    = name
+            overlay.addChild(lbl)
         }
 
-        // Play Again / Rejoin button
-        let restartLabel = "Play Again"
-        let restartBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
-        restartBg.fillColor   = SKColor(red: 0.20, green: 0.78, blue: 0.32, alpha: 1.0)
-        restartBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
-        restartBg.lineWidth   = 1
-        restartBg.glowWidth   = 6
-        restartBg.position    = CGPoint(x: cx, y: playBtnY)
-        restartBg.name        = "restartButton"
-        overlay.addChild(restartBg)
+        var nextBtnY = firstBtnY
+        if canRevive {
+            makeButton(
+                label:       "⚡ Revive",
+                fillColor:   SKColor(red: 0.90, green: 0.58, blue: 0.0, alpha: 1.0),
+                strokeColor: SKColor(red: 1.0, green: 0.85, blue: 0.25, alpha: 0.70),
+                glowW:       10,
+                yPos:        nextBtnY,
+                name:        "reviveButton"
+            )
+            nextBtnY -= buttonSpacing
+        }
 
-        let restartLbl = SKLabelNode(fontNamed: "Arial-BoldMT")
-        restartLbl.text                    = restartLabel
-        restartLbl.fontSize                = 20
-        restartLbl.fontColor               = .white
-        restartLbl.horizontalAlignmentMode = .center
-        restartLbl.verticalAlignmentMode   = .center
-        restartLbl.position                = CGPoint(x: cx, y: playBtnY)
-        restartLbl.name                    = "restartButton"
-        overlay.addChild(restartLbl)
+        makeButton(
+            label:       "Play Again",
+            fillColor:   SKColor(red: 0.18, green: 0.75, blue: 0.30, alpha: 1.0),
+            strokeColor: SKColor(white: 1.0, alpha: 0.22),
+            glowW:       6,
+            yPos:        nextBtnY,
+            name:        "restartButton"
+        )
+        nextBtnY -= buttonSpacing
 
-        // Main Menu button
-        let btnBg = SKShapeNode(rectOf: CGSize(width: 220, height: 50), cornerRadius: 14)
-        btnBg.fillColor   = SKColor(red: 0.12, green: 0.14, blue: 0.22, alpha: 0.95)
-        btnBg.strokeColor = SKColor(white: 1.0, alpha: 0.20)
-        btnBg.lineWidth   = 1
-        btnBg.position    = CGPoint(x: cx, y: menuBtnY)
-        btnBg.name        = "playAgainButton"
-        overlay.addChild(btnBg)
-
-        let btnLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        btnLabel.text                    = "Main Menu"
-        btnLabel.fontSize                = 18
-        btnLabel.fontColor               = SKColor(white: 0.90, alpha: 1.0)
-        btnLabel.horizontalAlignmentMode = .center
-        btnLabel.verticalAlignmentMode   = .center
-        btnLabel.position                = CGPoint(x: cx, y: menuBtnY)
-        btnLabel.name                    = "playAgainButton"
-        overlay.addChild(btnLabel)
+        makeButton(
+            label:       "Main Menu",
+            fillColor:   SKColor(red: 0.12, green: 0.14, blue: 0.24, alpha: 0.95),
+            strokeColor: SKColor(white: 1.0, alpha: 0.18),
+            glowW:       0,
+            yPos:        nextBtnY,
+            name:        "playAgainButton"
+        )
 
         overlay.alpha = 0
         addChild(overlay)
         gameOverOverlay = overlay
-        overlay.run(SKAction.fadeIn(withDuration: 0.4))
+        overlay.run(SKAction.fadeIn(withDuration: 0.35))
     }
 
     func restartGame() {
@@ -2445,8 +2528,8 @@ class GameScene: SKScene {
     func createMiniLeaderboard() {
         let node = SKNode()
         node.zPosition = 500
-        let cx = worldSize / 2, cy = worldSize / 2
-        node.position = CGPoint(x: cx + size.width/2 - 24, y: cy + size.height/2 - 150)
+        // Initial position is corrected by updateHUDPositions() immediately after; just place it off-screen.
+        node.position = CGPoint(x: worldSize / 2, y: worldSize / 2)
         addChild(node)
         miniLeaderboard = node
     }
@@ -3160,53 +3243,106 @@ class GameScene: SKScene {
         let theme    = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
         let spawnPos = CGPoint(x: worldSize / 2, y: worldSize / 2)
 
-        if let image = playerHeadImage {
-            let container = SKNode()
-            container.position = spawnPos
+        // All head variants share a container so we can attach shadow + highlight to both.
+        let container = SKNode()
+        container.position = spawnPos
 
+        // Drop shadow — offset ellipse drawn behind everything else.
+        let shadow = SKShapeNode(ellipseOf: CGSize(width: headRadius * 2.4, height: headRadius * 1.4))
+        shadow.fillColor   = SKColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.45)
+        shadow.strokeColor = .clear
+        shadow.position    = CGPoint(x: 2, y: -4)
+        shadow.zPosition   = -1
+        container.addChild(shadow)
+
+        if let image = playerHeadImage {
             let ring = SKShapeNode(circleOfRadius: headRadius + 2)
-            ring.fillColor = theme.headSKColor
+            ring.fillColor   = theme.headSKColor
             ring.strokeColor = theme.headStrokeSKColor
-            ring.lineWidth = 2
-            ring.glowWidth = 6
+            ring.lineWidth   = 2
+            ring.glowWidth   = 10
             container.addChild(ring)
 
             let texture = SKTexture(image: cropToCircle(image: image, size: CGSize(width: 40, height: 40)))
             let sprite  = SKSpriteNode(texture: texture)
-            sprite.size = CGSize(width: headRadius * 2, height: headRadius * 2)
+            sprite.size      = CGSize(width: headRadius * 2, height: headRadius * 2)
             sprite.zPosition = 1
             container.addChild(sprite)
-
-            addChild(container)
-            snakeHead = container
         } else {
+            // Outer glow ring
+            let glowRing = SKShapeNode(circleOfRadius: headRadius + 3)
+            glowRing.fillColor   = .clear
+            glowRing.strokeColor = theme.headSKColor.withAlphaComponent(0.55)
+            glowRing.lineWidth   = 3
+            glowRing.glowWidth   = 10
+            glowRing.zPosition   = -0.5
+            container.addChild(glowRing)
+
+            // Main head circle
             let shape = SKShapeNode(circleOfRadius: headRadius)
             shape.fillColor   = theme.headSKColor
             shape.strokeColor = theme.headStrokeSKColor
-            shape.lineWidth   = 2
+            shape.lineWidth   = 2.0
             shape.glowWidth   = 6
-            shape.position    = spawnPos
-            addChild(shape)
-            snakeHead = shape
-            addEyes(to: snakeHead)
+            container.addChild(shape)
+
+            // Inner sheen — slightly lighter circle to simulate curved surface
+            let sheen = SKShapeNode(circleOfRadius: headRadius * 0.72)
+            sheen.fillColor   = theme.headSKColor.withAlphaComponent(0.18)
+            sheen.strokeColor = .clear
+            sheen.position    = CGPoint(x: -1, y: 1)
+            sheen.zPosition   = 0.5
+            container.addChild(sheen)
+
+            addEyes(to: container)
+
+            // Specular highlight — small white circle offset toward top-left
+            let highlight = SKShapeNode(circleOfRadius: headRadius * 0.28)
+            highlight.fillColor   = SKColor(white: 1.0, alpha: 0.55)
+            highlight.strokeColor = .clear
+            highlight.position    = CGPoint(x: -headRadius * 0.38, y: headRadius * 0.42)
+            highlight.zPosition   = 2
+            container.addChild(highlight)
         }
+
+        addChild(container)
+        snakeHead = container
         lastPlayerPosition = spawnPos
     }
 
     // MARK: - Eyes
     func addEyes(to head: SKNode) {
+        let theme = snakeColorThemes[normalizedSnakeColorIndex(selectedSnakeColorIndex)]
         for xOffset: CGFloat in [-4.5, 4.5] {
-            let eye = SKShapeNode(circleOfRadius: 3)
-            eye.fillColor   = .white
-            eye.strokeColor = .clear
+            // White sclera
+            let eye = SKShapeNode(circleOfRadius: 3.5)
+            eye.fillColor   = SKColor(white: 0.96, alpha: 1.0)
+            eye.strokeColor = SKColor(white: 0.55, alpha: 0.4)
+            eye.lineWidth   = 0.5
             eye.position    = CGPoint(x: xOffset, y: 5.5)
             eye.zPosition   = 1
 
-            let pupil = SKShapeNode(circleOfRadius: 1.5)
-            pupil.fillColor   = SKColor(white: 0.08, alpha: 1.0)
+            // Coloured iris ring
+            let iris = SKShapeNode(circleOfRadius: 2.3)
+            iris.fillColor   = theme.headSKColor.withAlphaComponent(0.85)
+            iris.strokeColor = .clear
+            iris.position    = CGPoint(x: 0.25, y: 0.25)
+            eye.addChild(iris)
+
+            // Dark pupil
+            let pupil = SKShapeNode(circleOfRadius: 1.4)
+            pupil.fillColor   = SKColor(white: 0.05, alpha: 1.0)
             pupil.strokeColor = .clear
-            pupil.position    = CGPoint(x: 0.3, y: 0.3)
+            pupil.position    = CGPoint(x: 0.25, y: 0.25)
             eye.addChild(pupil)
+
+            // Tiny specular dot on pupil
+            let dot = SKShapeNode(circleOfRadius: 0.55)
+            dot.fillColor   = SKColor(white: 1.0, alpha: 0.9)
+            dot.strokeColor = .clear
+            dot.position    = CGPoint(x: -0.4, y: 0.55)
+            eye.addChild(dot)
+
             head.addChild(eye)
         }
     }
@@ -3427,7 +3563,21 @@ class GameScene: SKScene {
             let scale = 1.0 - progress * 0.22
             segment.setScale(scale)
             segment.alpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
-            let baseGlow: CGFloat = selectedSnakePattern == .neon ? 10 : (index < max(1, count / 4) ? 3 : 0)
+
+            // Glow gradient: bright leading quarter fades to nothing at the tail.
+            // Neon pattern keeps its full glow everywhere; boost adds extra.
+            let isNeon = selectedSnakePattern == .neon
+            let boostBonus: CGFloat = isBoostHeld ? 4 : 0
+            let baseGlow: CGFloat
+            if isNeon {
+                baseGlow = 10 + boostBonus
+            } else if index < max(1, count / 8) {
+                baseGlow = 6 + boostBonus       // first ~12%: bright rim
+            } else if index < max(1, count / 4) {
+                baseGlow = 3 + boostBonus * 0.5  // next ~12%: moderate rim
+            } else {
+                baseGlow = 0
+            }
             let desiredGlow: CGFloat = ghostActive ? baseGlow * 0.4 : baseGlow
             // Guard: glowWidth triggers SpriteKit re-render every time it's set, even if unchanged.
             if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
@@ -3813,6 +3963,17 @@ class GameScene: SKScene {
         default: break
         }
 
+        // Specular highlight — small bright circle at top-left simulates a convex lit surface.
+        // Skipped for crystal (diamond) since the geometry already has a bright edge.
+        if pattern != .crystal {
+            let spec = SKShapeNode(circleOfRadius: bodySegmentRadius * 0.30)
+            spec.fillColor   = SKColor(white: 1.0, alpha: 0.48)
+            spec.strokeColor = .clear
+            spec.position    = CGPoint(x: -bodySegmentRadius * 0.36, y: bodySegmentRadius * 0.40)
+            spec.zPosition   = 2
+            seg.addChild(spec)
+        }
+
         return seg
     }
 
@@ -3869,18 +4030,18 @@ class GameScene: SKScene {
                 bots[i].tier = .hard
                 bots[i].personality = .nemesis
             } else {
-                // Casual:  0–14 easy, 15–34 medium, 35–49 hard  (30% hard)
-                // Expert:  0–4  easy,  5–19 medium, 20–49 hard  (60% hard — much tougher)
+                // Casual:  0–17 easy (~30%), 18–41 medium (~40%), 42–59 hard (~30%)
+                // Expert:  0–5  easy (~10%),  6–23 medium (~30%), 24–59 hard (~60%)
                 if gameMode == .challenge {
                     switch min(i, totalBots - 1) {
-                    case 0..<5:  bots[i].tier = .easy
-                    case 5..<20: bots[i].tier = .medium
+                    case 0..<6:  bots[i].tier = .easy
+                    case 6..<24: bots[i].tier = .medium
                     default:     bots[i].tier = .hard
                     }
                 } else {
                     switch min(i, totalBots - 1) {
-                    case 0..<15:  bots[i].tier = .easy
-                    case 15..<35: bots[i].tier = .medium
+                    case 0..<18:  bots[i].tier = .easy
+                    case 18..<42: bots[i].tier = .medium
                     default:      bots[i].tier = .hard
                     }
                 }
