@@ -233,13 +233,22 @@ class GameScene: SKScene {
     // Rebuilt lazily whenever food is added or removed (clusterBonusDirty = true).
     var cachedClusterBonuses: [CGFloat] = []
     var clusterBonusDirty: Bool = true
+    // Spatial grid for food collision queries: cuts checkFoodCollisions / checkBotFoodCollision
+    // from O(n=340) down to O(~3) per query.  Cell size 200 pt → 30×30 = 900 cells on the 6000 pt world.
+    // Indices stored are into the foodItems/foodTypes arrays; kept in sync by removeFoodItem(at:).
+    private var foodSpatialGrid: [GridCell: [Int]] = [:]
+    private let foodGridCellSize: CGFloat = 200.0
+    private var foodGridDirty: Bool = true   // set true when magnet moves food; triggers lazy full rebuild
     // Trail food
     var trailFoodTimer: CGFloat = 0
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
     let maxTrailFoodItems:   Int     = 220    // hard cap on active .trail nodes
-    // Trail food: makeTrailFoodNode — scaled body segment matching player skin + pattern
+    // Trail food: makeTrailFoodNode — simple texture-backed sprite (pre-rendered per color theme).
+    // Using SKSpriteNode with a cached SKTexture avoids allocating 1–5 nested SKShapeNodes
+    // per spawn (53/sec while boosting). Cache is pre-warmed at game start.
+    private var trailFoodTextureCache: [Int: SKTexture] = [:]
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
     // MARK: - Movement Heatmap (food density weighting)
@@ -1011,6 +1020,8 @@ class GameScene: SKScene {
         bots.removeAll()
         foodItems.removeAll()
         foodTypes.removeAll()
+        foodSpatialGrid.removeAll()
+        foodGridDirty = false
         gameOverOverlay   = nil
         pauseOverlay      = nil
         powerUpPanel      = nil
@@ -1096,6 +1107,7 @@ class GameScene: SKScene {
         updateMiniLeaderboard()
 
         gameSetupComplete = true
+        prewarmTrailFoodTextures()   // build SKTexture cache before first trail spawn
         startGameImmediately()
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
@@ -2759,6 +2771,7 @@ class GameScene: SKScene {
         addChild(food)
         foodItems.append(food)
         foodTypes.append(type)
+        foodGridInsert(at: foodItems.count - 1)
         clusterBonusDirty = true
     }
 
@@ -2862,17 +2875,38 @@ class GameScene: SKScene {
 
     // MARK: - Skin-Matched Food Node Builders
 
-    /// Tiny body-segment circle matching the player/bot skin color and pattern.
-    /// Scale 0.5 → effective radius 5px (smaller than regular food).
-    func makeTrailFoodNode(colorIndex: Int, patternIndex: Int) -> SKShapeNode {
-        let idx     = colorIndex % snakeColorThemes.count
-        let theme   = snakeColorThemes[idx]
-        let pattern = SnakePattern(rawValue: patternIndex) ?? .solid
-        let node    = makeBodySegment(color: theme.bodySKColor,
-                                      stroke: theme.bodyStrokeSKColor,
-                                      pattern: pattern, segIndex: 0)
-        node.setScale(0.5)
-        return node
+    /// Returns (or creates) a cached SKTexture for trail food at the given color index.
+    /// Rendered once as a plain circle — pattern detail is indistinguishable at 5 pt effective radius.
+    private func trailFoodTexture(colorIndex: Int) -> SKTexture {
+        if let cached = trailFoodTextureCache[colorIndex] { return cached }
+        let idx   = colorIndex % snakeColorThemes.count
+        let theme = snakeColorThemes[idx]
+        let r     = bodySegmentRadius          // 10 pt
+        let shape = SKShapeNode(circleOfRadius: r)
+        shape.fillColor   = theme.bodySKColor
+        shape.strokeColor = theme.bodyStrokeSKColor
+        shape.lineWidth   = 1.5
+        shape.glowWidth   = 2.0
+        let diameter = r * 2
+        let crop     = CGRect(x: -diameter, y: -diameter, width: diameter * 2, height: diameter * 2)
+        let texture  = (view as? SKView)?.texture(from: shape, crop: crop) ?? SKTexture()
+        trailFoodTextureCache[colorIndex] = texture
+        return texture
+    }
+
+    /// Pre-warm the trail food texture cache for all color themes.
+    /// Called once at game start so no allocations happen during gameplay.
+    func prewarmTrailFoodTextures() {
+        for i in 0..<snakeColorThemes.count { _ = trailFoodTexture(colorIndex: i) }
+    }
+
+    /// Tiny sprite matching the player/bot skin color. Uses a pre-rendered texture instead
+    /// of a nested SKShapeNode hierarchy — eliminates 1–5 CGPath allocs per spawn.
+    /// Effective radius ≈ 5 pt (scale 0.5 × bodySegmentRadius 10 pt).
+    func makeTrailFoodNode(colorIndex: Int, patternIndex: Int) -> SKNode {
+        let sprite = SKSpriteNode(texture: trailFoodTexture(colorIndex: colorIndex))
+        sprite.setScale(0.5)
+        return sprite
     }
 
     /// Body-segment circle matching a dead snake's skin, same visual size as regular food.
@@ -2913,6 +2947,7 @@ class GameScene: SKScene {
         addChild(food)
         foodItems.append(food)
         foodTypes.append(.trail)
+        foodGridInsert(at: foodItems.count - 1)
         activeTrailFoodCount += 1
         // Do NOT set clusterBonusDirty here: trail food spawns ~53×/sec and the cluster bonus
         // cache doesn't need trail-food precision for bot food-targeting decisions.
@@ -2925,8 +2960,7 @@ class GameScene: SKScene {
                 guard let self, let food else { return }
                 if let idx = self.foodItems.firstIndex(where: { $0 === food }) {
                     // Natural expiry path: item still in arrays, hasn't been eaten early
-                    self.foodItems.remove(at: idx)
-                    self.foodTypes.remove(at: idx)
+                    self.removeFoodItem(at: idx)
                     self.activeTrailFoodCount = max(0, self.activeTrailFoodCount - 1)
                 }
                 // If not found: food was eaten early; counter already decremented at eat site
@@ -2963,6 +2997,7 @@ class GameScene: SKScene {
             addChild(food)
             foodItems.append(food)
             foodTypes.append(.death)
+            foodGridInsert(at: foodItems.count - 1)
             food.run(deathPopAnimation)
         }
     }
@@ -2972,19 +3007,51 @@ class GameScene: SKScene {
         for pos in bodyPositionCache where hypot(p.x - pos.x, p.y - pos.y) < safeSpawnDistance { return true }
         return false
     }
+    /// O(1) food removal: swap-with-last keeps all three parallel arrays in sync.
+    /// Returns the removed food type. All removal sites must use this instead of
+    /// direct foodItems.remove(at:) / foodTypes.remove(at:) calls.
+    @discardableResult
+    private func removeFoodItem(at index: Int) -> FoodType {
+        let removedType = foodTypes[index]
+        let last = foodItems.count - 1
+        let removedPos = foodItems[index].position   // capture before potential swap
+        if index != last {
+            foodItems.swapAt(index, last)
+            foodTypes.swapAt(index, last)
+            if cachedClusterBonuses.count > last {
+                cachedClusterBonuses.swapAt(index, last)
+            }
+            foodGridFixSwap(removedAt: index, removedPos: removedPos, movedFrom: last)
+        } else {
+            // Removing the last element — just remove from grid directly
+            foodGridRemoveLast(at: removedPos)
+        }
+        foodItems.removeLast()
+        foodTypes.removeLast()
+        if cachedClusterBonuses.count > foodItems.count {
+            cachedClusterBonuses.removeLast()
+        }
+        return removedType
+    }
+
     func checkFoodCollisions() {
+        rebuildFoodGridIfNeeded()
         let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
-        let headX = snakeHead.position.x
-        let headY = snakeHead.position.y
-        // stride avoids the temporary reversed-collection allocation that enumerated().reversed() creates.
-        for i in stride(from: foodItems.count - 1, through: 0, by: -1) {
-            let food = foodItems[i]
-            guard food.parent != nil else { continue }
-            let dx = headX - food.position.x
-            let dy = headY - food.position.y
-            if dx * dx + dy * dy < thresholdSq {
-                eatFood(at: i)
-                return
+        let headPos = snakeHead.position
+        let hc = foodCell(for: headPos)
+        // span=1 → 3×3 = 9 cells checked; at cell size 200 this comfortably covers the 25px threshold.
+        for dcx in -1...1 {
+            for dcy in -1...1 {
+                guard let indices = foodSpatialGrid[GridCell(x: hc.x + dcx, y: hc.y + dcy)] else { continue }
+                for i in indices {
+                    guard i < foodItems.count, foodItems[i].parent != nil else { continue }
+                    let dx = headPos.x - foodItems[i].position.x
+                    let dy = headPos.y - foodItems[i].position.y
+                    if dx * dx + dy * dy < thresholdSq {
+                        eatFood(at: i)
+                        return
+                    }
+                }
             }
         }
     }
@@ -2995,8 +3062,7 @@ class GameScene: SKScene {
 
         if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
         foodItems[index].removeFromParent()
-        foodItems.remove(at: index)
-        foodTypes.remove(at: index)
+        removeFoodItem(at: index)
         clusterBonusDirty = true
         spawnFood()
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
@@ -3305,10 +3371,14 @@ class GameScene: SKScene {
         playerBodyPathNode.path = path
         updatePlayerBodyVisuals()
 
-        playerBodyOccupancy.removeAll(keepingCapacity: true)
-        for point in bodyPositionCache {
-            let cell = gridCell(for: point)
-            playerBodyOccupancy.insert(cell)
+        // Only rebuild every 2nd frame: checkBotHeadsHitPlayerBody() also runs on even frames,
+        // so the set is always fresh when it is actually consumed.
+        if frameCounter % 2 == 0 {
+            playerBodyOccupancy.removeAll(keepingCapacity: true)
+            for point in bodyPositionCache {
+                let cell = gridCell(for: point)
+                playerBodyOccupancy.insert(cell)
+            }
         }
     }
 
@@ -3320,6 +3390,56 @@ class GameScene: SKScene {
 
     private func gridCell(for point: CGPoint) -> GridCell {
         GridCell(x: Int(point.x / occupancyCellSize), y: Int(point.y / occupancyCellSize))
+    }
+
+    // MARK: - Food Spatial Grid Helpers
+
+    /// Convert a world position to a grid cell using foodGridCellSize (200 pt).
+    /// This is distinct from gridCell(for:) which uses the 30 pt occupancy grid.
+    private func foodCell(for pos: CGPoint) -> GridCell {
+        GridCell(x: Int(pos.x / foodGridCellSize), y: Int(pos.y / foodGridCellSize))
+    }
+
+    /// Rebuild the food spatial grid from scratch. Called lazily when foodGridDirty is true
+    /// (i.e. after the magnet power-up has moved food nodes between cells).
+    private func rebuildFoodGridIfNeeded() {
+        guard foodGridDirty else { return }
+        foodSpatialGrid.removeAll(keepingCapacity: true)
+        for i in foodItems.indices where foodItems[i].parent != nil {
+            foodSpatialGrid[foodCell(for: foodItems[i].position), default: []].append(i)
+        }
+        foodGridDirty = false
+    }
+
+    /// Insert a newly-appended food item into the grid.
+    /// Must be called immediately after foodItems.append() at every spawn site.
+    private func foodGridInsert(at index: Int) {
+        guard !foodGridDirty else { return }   // grid will be rebuilt anyway; skip incremental insert
+        foodSpatialGrid[foodCell(for: foodItems[index].position), default: []].append(index)
+    }
+
+    /// Remove the last element from the grid (used when index == last in removeFoodItem).
+    private func foodGridRemoveLast(at pos: CGPoint) {
+        guard !foodGridDirty else { return }
+        let last = foodItems.count - 1   // still valid before removeLast()
+        let cell = foodCell(for: pos)
+        foodSpatialGrid[cell]?.removeAll(where: { $0 == last })
+        if foodSpatialGrid[cell]?.isEmpty == true { foodSpatialGrid.removeValue(forKey: cell) }
+    }
+
+    /// After a swap-with-last removal: remove the old index from its cell and rename the
+    /// moved item (was at `movedFrom`, now at `index`) in its cell.
+    private func foodGridFixSwap(removedAt index: Int, removedPos: CGPoint, movedFrom last: Int) {
+        guard !foodGridDirty else { return }
+        // Remove the item being deleted
+        let rc = foodCell(for: removedPos)
+        foodSpatialGrid[rc]?.removeAll(where: { $0 == index })
+        if foodSpatialGrid[rc]?.isEmpty == true { foodSpatialGrid.removeValue(forKey: rc) }
+        // Rename the moved item's index in its cell (foodItems[index] is now the former last)
+        let mc = foodCell(for: foodItems[index].position)   // after swap, foodItems[index] is former last
+        if let pos = foodSpatialGrid[mc]?.firstIndex(of: last) {
+            foodSpatialGrid[mc]![pos] = index
+        }
     }
 
     private func bodyOccupancyContains(_ point: CGPoint) -> Bool {
@@ -4564,6 +4684,7 @@ class GameScene: SKScene {
         let position = bots[i].position
 
         rebuildClusterBonusesIfNeeded()
+        rebuildFoodGridIfNeeded()
 
         // Maintain a bounded buffer of the top `limit` candidates as we scan, replacing the
         // worst entry when a better one is found. This avoids allocating and sorting the full
@@ -4571,26 +4692,43 @@ class GameScene: SKScene {
         var targets: [BotFoodTarget] = []
         targets.reserveCapacity(limit + 1)
 
-        for (index, food) in foodItems.enumerated() where food.parent != nil {
-            let distance = hypot(food.position.x - position.x, food.position.y - position.y)
-            guard distance < profile.foodSearchRadius else { continue }
+        // Use the spatial grid to restrict the scan to cells within foodSearchRadius.
+        // cellRadius = ceil(foodSearchRadius / cellSize): e.g. 800/200 = 4 → 9×9 = 81 cells.
+        let cellRadius = Int(ceil(profile.foodSearchRadius / foodGridCellSize))
+        let hc = foodCell(for: position)
+        let searchRadiusSq = profile.foodSearchRadius * profile.foodSearchRadius
 
-            let bonus = index < cachedClusterBonuses.count ? cachedClusterBonuses[index] : 0
-            let utility = GameLogic.botFoodValue(
-                type: foodTypes[index],
-                clusterBonus: bonus,
-                greed: profile.greed,
-                scavengerBias: profile.scavengerBias
-            ) * max(0.18, 1.0 - distance / profile.foodSearchRadius)
+        for dcx in -cellRadius...cellRadius {
+            for dcy in -cellRadius...cellRadius {
+                guard let indices = foodSpatialGrid[GridCell(x: hc.x + dcx, y: hc.y + dcy)] else { continue }
+                for index in indices {
+                    guard index < foodItems.count else { continue }
+                    let food = foodItems[index]
+                    guard food.parent != nil else { continue }
+                    let fdx = food.position.x - position.x
+                    let fdy = food.position.y - position.y
+                    let distSq = fdx * fdx + fdy * fdy
+                    guard distSq < searchRadiusSq else { continue }
+                    let distance = distSq.squareRoot()
 
-            guard utility > 0.5 else { continue }
+                    let bonus = index < cachedClusterBonuses.count ? cachedClusterBonuses[index] : 0
+                    let utility = GameLogic.botFoodValue(
+                        type: foodTypes[index],
+                        clusterBonus: bonus,
+                        greed: profile.greed,
+                        scavengerBias: profile.scavengerBias
+                    ) * max(0.18, 1.0 - distance / profile.foodSearchRadius)
 
-            let candidate = BotFoodTarget(index: index, position: food.position, type: foodTypes[index], utility: utility)
-            if targets.count < limit {
-                targets.append(candidate)
-            } else if let worstIdx = targets.indices.min(by: { targets[$0].utility < targets[$1].utility }),
-                      targets[worstIdx].utility < utility {
-                targets[worstIdx] = candidate
+                    guard utility > 0.5 else { continue }
+
+                    let candidate = BotFoodTarget(index: index, position: food.position, type: foodTypes[index], utility: utility)
+                    if targets.count < limit {
+                        targets.append(candidate)
+                    } else if let worstIdx = targets.indices.min(by: { targets[$0].utility < targets[$1].utility }),
+                              targets[worstIdx].utility < utility {
+                        targets[worstIdx] = candidate
+                    }
+                }
             }
         }
 
@@ -5277,6 +5415,7 @@ class GameScene: SKScene {
             food.position.x += (dx / dist) * pull
             food.position.y += (dy / dist) * pull
         }
+        foodGridDirty = true   // food positions changed; grid indices are stale
     }
 
     private func botNutrition(for type: FoodType, botIndex: Int) -> (segments: Int, score: Int) {
@@ -5292,34 +5431,42 @@ class GameScene: SKScene {
     }
 
     func checkBotFoodCollision(_ botIndex: Int) {
+        rebuildFoodGridIfNeeded()
         let headPosition = bots[botIndex].position
         let thresholdSq: CGFloat = (headRadius + foodRadius) * (headRadius + foodRadius)
-        for (i, food) in foodItems.enumerated().reversed() {
-            let dx = headPosition.x - food.position.x
-            let dy = headPosition.y - food.position.y
-            if dx * dx + dy * dy < thresholdSq {
-                if foodTypes[i] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
-                let nutrition = botNutrition(for: foodTypes[i], botIndex: botIndex)
-                food.removeFromParent()
-                foodItems.remove(at: i)
-                let type = foodTypes.remove(at: i)
-                clusterBonusDirty = true
-                spawnFood()
-                for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
-                bots[botIndex].score += nutrition.score
-                applyBotPowerUp(type: type, botIndex: botIndex)
-                miniLeaderboardNeedsRefresh = true
+        let hc = foodCell(for: headPosition)
+        for dcx in -1...1 {
+            for dcy in -1...1 {
+                guard let indices = foodSpatialGrid[GridCell(x: hc.x + dcx, y: hc.y + dcy)] else { continue }
+                for i in indices {
+                    guard i < foodItems.count else { continue }
+                    let food = foodItems[i]
+                    let dx = headPosition.x - food.position.x
+                    let dy = headPosition.y - food.position.y
+                    if dx * dx + dy * dy < thresholdSq {
+                        if foodTypes[i] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
+                        let nutrition = botNutrition(for: foodTypes[i], botIndex: botIndex)
+                        food.removeFromParent()
+                        let type = removeFoodItem(at: i)
+                        clusterBonusDirty = true
+                        spawnFood()
+                        for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
+                        bots[botIndex].score += nutrition.score
+                        applyBotPowerUp(type: type, botIndex: botIndex)
+                        miniLeaderboardNeedsRefresh = true
 
-                if type == .shrink, bots[botIndex].bodyLength > 12 {
-                    bots[botIndex].bodyLength = max(10, bots[botIndex].bodyLength - 2)
-                    while bots[botIndex].body.count > bots[botIndex].bodyLength {
-                        bots[botIndex].body.last?.removeFromParent()
-                        bots[botIndex].body.removeLast()
+                        if type == .shrink, bots[botIndex].bodyLength > 12 {
+                            bots[botIndex].bodyLength = max(10, bots[botIndex].bodyLength - 2)
+                            while bots[botIndex].body.count > bots[botIndex].bodyLength {
+                                bots[botIndex].body.last?.removeFromParent()
+                                bots[botIndex].body.removeLast()
+                            }
+                            ensurePointCacheLength(bots[botIndex].body.count, cache: &bots[botIndex].bodyPositionCache)
+                            bots[botIndex].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[botIndex].body.count))
+                        }
+                        return
                     }
-                    ensurePointCacheLength(bots[botIndex].body.count, cache: &bots[botIndex].bodyPositionCache)
-                    bots[botIndex].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[botIndex].body.count))
                 }
-                return
             }
         }
     }
@@ -5408,6 +5555,7 @@ class GameScene: SKScene {
             food.position = CGPoint(x: food.position.x + (dx / dist) * pullStrength,
                                     y: food.position.y + (dy / dist) * pullStrength)
         }
+        foodGridDirty = true   // food positions changed; grid indices are stale
     }
 
     /// ✂️ Shrink — consolation bonus first, then reduce score by ~10% so syncSnakeLength() contracts body.
@@ -5841,16 +5989,18 @@ class GameScene: SKScene {
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
         if !isSpecialOfflineMode && frameCounter % 300 == 0 {
+            // Collect indices descending so swap-with-last in removeFoodItem doesn't corrupt
+            // earlier indices (removing highest-index first means swaps only affect already-seen slots).
             var toRemove: [Int] = []
             for (i, item) in foodItems.enumerated() where item.parent == nil {
                 toRemove.append(i)
             }
-            for i in toRemove.reversed() {
-                foodItems.remove(at: i)
-                foodTypes.remove(at: i)
+            for i in toRemove.sorted(by: >) {
+                removeFoodItem(at: i)
             }
             // Reconcile counter against live trail entries to correct any drift
             activeTrailFoodCount = foodTypes.filter { $0 == .trail }.count
+            foodGridDirty = true   // grid may be stale after batch removals
         }
 
         // --- Camera & HUD ---
