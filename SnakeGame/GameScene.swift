@@ -70,8 +70,8 @@ struct BotState {
         self.position     = position
         self.angle        = CGFloat.random(in: 0...(2 * .pi))
         self.targetAngle  = self.angle
-        self.score        = Int.random(in: 0...30)
-        self.bodyLength   = 10 + Int.random(in: 0...20)
+        self.score        = 0
+        self.bodyLength   = 10
         self.colorIndex   = colorIndex
         self.patternIndex = 0
         self.name         = name
@@ -180,6 +180,7 @@ class GameScene: SKScene {
     let safeSpawnDistance:       CGFloat = 80.0
     let foodPadding:             CGFloat = 80.0
     let initialBodyCount:        Int     = 10
+    let initialBotBodyCount:     Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
     let foodCount:               Int     = 340
@@ -771,6 +772,10 @@ class GameScene: SKScene {
     /// Target body segment count derived directly from score.
     /// initialBodyCount + 1 segment per 10 score points.
     var targetBodyCount: Int { max(initialBodyCount, initialBodyCount + score / 10) }
+    /// Target body segment count for a bot, derived from score. Mirrors targetBodyCount.
+    func targetBotBodyCount(for botIndex: Int) -> Int {
+        max(initialBotBodyCount, initialBotBodyCount + bots[botIndex].score / 10)
+    }
     var isMazeHuntMode: Bool { false }
     var isSnakeRaceMode: Bool { false }
     var isSpecialOfflineMode: Bool { false }
@@ -796,9 +801,9 @@ class GameScene: SKScene {
     // MARK: - Bots (Offline mode)
     var bots: [BotState] = []
     let totalBots = 60
-    let challengeNemesisScore = 1000
-    let expertNemesisInitialDelay: CGFloat = 30.0   // was 60 — Nemesis arrives sooner in Expert
-    let expertNemesisRespawnDelay: CGFloat = 60.0   // was 120 — Nemesis comes back faster
+    let challengeNemesisScore = 1200  // 10 + 1200/10 = 130 segments — preserves nemesis visual size
+    let expertNemesisInitialDelay: CGFloat = 180.0  // Nemesis appears 3 minutes into Expert mode
+    let expertNemesisRespawnDelay: CGFloat = 180.0  // Nemesis re-enters 3 minutes after death
     var localBotTargetCount: Int { gameMode == .challenge ? totalBots + 1 : totalBots }
     // Per-tier base speeds (replaces single botMoveSpeed)
     let botSpeedEasy:   CGFloat = 95.0
@@ -4446,12 +4451,11 @@ class GameScene: SKScene {
             bots[index].personality = personalities.randomElement() ?? .opportunist
         }
 
-        let profile = GameLogic.botPersonalityProfile(for: bots[index].personality)
-        let length = bots[index].isNemesis ? 130 : randomBotLength(for: index)
-        let bonusScore = Int(CGFloat(length) * (0.35 + profile.aggression * 0.25 + profile.scavengerBias * 0.15))
-
-        bots[index].score = bots[index].isNemesis ? challengeNemesisScore : max(4, bonusScore + Int.random(in: 0...10))
-        bots[index].bodyLength = length
+        let targetLength = bots[index].isNemesis ? 130 : randomBotLength(for: index)
+        bots[index].score = bots[index].isNemesis
+            ? challengeNemesisScore
+            : max(0, (targetLength - initialBotBodyCount) * 10)
+        bots[index].bodyLength = targetBotBodyCount(for: index)
         bots[index].intent = bots[index].isNemesis ? .hunt : .roam
         bots[index].decisionTimer = 0
         bots[index].boostTimer = 0
@@ -4460,7 +4464,7 @@ class GameScene: SKScene {
         bots[index].isBoosting = false
         bots[index].focusPoint = nil
         bots[index].focusTimer = 0
-        bots[index].shieldCharges = 0
+        bots[index].shieldCharges = bots[index].isNemesis ? 2 : 0
         bots[index].multiplierTimeLeft = 0
         bots[index].magnetTimeLeft = 0
         bots[index].ghostTimeLeft = 0
@@ -4576,6 +4580,36 @@ class GameScene: SKScene {
         addChild(seg)
         bots[index].body.append(seg)
         bots[index].bodyLength += 1
+        ensurePointCacheLength(bots[index].body.count, cache: &bots[index].bodyPositionCache)
+        bots[index].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[index].body.count))
+        updateBotBodyScales(index)
+        miniLeaderboardNeedsRefresh = true
+    }
+
+    /// Grow or shrink bot body to match targetBotBodyCount(for:).
+    /// Must be called after every change to bots[index].score.
+    func syncBotLength(_ index: Int) {
+        let target = targetBotBodyCount(for: index)
+        bots[index].bodyLength = target
+        guard bots[index].isActive, let head = bots[index].head else { return }
+
+        let theme = snakeColorThemes[bots[index].colorIndex % snakeColorThemes.count]
+        while bots[index].body.count < target {
+            let seg = makeBodySegment(
+                color: theme.bodySKColor,
+                stroke: theme.bodyStrokeSKColor,
+                pattern: SnakePattern(rawValue: bots[index].patternIndex) ?? .solid,
+                segIndex: bots[index].body.count,
+                radius: botEffectiveBodyRadius(bots[index].score)
+            )
+            seg.position = bots[index].body.last?.position ?? head.position
+            addChild(seg)
+            bots[index].body.append(seg)
+        }
+        while bots[index].body.count > target && bots[index].body.count > 1 {
+            bots[index].body.last?.removeFromParent()
+            bots[index].body.removeLast()
+        }
         ensurePointCacheLength(bots[index].body.count, cache: &bots[index].bodyPositionCache)
         bots[index].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[index].body.count))
         updateBotBodyScales(index)
@@ -5198,6 +5232,14 @@ class GameScene: SKScene {
         var intent = GameLogic.chooseBotIntent(snapshot)
         if bots[i].isNemesis {
             intent = snapshot.immediateDanger > 0.76 ? .escape : (snapshot.cutOpportunity > 0.42 ? .cutOff : .hunt)
+            // Lock onto the longest snake anywhere on the map (player or bot)
+            if intent != .escape {
+                let allTargets = nearbyThreats(for: i, radius: 3600)
+                if let biggest = allTargets.max(by: { $0.length < $1.length }) {
+                    bots[i].focusPoint = biggest.position
+                    bots[i].focusTimer = 1.2
+                }
+            }
         }
         let candidates = candidateAngles(botIndex: i, intent: intent, threats: threats, foods: foods)
 
@@ -5483,9 +5525,17 @@ class GameScene: SKScene {
             bots[botIndex].magnetTimeLeft = 6.0
         case .ghost:
             bots[botIndex].ghostTimeLeft = 4.0
-        case .regular, .trail, .death, .shrink:
+        case .regular, .trail, .death:
             break
+        case .shrink:
+            applyBotShrink(botIndex)
         }
+    }
+
+    /// Mirrors the player's applyShrink(). Reduces bot score by 30%; syncBotLength() contracts the body.
+    private func applyBotShrink(_ index: Int) {
+        guard bots[index].score > 0 else { return }
+        bots[index].score = max(0, bots[index].score - bots[index].score * 30 / 100)
     }
 
     private func applyBotMagnetEffect(botIndex: Int, dt: CGFloat) {
@@ -5516,15 +5566,14 @@ class GameScene: SKScene {
         foodGridDirty = true   // food positions changed; grid indices are stale
     }
 
-    private func botNutrition(for type: FoodType, botIndex: Int) -> (segments: Int, score: Int) {
-        let scoreMultiplier = bots[botIndex].multiplierTimeLeft > 0 ? 2 : 1
+    private func botNutrition(for type: FoodType, botIndex: Int) -> Int {
+        let mult = bots[botIndex].multiplierTimeLeft > 0 ? 2 : 1
         switch type {
-        case .regular:                   return (1, 2 * scoreMultiplier)
-        case .trail:                     return (1, 1 * scoreMultiplier)
-        case .death:                     return (1, 5 * scoreMultiplier)
-        case .shield, .multiplier,
-             .magnet, .ghost:            return (1, 2 * scoreMultiplier)
-        case .shrink:                    return (0, 0)
+        case .regular:                              return 2 * mult
+        case .trail:                                return 1 * mult
+        case .death:                                return 5 * mult
+        case .shield, .multiplier, .magnet, .ghost: return 2 * mult
+        case .shrink:                               return 0
         }
     }
 
@@ -5543,25 +5592,15 @@ class GameScene: SKScene {
                     let dy = headPosition.y - food.position.y
                     if dx * dx + dy * dy < thresholdSq {
                         if foodTypes[i] == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
-                        let nutrition = botNutrition(for: foodTypes[i], botIndex: botIndex)
+                        let nutritionScore = botNutrition(for: foodTypes[i], botIndex: botIndex)
                         food.removeFromParent()
                         let type = removeFoodItem(at: i)
                         clusterBonusDirty = true
                         spawnFood()
-                        for _ in 0..<nutrition.segments { addBotBodySegment(botIndex) }
-                        bots[botIndex].score += nutrition.score
-                        applyBotPowerUp(type: type, botIndex: botIndex)
+                        bots[botIndex].score += nutritionScore
+                        applyBotPowerUp(type: type, botIndex: botIndex)  // .shrink handled via applyBotShrink()
+                        syncBotLength(botIndex)
                         miniLeaderboardNeedsRefresh = true
-
-                        if type == .shrink, bots[botIndex].bodyLength > 12 {
-                            bots[botIndex].bodyLength = max(10, bots[botIndex].bodyLength - 2)
-                            while bots[botIndex].body.count > bots[botIndex].bodyLength {
-                                bots[botIndex].body.last?.removeFromParent()
-                                bots[botIndex].body.removeLast()
-                            }
-                            ensurePointCacheLength(bots[botIndex].body.count, cache: &bots[botIndex].bodyPositionCache)
-                            bots[botIndex].posHistory.setCapacity(historyCapacity(forSegmentCount: bots[botIndex].body.count))
-                        }
                         return
                     }
                 }
