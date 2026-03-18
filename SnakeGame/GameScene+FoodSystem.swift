@@ -440,6 +440,9 @@ extension GameScene {
         let bonus = GameLogic.comboBonus(forComboCount: comboCount)
         let total = base + bonus
         score += total
+        // Award 1 coin per food (2 for death food which is rarer/stronger)
+        let coinReward = (type == .death) ? 2 : (type == .shrink ? 0 : 1)
+        if coinReward > 0 { PlayerEconomy.shared.sessionCoins += coinReward }
         if total > 0 {
             let text  = bonus > 0 ? "+\(total) combo!" : "+\(total)"
             let color: SKColor = bonus > 0

@@ -263,6 +263,7 @@ class GameScene: SKScene {
     var isSpecialOfflineMode: Bool { false }
 
     var hasUsedRevive: Bool = false
+    var hasDoubledCoins: Bool = false
 
     // MARK: - Super Mouse
     var superMouseState: SuperMouseState = .dormant
@@ -435,6 +436,7 @@ class GameScene: SKScene {
         // B (Circle) → quick-exit to Main Menu from game-over
         gp.buttonB.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed, let self, self.isGameOver else { return }
+            PlayerEconomy.shared.commitSession()
             self.shutdown()
             self.onGameOver?(self.score)
         }
@@ -645,6 +647,8 @@ class GameScene: SKScene {
         isPausedGame        = false
         scoreMultiplier     = 1
         hasUsedRevive       = false
+        hasDoubledCoins     = false
+        PlayerEconomy.shared.resetSession()
         shieldActive        = false
         multiplierActive    = false
         multiplierTimeLeft  = 0
@@ -2699,11 +2703,16 @@ class GameScene: SKScene {
 
             if isGameOver {
                 let tappedNames = nodes(at: loc).compactMap { $0.name }
-                if tappedNames.contains("reviveButton") {
+                if tappedNames.contains("watchAdReviveButton") {
+                    revivePlayer()
+                } else if tappedNames.contains("watchAdCoinsButton") {
+                    handleWatchAdDoubleCoins()
+                } else if tappedNames.contains("reviveButton") {
                     revivePlayer()
                 } else if tappedNames.contains("restartButton") {
                     restartGame()
                 } else if tappedNames.contains("playAgainButton") {
+                    PlayerEconomy.shared.commitSession()
                     shutdown()
                     onGameOver?(score)
                 }
