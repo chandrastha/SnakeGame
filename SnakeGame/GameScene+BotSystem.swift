@@ -495,8 +495,7 @@ extension GameScene {
             let t = count > 1 ? CGFloat(i) / CGFloat(count - 1) : 0
             seg.setScale(1.0 - t * 0.22)
             seg.alpha     = 1.0 - t * 0.10
-            let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
-            seg.glowWidth = i < count / 2 ? leadingGlow : 0
+            seg.glowWidth = 0  // perf: bot body glow is expensive; heads retain glow
         }
     }
 
@@ -1439,10 +1438,6 @@ extension GameScene {
         )
         let pattern = SnakePattern(rawValue: bots[index].patternIndex) ?? .solid
         let bodyCount = bots[index].body.count
-        let isBoosting = bots[index].isBoosting
-        let leadingGlow: CGFloat = pattern == .neon ? 10 : (pattern == .ember ? 6 : 3)
-        let halfCount = max(1, bodyCount / 2)
-        let boostGlowCount = max(2, bodyCount / 6)
         let botNeedsRotation = pattern == .cylinder || pattern == .armor || pattern == .leaf
         for (segmentIndex, segment) in bots[index].body.enumerated() {
             segment.position = bots[index].bodyPositionCache[segmentIndex]
@@ -1456,13 +1451,8 @@ extension GameScene {
                     segment.zRotation = atan2(dy, dx) - (.pi / 2)
                 }
             }
-            let baseGlow: CGFloat = segmentIndex < halfCount ? leadingGlow : 0
-            let desiredGlow: CGFloat = (isBoosting && segmentIndex < boostGlowCount)
-                ? max(baseGlow, 6)
-                : baseGlow
-            // Guard SpriteKit glow write: setting glowWidth triggers an expensive re-render even
-            // when the value hasn't changed. Only write when the value actually differs.
-            if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
+            // perf: skip glow on bot body segments entirely — heads retain glow, bodies don't need it.
+            // Avoids per-frame GPU re-renders for every segment of every active bot.
         }
     }
 
@@ -1606,27 +1596,31 @@ extension GameScene {
     private func applyBotMagnetEffect(botIndex: Int, dt: CGFloat) {
         guard bots[botIndex].magnetTimeLeft > 0 else { return }
 
+        rebuildFoodGridIfNeeded()
         let strength: CGFloat = 560 * dt
-        let headX = bots[botIndex].position.x
-        let headY = bots[botIndex].position.y
+        let headPos = bots[botIndex].position
         let magnetRadiusSq = magnetRadius * magnetRadius
+        let span = Int(ceil(magnetRadius / foodGridCellSize)) + 1
+        let centerCell = foodCell(for: headPos)
 
-        for (i, food) in foodItems.enumerated() {
-            guard food.parent != nil else { continue }
-            if foodTypes[i] == .trail || foodTypes[i] == .death { continue }
-
-            let dx = headX - food.position.x
-            // AABB fast-reject before computing squared distance.
-            if abs(dx) >= magnetRadius { continue }
-            let dy = headY - food.position.y
-            if abs(dy) >= magnetRadius { continue }
-            let distSq = dx * dx + dy * dy
-            guard distSq > 1, distSq < magnetRadiusSq else { continue }
-
-            let dist = sqrt(distSq)
-            let pull = strength * (1 - dist / magnetRadius)
-            food.position.x += (dx / dist) * pull
-            food.position.y += (dy / dist) * pull
+        for dcx in -span...span {
+            for dcy in -span...span {
+                guard let indices = foodSpatialGrid[GridCell(x: centerCell.x + dcx, y: centerCell.y + dcy)] else { continue }
+                for i in indices {
+                    guard i < foodItems.count, i < foodTypes.count else { continue }
+                    if foodTypes[i] == .trail || foodTypes[i] == .death { continue }
+                    let food = foodItems[i]
+                    guard food.parent != nil else { continue }
+                    let dx = headPos.x - food.position.x
+                    let dy = headPos.y - food.position.y
+                    let distSq = dx * dx + dy * dy
+                    guard distSq > 1, distSq < magnetRadiusSq else { continue }
+                    let dist = sqrt(distSq)
+                    let pull = strength * (1 - dist / magnetRadius)
+                    food.position.x += (dx / dist) * pull
+                    food.position.y += (dy / dist) * pull
+                }
+            }
         }
         foodGridDirty = true   // food positions changed; grid indices are stale
     }
@@ -1739,23 +1733,30 @@ extension GameScene {
     // MARK: - New Power-Up Effects
 
     /// 🧲 Magnet — pull nearby food items toward the snake head.
+    /// Uses the food spatial grid to query only cells within magnetRadius, avoiding an O(n) full scan.
     func applyMagnetEffect() {
+        rebuildFoodGridIfNeeded()
         let pullStrength: CGFloat   = 5.5
         let magnetRadiusSq: CGFloat = magnetRadius * magnetRadius
-        let headX = snakeHead.position.x
-        let headY = snakeHead.position.y
-        for food in foodItems {
-            guard food.parent != nil else { continue }
-            let dx = headX - food.position.x
-            // AABB fast-reject: skip items clearly outside the square bounding box first.
-            if abs(dx) >= magnetRadius { continue }
-            let dy = headY - food.position.y
-            if abs(dy) >= magnetRadius { continue }
-            let distSq = dx * dx + dy * dy
-            guard distSq > 1, distSq < magnetRadiusSq else { continue }
-            let dist = hypot(dx, dy)
-            food.position = CGPoint(x: food.position.x + (dx / dist) * pullStrength,
-                                    y: food.position.y + (dy / dist) * pullStrength)
+        let headPos = snakeHead.position
+        let span = Int(ceil(magnetRadius / foodGridCellSize)) + 1
+        let centerCell = foodCell(for: headPos)
+        for dcx in -span...span {
+            for dcy in -span...span {
+                guard let indices = foodSpatialGrid[GridCell(x: centerCell.x + dcx, y: centerCell.y + dcy)] else { continue }
+                for i in indices {
+                    guard i < foodItems.count else { continue }
+                    let food = foodItems[i]
+                    guard food.parent != nil else { continue }
+                    let dx = headPos.x - food.position.x
+                    let dy = headPos.y - food.position.y
+                    let distSq = dx * dx + dy * dy
+                    guard distSq > 1, distSq < magnetRadiusSq else { continue }
+                    let dist = hypot(dx, dy)
+                    food.position = CGPoint(x: food.position.x + (dx / dist) * pullStrength,
+                                            y: food.position.y + (dy / dist) * pullStrength)
+                }
+            }
         }
         foodGridDirty = true   // food positions changed; grid indices are stale
     }

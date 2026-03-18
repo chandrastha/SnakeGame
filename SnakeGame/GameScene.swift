@@ -63,7 +63,7 @@ class GameScene: SKScene {
     let initialBotBodyCount:     Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
-    let foodCount:               Int     = 340
+    let foodCount:               Int     = 150
     let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
@@ -129,7 +129,7 @@ class GameScene: SKScene {
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
-    let maxTrailFoodItems:   Int     = 220    // hard cap on active .trail nodes
+    let maxTrailFoodItems:   Int     = 80     // hard cap on active .trail nodes
     // Trail food: makeTrailFoodNode — simple texture-backed sprite (pre-rendered per color theme).
     // Using SKSpriteNode with a cached SKTexture avoids allocating 1–5 nested SKShapeNodes
     // per spawn (53/sec while boosting). Cache is pre-warmed at game start.
@@ -299,7 +299,7 @@ class GameScene: SKScene {
 
     // MARK: - Bots (Offline mode)
     var bots: [BotState] = []
-    let totalBots = 60
+    let totalBots = 20
     let challengeNemesisScore = 1200  // 10 + 1200/10 = 130 segments — preserves nemesis visual size
     let expertNemesisInitialDelay: CGFloat = 120.0  // Nemesis appears 2 minutes into Expert mode
     let expertNemesisRespawnDelay: CGFloat = 120.0  // Nemesis re-enters 2 minutes after death
@@ -316,10 +316,10 @@ class GameScene: SKScene {
     let botBoostCooldownRange: ClosedRange<CGFloat> = 1.10...2.40
     /// Tighter boost cooldown used by ALL bots in Expert mode.
     let expertBotBoostCooldownRange: ClosedRange<CGFloat> = 0.65...1.50
-    let botDetailedAIRadius: CGFloat = 1200.0
+    let botDetailedAIRadius: CGFloat = 600.0
     let botCollisionBroadPhaseRadius: CGFloat = 260.0
-    let botActivationDistance: CGFloat = 1200.0
-    let botDeactivationDistance: CGFloat = 1500.0
+    let botActivationDistance: CGFloat = 800.0
+    let botDeactivationDistance: CGFloat = 1000.0
     var botVisibilityUpdateTimer: CGFloat = 0
     var circledDetectionTimer: CGFloat = 0
     var frameCounter = 0
@@ -876,7 +876,7 @@ class GameScene: SKScene {
                 ? (isChallengeMode ? SKColor(red: 1.0, green: 0.45, blue: 0.20, alpha: 0.10) : SKColor(red: 0.55, green: 0.85, blue: 1.0, alpha: 0.08))
                 : .clear
             glow.lineWidth   = 1.5
-            glow.glowWidth   = isLarge ? 24 : 14
+            glow.glowWidth   = isLarge ? 10 : 5
             glow.zPosition = -10.7
             addChild(glow)
         }
@@ -903,7 +903,7 @@ class GameScene: SKScene {
         let outerGlow = SKShapeNode(rect: borderRect)
         outerGlow.strokeColor = SKColor(red: 0.0, green: 0.85, blue: 1.0, alpha: 0.25)
         outerGlow.lineWidth   = 16
-        outerGlow.glowWidth   = 20
+        outerGlow.glowWidth   = 8
         outerGlow.fillColor   = .clear
         outerGlow.zPosition   = -8
         addChild(outerGlow)
@@ -912,7 +912,7 @@ class GameScene: SKScene {
         let midGlow = SKShapeNode(rect: borderRect)
         midGlow.strokeColor = SKColor(red: 0.0, green: 0.90, blue: 1.0, alpha: 0.55)
         midGlow.lineWidth   = 6
-        midGlow.glowWidth   = 10
+        midGlow.glowWidth   = 4
         midGlow.fillColor   = .clear
         midGlow.zPosition   = -7
         addChild(midGlow)
@@ -921,7 +921,7 @@ class GameScene: SKScene {
         let innerLine = SKShapeNode(rect: borderRect)
         innerLine.strokeColor = SKColor(red: 0.4, green: 0.95, blue: 1.0, alpha: 0.90)
         innerLine.lineWidth   = 3
-        innerLine.glowWidth   = 4
+        innerLine.glowWidth   = 2
         innerLine.fillColor   = .clear
         innerLine.zPosition   = -6
         addChild(innerLine)
