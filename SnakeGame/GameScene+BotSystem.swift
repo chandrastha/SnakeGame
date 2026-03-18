@@ -1640,6 +1640,7 @@ extension GameScene {
         let radiusSq = radius * radius
         let headX = bots[botIndex].position.x
         let headY = bots[botIndex].position.y
+        var moved = false
         for (i, food) in foodItems.enumerated() {
             guard food.parent != nil else { continue }
             if foodTypes[i] == .trail || foodTypes[i] == .death { continue }
@@ -1652,8 +1653,9 @@ extension GameScene {
             let dist = sqrt(distSq)
             food.position.x += (dx / dist) * strength
             food.position.y += (dy / dist) * strength
+            moved = true
         }
-        foodGridDirty = true
+        if moved { foodGridDirty = true }
     }
 
     private func botNutrition(for type: FoodType, botIndex: Int) -> Int {

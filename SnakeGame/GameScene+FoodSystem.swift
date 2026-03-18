@@ -417,6 +417,9 @@ extension GameScene {
         case .shrink:
             if score < 120 {
                 spawnFloatingText("Too small to shrink!", at: CGPoint(x: foodPos.x, y: foodPos.y + 60))
+                spawnEatParticles(at: foodPos)
+                refreshPowerUpPanel()
+                return
             } else {
                 applyShrink()
             }
