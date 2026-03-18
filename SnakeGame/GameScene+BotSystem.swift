@@ -772,6 +772,39 @@ extension GameScene {
         let hc = foodCell(for: position)
         let searchRadiusSq = profile.foodSearchRadius * profile.foodSearchRadius
 
+        // Phase 1: unconditional full-array scan for special food (shield/multiplier/magnet/ghost).
+        // Special food is now rare (max 1 per type), so it may be far outside foodSearchRadius.
+        // We always add it to the candidate list so bots will path toward it from anywhere on the map.
+        // Cost: O(foodCount ≈ 200) — acceptable since this runs at 30 Hz per bot.
+        let specialDecayDenom = profile.foodSearchRadius * 3.0  // softer decay for long-range specials
+        for index in foodItems.indices {
+            switch foodTypes[index] {
+            case .shield, .multiplier, .magnet, .ghost: break  // only these; shrink=0 utility, skip
+            default: continue
+            }
+            guard foodItems[index].parent != nil else { continue }
+            let fdx = foodItems[index].position.x - position.x
+            let fdy = foodItems[index].position.y - position.y
+            let distance = (fdx * fdx + fdy * fdy).squareRoot()
+            let bonus = index < cachedClusterBonuses.count ? cachedClusterBonuses[index] : 0
+            let utility = GameLogic.botFoodValue(
+                type: foodTypes[index],
+                clusterBonus: bonus,
+                greed: profile.greed,
+                scavengerBias: profile.scavengerBias
+            ) * max(0.18, 1.0 - distance / specialDecayDenom)
+            guard utility > 0.5 else { continue }
+            let candidate = BotFoodTarget(index: index, position: foodItems[index].position,
+                                          type: foodTypes[index], utility: utility)
+            if targets.count < limit {
+                targets.append(candidate)
+            } else if let worstIdx = targets.indices.min(by: { targets[$0].utility < targets[$1].utility }),
+                      targets[worstIdx].utility < utility {
+                targets[worstIdx] = candidate
+            }
+        }
+
+        // Phase 2: spatial-grid scan for regular/trail/death food within foodSearchRadius.
         for dcx in -cellRadius...cellRadius {
             for dcy in -cellRadius...cellRadius {
                 guard let indices = foodSpatialGrid[GridCell(x: hc.x + dcx, y: hc.y + dcy)] else { continue }
@@ -1664,6 +1697,12 @@ extension GameScene {
                         spawnFood()
                         bots[botIndex].score += nutritionScore
                         applyBotPowerUp(type: type, botIndex: botIndex)  // .shrink handled via applyBotShrink()
+                        // Mirror player cooldown so bot eats also gate special respawns
+                        switch type {
+                        case .shield, .multiplier, .magnet, .ghost, .shrink:
+                            specialFoodCooldowns[type] = lastUpdateTime + 30.0
+                        default: break
+                        }
                         syncBotLength(botIndex)
                         miniLeaderboardNeedsRefresh = true
                         return

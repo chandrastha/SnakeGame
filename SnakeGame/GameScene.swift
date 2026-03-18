@@ -262,6 +262,15 @@ class GameScene: SKScene {
     var hasUsedRevive: Bool = false
     var hasDoubledCoins: Bool = false
 
+    // MARK: - Coin Earning Counters
+    var regularFoodEatenForCoin: Int = 0   // 1 coin per 10 regular/special eats
+    var deathFoodEatenForCoin:   Int = 0   // 1 coin per 8 death food eats
+
+    // MARK: - Special Food Cooldowns
+    // Maps FoodType → earliest lastUpdateTime when that type may next spawn.
+    // Set to lastUpdateTime + 30 when a special food is eaten (by player or bot).
+    var specialFoodCooldowns: [FoodType: TimeInterval] = [:]
+
     // MARK: - Super Mouse
     var superMouseState: SuperMouseState = .dormant
     var superMouseTimer: CGFloat = 0
@@ -643,8 +652,11 @@ class GameScene: SKScene {
         gameStarted         = false
         isPausedGame        = false
         scoreMultiplier     = 1
-        hasUsedRevive       = false
-        hasDoubledCoins     = false
+        hasUsedRevive            = false
+        hasDoubledCoins          = false
+        regularFoodEatenForCoin  = 0
+        deathFoodEatenForCoin    = 0
+        specialFoodCooldowns.removeAll()
         PlayerEconomy.shared.resetSession()
         shieldActive        = false
         multiplierActive    = false
