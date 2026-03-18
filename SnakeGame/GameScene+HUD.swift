@@ -103,8 +103,6 @@ extension GameScene {
 
     // MARK: - Game Over Screen
     func showGameOverScreen(title: String = "GAME OVER") {
-        GameCenterManager.shared.submitScore(score)
-
         gameOverOverlay?.removeFromParent()
         gameOverOverlay = nil
 
@@ -307,8 +305,8 @@ extension GameScene {
         guard isGameOver, !gameOverButtonOrder.isEmpty else { return }
         switch gameOverButtonOrder[gameOverFocusedIndex] {
         case "reviveButton":    revivePlayer()
-        case "restartButton":   restartGame()
-        case "playAgainButton": shutdown(); onGameOver?(score)
+        case "restartButton":   GameCenterManager.shared.submitScore(score); restartGame()
+        case "playAgainButton": GameCenterManager.shared.submitScore(score); shutdown(); onGameOver?(score)
         default: break
         }
     }

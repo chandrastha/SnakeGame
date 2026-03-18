@@ -2703,8 +2703,10 @@ class GameScene: SKScene {
                 if tappedNames.contains("reviveButton") {
                     revivePlayer()
                 } else if tappedNames.contains("restartButton") {
+                    GameCenterManager.shared.submitScore(score)
                     restartGame()
                 } else if tappedNames.contains("playAgainButton") {
+                    GameCenterManager.shared.submitScore(score)
                     shutdown()
                     onGameOver?(score)
                 }
