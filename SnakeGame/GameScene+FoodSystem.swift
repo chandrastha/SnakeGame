@@ -406,6 +406,12 @@ extension GameScene {
         foodItems[index].removeFromParent()
         removeFoodItem(at: index)
         clusterBonusDirty = true
+        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout
+        switch type {
+        case .shield, .multiplier, .magnet, .ghost, .shrink:
+            specialFoodCooldowns[type] = lastUpdateTime + 30.0
+        default: break
+        }
         spawnFood()
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
 
@@ -470,12 +476,6 @@ extension GameScene {
             if regularFoodEatenForCoin >= 10 { regularFoodEatenForCoin = 0; PlayerEconomy.shared.sessionCoins += 1 }
         }
 
-        // Set 30-second respawn cooldown for special food types
-        switch type {
-        case .shield, .multiplier, .magnet, .ghost, .shrink:
-            specialFoodCooldowns[type] = lastUpdateTime + 30.0
-        default: break
-        }
         if total > 0 {
             let text  = bonus > 0 ? "+\(total) combo!" : "+\(total)"
             let color: SKColor = bonus > 0

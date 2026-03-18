@@ -1721,15 +1721,15 @@ extension GameScene {
                         food.removeFromParent()
                         let type = removeFoodItem(at: i)
                         clusterBonusDirty = true
-                        spawnFood()
-                        bots[botIndex].score += nutritionScore
-                        applyBotPowerUp(type: type, botIndex: botIndex)  // .shrink handled via applyBotShrink()
-                        // Mirror player cooldown so bot eats also gate special respawns
+                        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout
                         switch type {
                         case .shield, .multiplier, .magnet, .ghost, .shrink:
                             specialFoodCooldowns[type] = lastUpdateTime + 30.0
                         default: break
                         }
+                        spawnFood()
+                        bots[botIndex].score += nutritionScore
+                        applyBotPowerUp(type: type, botIndex: botIndex)  // .shrink handled via applyBotShrink()
                         syncBotLength(botIndex)
                         miniLeaderboardNeedsRefresh = true
                         return
