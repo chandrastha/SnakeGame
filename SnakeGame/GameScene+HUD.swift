@@ -107,8 +107,9 @@ extension GameScene {
         gameOverOverlay = nil
 
         let cx = cameraNode.position.x, cy = cameraNode.position.y
-        let canRevive = !hasUsedRevive
-        let isExpert  = gameMode == .challenge
+        let canRevive       = !hasUsedRevive
+        let canDoubleCoins  = !hasDoubledCoins
+        let isExpert        = gameMode == .challenge
 
         let overlay = SKNode()
         overlay.zPosition = 1000
@@ -123,7 +124,10 @@ extension GameScene {
 
         // Card layout constants — all positions relative to card centre (cx, cy)
         let cardW: CGFloat = min(300, size.width * 0.82)
-        let cardH: CGFloat = canRevive ? 370 : 320
+        // Height grows with button count: base 140 (title+score+coins+divider) + 62 per button + 36 bottom pad
+        let adButtonCount  = (canRevive ? 1 : 0) + (canDoubleCoins ? 1 : 0)
+        let totalButtons   = adButtonCount + 2   // + Play Again + Main Menu
+        let cardH: CGFloat = 140 + CGFloat(totalButtons) * 62 + 36
         let cardCY = cy   // card vertically centred on screen
 
         // Card glow ring (outside the card for depth)
@@ -178,11 +182,20 @@ extension GameScene {
         div.lineWidth   = 1
         overlay.addChild(div)
 
-        // Button Y positions (inside card, below score/divider)
+        // Coins earned this run
+        let coinsLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
+        coinsLabel.name                    = "coinsEarnedLabel"
+        coinsLabel.text                    = "🪙 +\(PlayerEconomy.shared.sessionCoins) coins"
+        coinsLabel.fontSize                = 18
+        coinsLabel.fontColor               = SKColor(red: 1.0, green: 0.82, blue: 0.20, alpha: 0.90)
+        coinsLabel.horizontalAlignmentMode = .center
+        coinsLabel.verticalAlignmentMode   = .center
+        coinsLabel.position                = CGPoint(x: cx, y: cardCY + cardH / 2 - 138)
+        overlay.addChild(coinsLabel)
+
+        // Button Y positions (inside card, below score/divider/coins)
         let buttonSpacing: CGFloat = 62
-        let firstBtnY = canRevive
-            ? cardCY - cardH / 2 + 194   // leave room for 3 buttons
-            : cardCY - cardH / 2 + 152   // 2 buttons
+        let firstBtnY = cardCY - cardH / 2 + 36 + CGFloat(totalButtons - 1) * buttonSpacing
 
         // Helper to build a pill button
         func makeButton(label: String, fillColor: SKColor, strokeColor: SKColor,
@@ -216,15 +229,31 @@ extension GameScene {
         }
 
         var nextBtnY = firstBtnY
+        var buttonOrder: [String] = []
+
         if canRevive {
             makeButton(
-                label:       "⚡ Revive",
+                label:       "📺 Watch Ad → Revive",
                 fillColor:   SKColor(red: 0.90, green: 0.58, blue: 0.0, alpha: 1.0),
                 strokeColor: SKColor(red: 1.0, green: 0.85, blue: 0.25, alpha: 0.70),
                 glowW:       10,
                 yPos:        nextBtnY,
-                name:        "reviveButton"
+                name:        "watchAdReviveButton"
             )
+            buttonOrder.append("watchAdReviveButton")
+            nextBtnY -= buttonSpacing
+        }
+
+        if canDoubleCoins {
+            makeButton(
+                label:       "📺 2× Coins",
+                fillColor:   SKColor(red: 0.15, green: 0.55, blue: 0.85, alpha: 1.0),
+                strokeColor: SKColor(red: 0.50, green: 0.85, blue: 1.0, alpha: 0.60),
+                glowW:       8,
+                yPos:        nextBtnY,
+                name:        "watchAdCoinsButton"
+            )
+            buttonOrder.append("watchAdCoinsButton")
             nextBtnY -= buttonSpacing
         }
 
@@ -236,6 +265,7 @@ extension GameScene {
             yPos:        nextBtnY,
             name:        "restartButton"
         )
+        buttonOrder.append("restartButton")
         nextBtnY -= buttonSpacing
 
         makeButton(
@@ -246,11 +276,10 @@ extension GameScene {
             yPos:        nextBtnY,
             name:        "playAgainButton"
         )
+        buttonOrder.append("playAgainButton")
 
         // Controller navigation
-        gameOverButtonOrder = canRevive
-            ? ["reviveButton", "restartButton", "playAgainButton"]
-            : ["restartButton", "playAgainButton"]
+        gameOverButtonOrder = buttonOrder
         gameOverFocusedIndex = 0
 
         if connectedController != nil {
@@ -272,6 +301,7 @@ extension GameScene {
     }
 
     func restartGame() {
+        PlayerEconomy.shared.commitSession()
         stopBackgroundMusic()
         setupNewGame()
         startBackgroundMusic()
@@ -304,9 +334,11 @@ extension GameScene {
     func confirmGameOverSelection() {
         guard isGameOver, !gameOverButtonOrder.isEmpty else { return }
         switch gameOverButtonOrder[gameOverFocusedIndex] {
-        case "reviveButton":    revivePlayer()
-        case "restartButton":   restartGame()
-        case "playAgainButton": shutdown(); onGameOver?(score)
+        case "watchAdReviveButton": revivePlayer()
+        case "watchAdCoinsButton":  handleWatchAdDoubleCoins()
+        case "reviveButton":        revivePlayer()
+        case "restartButton":       restartGame()
+        case "playAgainButton":     PlayerEconomy.shared.commitSession(); shutdown(); onGameOver?(score)
         default: break
         }
     }
@@ -379,6 +411,29 @@ extension GameScene {
         startBackgroundMusic()
     }
 
+
+    // MARK: - Watch Ad: Double Coins
+    /// Simulates a rewarded-ad view and doubles the session coin total.
+    /// In production, replace the body with an actual ad SDK presentation.
+    func handleWatchAdDoubleCoins() {
+        guard !hasDoubledCoins else { return }
+        hasDoubledCoins = true
+        PlayerEconomy.shared.doubleSession()
+
+        // Update the coins label on the overlay and remove the ad-coins button
+        guard let overlay = gameOverOverlay else { return }
+        if let coinLabel = overlay.children.first(where: { $0.name == "coinsEarnedLabel" }) as? SKLabelNode {
+            let earned = PlayerEconomy.shared.sessionCoins
+            coinLabel.text = "🪙 +\(earned) coins  (2×!)"
+            coinLabel.fontColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
+        }
+        // Fade and remove the 2× coins button and its sheen
+        overlay.children
+            .filter { $0.name == "watchAdCoinsButton" }
+            .forEach { $0.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.2), SKAction.removeFromParent()])) }
+        // Update controller button order
+        gameOverButtonOrder.removeAll { $0 == "watchAdCoinsButton" }
+    }
 
     // MARK: - Score Panel
     func createScorePanel() {

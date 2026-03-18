@@ -6,6 +6,8 @@ struct SnakeCustomizeView: View {
     @AppStorage("selectedSnakeColorIndex")   private var selectedIndex: Int = 0
     @AppStorage("selectedSnakePatternIndex") private var selectedPatternIndex: Int = 0
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var economy = PlayerEconomy.shared
+    @State private var purchaseTarget: SnakePattern? = nil
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 4)
 
@@ -94,15 +96,47 @@ struct SnakeCustomizeView: View {
 
                     LazyVGrid(columns: columns, spacing: 18) {
                         ForEach(SnakePattern.allCases, id: \.rawValue) { pattern in
+                            let unlocked = economy.isPatternUnlocked(pattern.rawValue)
                             PatternCell(
                                 pattern: pattern,
                                 theme: selected,
-                                isSelected: selectedPatternIndex == pattern.rawValue
+                                isSelected: selectedPatternIndex == pattern.rawValue,
+                                isLocked: !unlocked,
+                                cost: PlayerEconomy.patternCost(rawValue: pattern.rawValue)
                             ) {
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.68)) {
-                                    selectedPatternIndex = pattern.rawValue
+                                if unlocked {
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.68)) {
+                                        selectedPatternIndex = pattern.rawValue
+                                    }
+                                } else {
+                                    purchaseTarget = pattern
                                 }
                             }
+                        }
+                    }
+                    .confirmationDialog(
+                        purchaseTarget.map { p in
+                            let cost = PlayerEconomy.patternCost(rawValue: p.rawValue) ?? 0
+                            let canAfford = economy.coins >= cost
+                            return canAfford
+                                ? "Unlock \(p.name) for \(cost) 🪙?"
+                                : "\(p.name) costs \(cost) 🪙 — you have \(economy.coins)"
+                        } ?? "",
+                        isPresented: Binding(
+                            get: { purchaseTarget != nil },
+                            set: { if !$0 { purchaseTarget = nil } }
+                        ),
+                        titleVisibility: .visible
+                    ) {
+                        if let p = purchaseTarget {
+                            let cost = PlayerEconomy.patternCost(rawValue: p.rawValue) ?? 0
+                            if economy.coins >= cost {
+                                Button("Unlock for \(cost) 🪙") {
+                                    economy.unlockPattern(p.rawValue)
+                                    purchaseTarget = nil
+                                }
+                            }
+                            Button("Cancel", role: .cancel) { purchaseTarget = nil }
                         }
                     }
                     .padding(.horizontal, 24)
@@ -197,6 +231,8 @@ private struct PatternCell: View {
     let pattern: SnakePattern
     let theme: SnakeColorTheme
     let isSelected: Bool
+    let isLocked: Bool
+    let cost: Int?
     let action: () -> Void
 
     var body: some View {
@@ -204,17 +240,24 @@ private struct PatternCell: View {
             VStack(spacing: 7) {
                 ZStack {
                     Circle()
-                        .fill(theme.swiftUIColor)
+                        .fill(isLocked ? Color.white.opacity(0.06) : theme.swiftUIColor)
                         .frame(width: 52, height: 52)
                         .shadow(color: theme.swiftUIColor.opacity(isSelected ? 0.70 : 0), radius: 8)
                         .patternOverlay(
                             pattern: pattern,
-                            color: theme.swiftUIColor,
+                            color: isLocked ? Color.white.opacity(0.18) : theme.swiftUIColor,
                             size: 52,
                             segIndex: 0
                         )
 
-                    if isSelected {
+                    if isLocked {
+                        Circle()
+                            .fill(Color.black.opacity(0.45))
+                            .frame(width: 52, height: 52)
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Color.white.opacity(0.85))
+                    } else if isSelected {
                         Circle()
                             .strokeBorder(Color.white, lineWidth: 2.5)
                             .frame(width: 52, height: 52)
@@ -225,9 +268,15 @@ private struct PatternCell: View {
                 }
                 .scaleEffect(isSelected ? 1.1 : 1.0)
 
-                Text(pattern.name)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(isSelected ? 1.0 : 0.5))
+                if isLocked, let cost {
+                    Text("\(cost) 🪙")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.82, blue: 0.20).opacity(0.90))
+                } else {
+                    Text(pattern.name)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(isSelected ? 1.0 : 0.5))
+                }
             }
         }
         .animation(.spring(response: 0.25, dampingFraction: 0.68), value: isSelected)
