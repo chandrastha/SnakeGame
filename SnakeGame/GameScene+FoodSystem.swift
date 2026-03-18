@@ -36,12 +36,31 @@ extension GameScene {
         return candidate
     }
 
-    func makeRegularFoodNode() -> SKLabelNode {
-        let food = SKLabelNode(text: fruitEmojis.randomElement())
-        food.fontSize                = 17
-        food.verticalAlignmentMode   = .center
-        food.horizontalAlignmentMode = .center
-        return food
+    /// Returns (or creates) a cached SKTexture for a food emoji or icon string.
+    /// Rendered once as a label baked to texture — eliminates live font rendering cost
+    /// for all ~340 on-screen food nodes.
+    private func foodTexture(for text: String) -> SKTexture {
+        if let cached = foodTextureCache[text] { return cached }
+        let label = SKLabelNode(text: text)
+        label.fontSize                = 17
+        label.verticalAlignmentMode   = .center
+        label.horizontalAlignmentMode = .center
+        let size: CGFloat = 26
+        let crop = CGRect(x: -size / 2, y: -size / 2, width: size, height: size)
+        let texture = (view as? SKView)?.texture(from: label, crop: crop) ?? SKTexture()
+        foodTextureCache[text] = texture
+        return texture
+    }
+
+    /// Pre-warm all food textures at game start so no allocations occur during gameplay.
+    func prewarmFoodTextures() {
+        for emoji in fruitEmojis { _ = foodTexture(for: emoji) }
+        for icon in ["🛡", "⭐", "🧲", "👻", "✂️", "●"] { _ = foodTexture(for: icon) }
+    }
+
+    func makeRegularFoodNode() -> SKSpriteNode {
+        let emoji = fruitEmojis.randomElement() ?? "🍎"
+        return SKSpriteNode(texture: foodTexture(for: emoji))
     }
 
     func makeFoodNode(for type: FoodType) -> SKNode {
@@ -63,12 +82,8 @@ extension GameScene {
         }
     }
 
-    func makeIconFoodNode(_ text: String) -> SKLabelNode {
-        let food = SKLabelNode(text: text)
-        food.fontSize                = 17
-        food.verticalAlignmentMode   = .center
-        food.horizontalAlignmentMode = .center
-        return food
+    func makeIconFoodNode(_ text: String) -> SKSpriteNode {
+        return SKSpriteNode(texture: foodTexture(for: text))
     }
 
     func spawnFood() {
