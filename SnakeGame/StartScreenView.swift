@@ -311,6 +311,17 @@ struct StartScreenView: View {
                 .background(Color(red: 0.3, green: 0.75, blue: 1.0).opacity(0.14))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
+
+            Button(action: { GameCenterManager.shared.showLeaderboard() }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "trophy.fill").font(.system(size: 12, weight: .bold))
+                    Text("Ranks").font(.system(size: 12, weight: .bold))
+                }
+                .foregroundStyle(Color(red: 1.0, green: 0.8, blue: 0.2))
+                .padding(.horizontal, 11).padding(.vertical, 9)
+                .background(Color(red: 1.0, green: 0.8, blue: 0.2).opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
         }
     }
 

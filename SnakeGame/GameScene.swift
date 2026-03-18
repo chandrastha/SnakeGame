@@ -643,6 +643,7 @@ class GameScene: SKScene {
     }
 
     func setupNewGame() {
+        GameCenterManager.shared.resetSession()
         selectedSnakeColorIndex = normalizedSnakeColorIndex(selectedSnakeColorIndex)
         hasShutdown         = false
         isGameOver          = false
@@ -2723,9 +2724,10 @@ class GameScene: SKScene {
                 } else if tappedNames.contains("reviveButton") {
                     revivePlayer()
                 } else if tappedNames.contains("restartButton") {
+                    GameCenterManager.shared.submitScore(score)
                     restartGame()
                 } else if tappedNames.contains("playAgainButton") {
-                    PlayerEconomy.shared.commitSession()
+                    GameCenterManager.shared.submitScore(score)
                     shutdown()
                     onGameOver?(score)
                 }

@@ -334,11 +334,9 @@ extension GameScene {
     func confirmGameOverSelection() {
         guard isGameOver, !gameOverButtonOrder.isEmpty else { return }
         switch gameOverButtonOrder[gameOverFocusedIndex] {
-        case "watchAdReviveButton": revivePlayer()
-        case "watchAdCoinsButton":  handleWatchAdDoubleCoins()
-        case "reviveButton":        revivePlayer()
-        case "restartButton":       restartGame()
-        case "playAgainButton":     PlayerEconomy.shared.commitSession(); shutdown(); onGameOver?(score)
+        case "reviveButton":    revivePlayer()
+        case "restartButton":   GameCenterManager.shared.submitScore(score); restartGame()
+        case "playAgainButton": GameCenterManager.shared.submitScore(score); shutdown(); onGameOver?(score)
         default: break
         }
     }
