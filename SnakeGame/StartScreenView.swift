@@ -14,6 +14,7 @@ struct StartScreenView: View {
 
     @AppStorage("selectedSnakeColorIndex") private var selectedColorIndex: Int = 0
     @AppStorage("playerName")             private var playerName: String = "Player"
+    @ObservedObject private var economy = PlayerEconomy.shared
 
 
     @State private var showImagePicker:      Bool = false
@@ -127,7 +128,9 @@ struct StartScreenView: View {
                 .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.55), radius: 14, x: 0, y: 0)
                 .padding(.bottom, 20)
 
-            profileRow.padding(.bottom, 22)
+            profileRow.padding(.bottom, 14)
+
+            coinBalancePill.padding(.bottom, 18)
 
             modeSelector.padding(.bottom, 30)
 
@@ -165,6 +168,8 @@ struct StartScreenView: View {
                     .padding(.bottom, 12)
 
                 profileRow
+
+                coinBalancePill.padding(.top, 10)
 
                 Spacer(minLength: 0)
 
@@ -256,6 +261,24 @@ struct StartScreenView: View {
         } else {
             // Fallback on earlier versions
         }
+    }
+
+    private var coinBalancePill: some View {
+        HStack(spacing: 6) {
+            Text("🪙")
+                .font(.system(size: 16))
+            Text("\(economy.coins)")
+                .font(.system(size: 15, weight: .black))
+                .foregroundStyle(Color(red: 1.0, green: 0.90, blue: 0.30))
+            Text("coins")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.55))
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .background(Color.white.opacity(0.08))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(Color(red: 1.0, green: 0.82, blue: 0.20).opacity(0.35), lineWidth: 1))
     }
 
     private var titleGradient: LinearGradient {
