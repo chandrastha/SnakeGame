@@ -51,9 +51,6 @@ struct BotState {
     var isCircled: Bool = false
     var circledTimer: CGFloat = 0
     var spawnTimer: CGFloat = 0   // counts down after activation; collision disabled while > 0
-    // LOD rendering: bots beyond ~400 pt render as a single coarse path instead of N segments
-    var lodBodyNode: SKShapeNode?
-    var isLODActive: Bool = false
 
     init(id: Int, position: CGPoint, colorIndex: Int, name: String) {
         self.id           = id
@@ -247,11 +244,6 @@ extension GameScene {
         let activateSq = botActivationDistance * botActivationDistance
         let deactivateSq = botDeactivationDistance * botDeactivationDistance
 
-        // When adaptive quality is active, track active bot count to enforce the reduced limit
-        var activeBotCount: Int = adaptiveQualityActive
-            ? bots.reduce(0) { $0 + ($1.isActive && !$1.isDead ? 1 : 0) }
-            : 0
-
         for i in bots.indices {
             guard !bots[i].isDead else { continue }
             let dx = bots[i].position.x - playerPos.x
@@ -261,12 +253,7 @@ extension GameScene {
             if bots[i].isActive {
                 if distSq > deactivateSq { deactivateBot(i) }
             } else {
-                if distSq < activateSq {
-                    // Adaptive quality: don't activate new bots beyond the reduced limit
-                    if adaptiveQualityActive && activeBotCount >= adaptiveQualityBotLimit { continue }
-                    activateBot(i)
-                    if adaptiveQualityActive { activeBotCount += 1 }
-                }
+                if distSq < activateSq { activateBot(i) }
             }
         }
     }
@@ -494,9 +481,6 @@ extension GameScene {
         bots[index].body.removeAll()
         bots[index].bodyPositionCache.removeAll()
         bots[index].posHistory.removeAll()
-        bots[index].lodBodyNode?.removeFromParent()
-        bots[index].lodBodyNode = nil
-        bots[index].isLODActive = false
     }
 
     func botEffectiveBodyRadius(_ botScore: Int) -> CGFloat {
@@ -1453,56 +1437,6 @@ extension GameScene {
             spacing: segmentPixelSpacing,
             into: &bots[index].bodyPositionCache
         )
-
-        // LOD: bots beyond 400 pt from player render as a single coarse path instead of N segments.
-        // This is invisible in practice — distant bots are tiny on screen.
-        let playerPos = snakeHead.position
-        let ldx = bots[index].position.x - playerPos.x
-        let ldy = bots[index].position.y - playerPos.y
-        let lodThresholdSq: CGFloat = 400 * 400
-        let isDistant = ldx * ldx + ldy * ldy > lodThresholdSq
-
-        if isDistant {
-            // Switch to LOD mode if not already
-            if !bots[index].isLODActive {
-                for seg in bots[index].body { seg.isHidden = true }
-                if bots[index].lodBodyNode == nil {
-                    let theme = snakeColorThemes[bots[index].colorIndex % snakeColorThemes.count]
-                    let node = SKShapeNode()
-                    node.strokeColor = theme.bodySKColor
-                    node.fillColor   = .clear
-                    node.lineWidth   = botEffectiveBodyRadius(bots[index].score) * 2
-                    node.lineCap     = .round
-                    node.lineJoin    = .round
-                    addChild(node)
-                    bots[index].lodBodyNode = node
-                }
-                bots[index].isLODActive = true
-            }
-            // Update coarse path — 8 evenly-spaced samples through the body cache
-            if let lodNode = bots[index].lodBodyNode {
-                let cache = bots[index].bodyPositionCache
-                if cache.count >= 2 {
-                    let step = max(1, cache.count / 8)
-                    let path = CGMutablePath()
-                    path.move(to: cache[0])
-                    var k = step
-                    while k < cache.count { path.addLine(to: cache[k]); k += step }
-                    if let last = cache.last { path.addLine(to: last) }
-                    lodNode.path = path
-                }
-            }
-            return  // skip per-segment updates
-        }
-
-        // Full-detail mode — restore segments if we were in LOD
-        if bots[index].isLODActive {
-            for seg in bots[index].body { seg.isHidden = false }
-            bots[index].lodBodyNode?.removeFromParent()
-            bots[index].lodBodyNode = nil
-            bots[index].isLODActive = false
-        }
-
         let pattern = SnakePattern(rawValue: bots[index].patternIndex) ?? .solid
         let bodyCount = bots[index].body.count
         let isBoosting = bots[index].isBoosting
@@ -1523,8 +1457,9 @@ extension GameScene {
                 }
             }
             let baseGlow: CGFloat = segmentIndex < halfCount ? leadingGlow : 0
-            let desiredGlow: CGFloat = adaptiveQualityActive ? 0
-                : ((isBoosting && segmentIndex < boostGlowCount) ? max(baseGlow, 6) : baseGlow)
+            let desiredGlow: CGFloat = (isBoosting && segmentIndex < boostGlowCount)
+                ? max(baseGlow, 6)
+                : baseGlow
             // Guard SpriteKit glow write: setting glowWidth triggers an expensive re-render even
             // when the value hasn't changed. Only write when the value actually differs.
             if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
