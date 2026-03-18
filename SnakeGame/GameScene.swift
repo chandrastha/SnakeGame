@@ -134,6 +134,9 @@ class GameScene: SKScene {
     // Using SKSpriteNode with a cached SKTexture avoids allocating 1–5 nested SKShapeNodes
     // per spawn (53/sec while boosting). Cache is pre-warmed at game start.
     var trailFoodTextureCache: [Int: SKTexture] = [:]
+    // Regular and icon food: pre-rendered SKTexture per emoji/icon string.
+    // Eliminates live SKLabelNode text rendering cost for ~340 on-screen food nodes.
+    var foodTextureCache: [String: SKTexture] = [:]
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
     // MARK: - Movement Heatmap (food density weighting)
@@ -323,6 +326,17 @@ class GameScene: SKScene {
     var botVisibilityUpdateTimer: CGFloat = 0
     var circledDetectionTimer: CGFloat = 0
     var frameCounter = 0
+
+    // MARK: - Adaptive Quality
+    // Monitors smoothed FPS and reduces rendering cost when the device is struggling.
+    // Triggers after 2s below 50 FPS; recovers after 2s above 55 FPS.
+    var smoothedFPS: CGFloat = 60
+    var lowFPSTimer: CGFloat = 0
+    var highFPSTimer: CGFloat = 0
+    var adaptiveQualityActive: Bool = false
+    let adaptiveQualityBotLimit: Int = 40   // max active bots when quality is reduced
+    let adaptiveLowFPSThreshold: CGFloat  = 50
+    let adaptiveHighFPSThreshold: CGFloat = 55
 
     // MARK: - Remote Players (Online mode)
 
@@ -799,6 +813,7 @@ class GameScene: SKScene {
 
         gameSetupComplete = true
         prewarmTrailFoodTextures()   // build SKTexture cache before first trail spawn
+        prewarmFoodTextures()        // pre-render all emoji/icon food textures
         startGameImmediately()
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
@@ -2816,6 +2831,25 @@ class GameScene: SKScene {
             : CGFloat(max(0, currentTime - lastUpdateTime))
         let dt: CGFloat = min(frameDelta, CGFloat(maxDeltaTime))
         lastUpdateTime = currentTime
+
+        // Adaptive quality: track smoothed FPS and engage/disengage reduced rendering
+        let instantFPS: CGFloat = frameDelta > 0 ? min(1.0 / frameDelta, 120) : 60
+        smoothedFPS = smoothedFPS * 0.9 + instantFPS * 0.1
+        if !adaptiveQualityActive {
+            if smoothedFPS < adaptiveLowFPSThreshold {
+                lowFPSTimer += dt
+                if lowFPSTimer >= 2.0 { adaptiveQualityActive = true; lowFPSTimer = 0 }
+            } else {
+                lowFPSTimer = 0
+            }
+        } else {
+            if smoothedFPS >= adaptiveHighFPSThreshold {
+                highFPSTimer += dt
+                if highFPSTimer >= 2.0 { adaptiveQualityActive = false; highFPSTimer = 0 }
+            } else {
+                highFPSTimer = 0
+            }
+        }
 
         updatePowerUps(dt: dt)
         tickCombo(dt: dt)
