@@ -103,6 +103,8 @@ extension GameScene {
 
     // MARK: - Game Over Screen
     func showGameOverScreen(title: String = "GAME OVER") {
+        GameCenterManager.shared.submitScore(score)
+
         gameOverOverlay?.removeFromParent()
         gameOverOverlay = nil
 
