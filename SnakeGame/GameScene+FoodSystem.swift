@@ -32,8 +32,8 @@ extension GameScene {
 
         guard candidate != .regular else { return .regular }
 
-        // Enforce 30-second cooldown for this special type
-        if let readyAt = specialFoodCooldowns[candidate], lastUpdateTime < readyAt {
+        // Enforce 30-second cooldown for this special type (remaining seconds > 0 = locked)
+        if let remaining = specialFoodCooldowns[candidate], remaining > 0 {
             return .regular
         }
         // Max 1 of each special type at a time
@@ -406,10 +406,12 @@ extension GameScene {
         foodItems[index].removeFromParent()
         removeFoodItem(at: index)
         clusterBonusDirty = true
-        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout
+        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout.
+        // Stored as remaining seconds (CGFloat), ticked down by dt in updatePowerUps()
+        // so the cooldown freezes during pause/backgrounding, matching other timers.
         switch type {
         case .shield, .multiplier, .magnet, .ghost, .shrink:
-            specialFoodCooldowns[type] = lastUpdateTime + 30.0
+            specialFoodCooldowns[type] = 30.0
         default: break
         }
         spawnFood()

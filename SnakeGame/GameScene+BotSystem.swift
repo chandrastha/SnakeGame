@@ -1721,10 +1721,11 @@ extension GameScene {
                         food.removeFromParent()
                         let type = removeFoodItem(at: i)
                         clusterBonusDirty = true
-                        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout
+                        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout.
+                        // Remaining seconds (CGFloat), ticked by dt in updatePowerUps() — freezes on pause.
                         switch type {
                         case .shield, .multiplier, .magnet, .ghost, .shrink:
-                            specialFoodCooldowns[type] = lastUpdateTime + 30.0
+                            specialFoodCooldowns[type] = 30.0
                         default: break
                         }
                         spawnFood()

@@ -270,9 +270,10 @@ class GameScene: SKScene {
     var deathFoodEatenForCoin:   Int = 0   // 1 coin per 8 death food eats
 
     // MARK: - Special Food Cooldowns
-    // Maps FoodType → earliest lastUpdateTime when that type may next spawn.
-    // Set to lastUpdateTime + 30 when a special food is eaten (by player or bot).
-    var specialFoodCooldowns: [FoodType: TimeInterval] = [:]
+    // Maps FoodType → remaining seconds before that type may respawn.
+    // Ticked down by dt in updatePowerUps() so it freezes while the game is paused,
+    // consistent with multiplierTimeLeft / magnetTimeLeft / ghostTimeLeft.
+    var specialFoodCooldowns: [FoodType: CGFloat] = [:]
 
     // MARK: - Super Mouse
     var superMouseState: SuperMouseState = .dormant
@@ -2827,6 +2828,12 @@ class GameScene: SKScene {
 
         if shouldRefreshPowerUpPanel || multiplierSecondsChanged || magnetSecondsChanged || ghostSecondsChanged {
             refreshPowerUpPanel()
+        }
+
+        // Tick special-food respawn cooldowns via dt so they freeze during pause/backgrounding.
+        for key in specialFoodCooldowns.keys {
+            specialFoodCooldowns[key] = max(0, specialFoodCooldowns[key]! - dt)
+            if specialFoodCooldowns[key] == 0 { specialFoodCooldowns.removeValue(forKey: key) }
         }
     }
 
