@@ -257,6 +257,7 @@ extension GameScene {
                 if distSq < activateSq { activateBot(i) }
             }
         }
+        ensureNearbyBots()
     }
 
     func detectCircledBots() {
@@ -582,21 +583,89 @@ extension GameScene {
         miniLeaderboardNeedsRefresh = true
     }
 
+    /// Count non-dead bots currently within botActivationDistance of the player.
+    /// Pass -1 as `excluding` to count all bots.
+    private func activeBotsNearPlayer(excluding idx: Int) -> Int {
+        let p     = snakeHead.position
+        let radSq = botActivationDistance * botActivationDistance
+        return bots.indices.filter { i in
+            guard i != idx, !bots[i].isDead else { return false }
+            let dx = bots[i].position.x - p.x
+            let dy = bots[i].position.y - p.y
+            return dx*dx + dy*dy < radSq
+        }.count
+    }
+
+    /// Random position in a ring 500–1050 px from the player, clamped to the arena.
+    private func randomPositionNearPlayer() -> CGPoint {
+        let angle = CGFloat.random(in: 0...(2 * .pi))
+        let dist  = CGFloat.random(in: 500...1050)
+        let p     = snakeHead.position
+        let raw   = CGPoint(x: p.x + cos(angle) * dist,
+                            y: p.y + sin(angle) * dist)
+        return CGPoint(
+            x: min(max(raw.x, arenaMinX + 150), arenaMaxX - 150),
+            y: min(max(raw.y, arenaMinY + 150), arenaMaxY - 150)
+        )
+    }
+
+    /// If fewer than minNearbyBots are near the player, recycle far-away inactive bots
+    /// so they fast-respawn near the player on their next finishRespawn call.
+    func ensureNearbyBots() {
+        let needed = minNearbyBots - activeBotsNearPlayer(excluding: -1)
+        guard needed > 0 else { return }
+
+        let recycleDist   = botDeactivationDistance * 1.5   // 2250 px — definitely off-screen
+        let recycleDistSq = recycleDist * recycleDist
+        let p = snakeHead.position
+        var recycled = 0
+
+        for i in bots.indices {
+            guard recycled < needed,
+                  !bots[i].isDead,
+                  !bots[i].isNemesis else { continue }
+            let dx = bots[i].position.x - p.x
+            let dy = bots[i].position.y - p.y
+            if dx*dx + dy*dy > recycleDistSq {
+                respawnBot(i)               // marks isDead=true, standard cleanup
+                bots[i].respawnTimer = 0.5  // override to fast respawn
+                recycled += 1
+            }
+        }
+    }
+
     private func finishRespawn(_ index: Int) {
         bots[index].isDead = false
         bots[index].respawnTimer = 0
-        // Respawn inside the bot's home zone so coverage stays distributed.
-        bots[index].position = randomPositionInZone(for: index)
-        let playerPosSafe = snakeHead.position
-        for _ in 0..<5 {
-            let dxSafe = bots[index].position.x - playerPosSafe.x
-            let dySafe = bots[index].position.y - playerPosSafe.y
-            if dxSafe * dxSafe + dySafe * dySafe > 1600 * 1600 { break }
+
+        let nearbyCount = activeBotsNearPlayer(excluding: index)
+        if !bots[index].isNemesis && nearbyCount < minNearbyBots {
+            // Fill near the player — spawn within the activation ring.
+            bots[index].position = randomPositionNearPlayer()
+        } else {
+            // Original zone-based respawn with safety distance.
             bots[index].position = randomPositionInZone(for: index)
+            let playerPosSafe = snakeHead.position
+            for _ in 0..<5 {
+                let dxSafe = bots[index].position.x - playerPosSafe.x
+                let dySafe = bots[index].position.y - playerPosSafe.y
+                if dxSafe * dxSafe + dySafe * dySafe > 1600 * 1600 { break }
+                bots[index].position = randomPositionInZone(for: index)
+            }
         }
-        bots[index].angle = CGFloat.random(in: 0...(2 * .pi))
+
+        bots[index].angle       = CGFloat.random(in: 0...(2 * .pi))
         bots[index].targetAngle = bots[index].angle
         configureBotIdentity(index: index, preservePersonality: true)
+
+        // For near-player fills, size the bot relative to the player's current score
+        // (10–80 %) so there's a genuine spread of small, medium, and large opponents.
+        if !bots[index].isNemesis && nearbyCount < minNearbyBots && score > 0 {
+            let sizeScale          = CGFloat.random(in: 0.10...0.80)
+            bots[index].score      = Int(CGFloat(score) * sizeScale)
+            bots[index].bodyLength = targetBotBodyCount(for: index)
+        }
+
         activateBot(index)
         if bots[index].isNemesis && gameMode == .challenge {
             spawnNemesisBanner()

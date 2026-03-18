@@ -632,7 +632,7 @@ extension GameScene {
         let panelHeight = CGFloat(max(visibleEntries.count, 1)) * 20 + 34
         miniLeaderboardPanelHeight = panelHeight
 
-        let bg = SKShapeNode(rectOf: CGSize(width: 184, height: panelHeight), cornerRadius: 14)
+        let bg = SKShapeNode(rectOf: CGSize(width: 150, height: panelHeight), cornerRadius: 14)
         bg.fillColor = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.50)
         bg.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.18)
         bg.lineWidth = 1
@@ -656,8 +656,8 @@ extension GameScene {
                 : SKColor(white: 1, alpha: 0.70)
             label.horizontalAlignmentMode = .left
             label.verticalAlignmentMode   = .center
-            label.position = CGPoint(x: -84, y: panelHeight / 2 - 36 - CGFloat(i) * 20)
-            // -84 = -(184/2) + 8 → 8pt left padding inside the 184pt-wide panel
+            label.position = CGPoint(x: -67, y: panelHeight / 2 - 36 - CGFloat(i) * 20)
+            // -67 = -(150/2) + 8 → 8pt left padding inside the 150pt-wide panel
             lb.addChild(label)
         }
     }
