@@ -795,6 +795,26 @@ class GameScene: SKScene {
 
     var hasUsedRevive: Bool = false
 
+    // MARK: - Super Mouse
+    var superMouseState: SuperMouseState = .dormant
+    var superMouseTimer: CGFloat = 0
+    var superMouseNode: SuperMouseNode?
+    var superMouseHoleNode: SKNode?
+    var superMouseHolePosition: CGPoint = .zero
+    var superMousePosition: CGPoint = .zero
+    var superMouseAngle: CGFloat = 0
+    var superMouseReplanTimer: CGFloat = 0
+    var superMouseEmergeProgress: CGFloat = 0
+    var superMouseCurrentSpeed: CGFloat = 135
+    let superMouseSpawnInterval: CGFloat = 15  // every 2 minutes
+    let superMouseActiveLimit:   CGFloat = 30    // escapes if not caught within 30s
+    let superMouseBaseSpeed:     CGFloat = 158   // just below player boost speed (100×1.65=165); scared surge hits ~193
+    // HUD notification nodes
+    var superMouseArrowNode: SKNode?
+    var superMouseArrowLabel: SKLabelNode?
+    var superMouseMinimapDot: SKShapeNode?
+    var superMouseCountdownLabel: SKLabelNode?
+
     // MARK: - Other UI
     var pauseButton:  SKNode?
     var pauseOverlay: SKNode?
@@ -1232,6 +1252,15 @@ class GameScene: SKScene {
         miniLeaderboard   = nil
         leaderArrowNode   = nil
         leaderArrowLabel  = nil
+        hideSuperMouseHUD()
+        superMouseCountdownLabel?.removeFromParent()
+        superMouseCountdownLabel = nil
+        superMouseState = .dormant
+        superMouseTimer = 0
+        superMouseNode?.removeFromParent()
+        superMouseNode = nil
+        superMouseHoleNode?.removeFromParent()
+        superMouseHoleNode = nil
         mazeWalls.removeAll()
         mazeExits.removeAll()
         mazeSafeSpaces.removeAll()
@@ -1286,6 +1315,7 @@ class GameScene: SKScene {
         createMiniLeaderboard()
         createMinimap()
         createLeaderArrow()
+        createSuperMouseCountdownLabel()
         if isMazeHuntMode {
             createMazeHuntModeContent()
         } else if isSnakeRaceMode {
@@ -4739,6 +4769,44 @@ class GameScene: SKScene {
                 activateBot(i)
             }
         }
+        seedStartingBotScores()
+    }
+
+    /// Assigns pre-seeded scores to a subset of bots so the arena feels lived-in at game start:
+    ///  - ≥2 bots with score > 1000  (large snakes)
+    ///  - ≥3 bots with score > 700   (medium-large)
+    ///  - ≥5 bots with score > 400   (medium)
+    /// Hard-tier bots are preferred for higher scores.
+    private func seedStartingBotScores() {
+        // Build pool: hard first, then medium, then easy — nemesis excluded
+        var pool: [Int] = []
+        pool += bots.indices.filter { !bots[$0].isNemesis && !bots[$0].isDead && bots[$0].tier == .hard }.shuffled()
+        pool += bots.indices.filter { !bots[$0].isDead && bots[$0].tier == .medium }.shuffled()
+        pool += bots.indices.filter { !bots[$0].isDead && bots[$0].tier == .easy }.shuffled()
+
+        var cursor = 0
+
+        func applyScore(_ s: Int) {
+            guard cursor < pool.count else { return }
+            let idx = pool[cursor]; cursor += 1
+            bots[idx].score = s
+            bots[idx].bodyLength = targetBotBodyCount(for: idx)
+            syncBotLength(idx)
+        }
+
+        // ≥2 bots > 1000
+        applyScore(Int.random(in: 1100...1300))
+        applyScore(Int.random(in: 1050...1250))
+        // ≥3 bots > 700
+        applyScore(Int.random(in: 780...980))
+        applyScore(Int.random(in: 750...950))
+        applyScore(Int.random(in: 720...900))
+        // ≥5 bots > 400
+        applyScore(Int.random(in: 480...660))
+        applyScore(Int.random(in: 450...630))
+        applyScore(Int.random(in: 430...610))
+        applyScore(Int.random(in: 410...580))
+        applyScore(Int.random(in: 400...560))
     }
 
     private func updateBotVisibilityLOD() {
@@ -4763,7 +4831,10 @@ class GameScene: SKScene {
     }
 
     private func detectCircledBots() {
-        guard !bodyPositionCache.isEmpty else { return }
+        let rayCount: Int     = 12
+        let checkDist: CGFloat = 200
+        let perpThresh: CGFloat = collisionRadius * 1.4
+
         for i in bots.indices {
             guard bots[i].isActive && !bots[i].isDead else {
                 bots[i].isCircled = false
@@ -4771,27 +4842,44 @@ class GameScene: SKScene {
             }
             let pos = bots[i].position
             var blockedCount = 0
-            let rayCount = 12
-            let checkDist: CGFloat = 200
+
             for rayIdx in 0..<rayCount {
                 let angle = CGFloat(rayIdx) * (2 * .pi / CGFloat(rayCount))
                 let dx = cos(angle), dy = sin(angle)
                 var blocked = false
+
+                // --- Player body ---
                 for pt in bodyPositionCache {
                     let px = pt.x - pos.x, py = pt.y - pos.y
                     let proj = px * dx + py * dy
                     guard proj > 0 && proj < checkDist else { continue }
-                    let perpDist = abs(px * dy - py * dx)
-                    if perpDist < collisionRadius * 1.4 { blocked = true; break }
+                    if abs(px * dy - py * dx) < perpThresh { blocked = true; break }
                 }
+
+                // --- Other bot bodies (broad-phase distance filter first) ---
+                if !blocked {
+                    for j in bots.indices where j != i && bots[j].isActive {
+                        // Skip bots whose HEAD is farther than checkDist — their body can't block
+                        let hdx = bots[j].position.x - pos.x
+                        let hdy = bots[j].position.y - pos.y
+                        guard abs(hdx) < checkDist + 30 && abs(hdy) < checkDist + 30 else { continue }
+                        for pt in bots[j].bodyPositionCache {
+                            let px = pt.x - pos.x, py = pt.y - pos.y
+                            let proj = px * dx + py * dy
+                            guard proj > 0 && proj < checkDist else { continue }
+                            if abs(px * dy - py * dx) < perpThresh { blocked = true; break }
+                        }
+                        if blocked { break }
+                    }
+                }
+
                 if blocked { blockedCount += 1 }
             }
+
             if blockedCount >= 7 {
                 bots[i].isCircled = true
                 bots[i].circledTimer = 2.0
-            } else if bots[i].circledTimer > 0 {
-                // timer ticked in bot update
-            } else {
+            } else if bots[i].circledTimer <= 0 {
                 bots[i].isCircled = false
             }
         }
@@ -5291,6 +5379,48 @@ class GameScene: SKScene {
         }
 
         targets.sort { $0.utility > $1.utility }
+
+        // --- Super Mouse injection ---
+        // If the mouse is active, inject it as a high-value synthetic food target so bots
+        // steer toward it. The sentinel index (foodItems.count) is safely skipped by the
+        // `guard index < foodItems.count` in checkBotFoodCollision — the actual eat is
+        // handled by checkBotCatchesMouse() instead.
+        if superMouseState == .active || superMouseState == .trapped {
+            let mdx = superMousePosition.x - position.x
+            let mdy = superMousePosition.y - position.y
+            let mouseDist = hypot(mdx, mdy)
+            if mouseDist < profile.foodSearchRadius {
+                // Personality-driven utility — independent of tier.
+                // Regular food tops out ~8, death food ~12; mouse beats all for hunters.
+                let mouseUtility: CGFloat
+                switch bots[i].personality {
+                case .nemesis:      mouseUtility = 34.0  // drops everything, hunts relentlessly
+                case .hunter:       mouseUtility = 30.0  // primary target the moment it's visible
+                case .interceptor:  mouseUtility = 27.0  // cuts off escape routes, locks on hard
+                case .sprinter:     mouseUtility = 23.0  // uses speed, boosts straight at it
+                case .opportunist:  mouseUtility = 16.0  // worth a detour if clearly reachable
+                case .trickster:    mouseUtility = 13.0  // erratic but genuinely interested
+                case .vulture:      mouseUtility = 11.0  // spots it from afar, approaches cautiously
+                case .scavenger:    mouseUtility =  6.0  // prefers safe trail food; mild interest
+                case .coward:       mouseUtility =  2.5  // risky prey isn't worth it
+                }
+                let mouseTarget = BotFoodTarget(
+                    index: foodItems.count,          // sentinel — out-of-bounds, safely skipped
+                    position: superMousePosition,
+                    type: .regular,
+                    utility: mouseUtility
+                )
+                // Replace the weakest target if mouse utility wins, or just append if room
+                if targets.count < limit {
+                    targets.append(mouseTarget)
+                } else if let worstIdx = targets.indices.min(by: { targets[$0].utility < targets[$1].utility }),
+                          targets[worstIdx].utility < mouseUtility {
+                    targets[worstIdx] = mouseTarget
+                }
+                targets.sort { $0.utility > $1.utility }
+            }
+        }
+
         return targets
     }
 
@@ -5667,6 +5797,49 @@ class GameScene: SKScene {
                 }
             }
         }
+
+        // --- Super Mouse chase lock ---
+        // When the mouse is active and within this bot's search radius, hunting personalities
+        // explicitly set focusPoint to the current mouse position every replan. This keeps the
+        // stickiness-weighted heading bonus continuously pointing at the (moving) mouse rather
+        // than drifting between replans. Non-hunting bots rely solely on food utility scoring.
+        if snapshot.immediateDanger <= 0.72,
+           superMouseState == .active || superMouseState == .trapped,
+           foods.contains(where: { $0.index == foodItems.count }) {
+
+            let distToMouse = hypot(bots[i].position.x - superMousePosition.x,
+                                    bots[i].position.y - superMousePosition.y)
+            if distToMouse < profile.foodSearchRadius {
+                switch bots[i].personality {
+                case .nemesis:
+                    // Nemesis overrides its snake-hunt target with the mouse when it's closer
+                    bots[i].focusPoint = superMousePosition
+                    bots[i].focusTimer = profile.replanInterval + 0.20
+                    if intent != .escape { intent = .cutOff }   // uses intercept geometry on mouse
+                case .hunter:
+                    bots[i].focusPoint = superMousePosition
+                    bots[i].focusTimer = profile.replanInterval + 0.18
+                    if intent != .escape { intent = .forage }
+                case .interceptor:
+                    bots[i].focusPoint = superMousePosition
+                    bots[i].focusTimer = profile.replanInterval + 0.22  // stubborn lock
+                    if intent != .escape { intent = .cutOff }   // naturally tries to cut off path
+                case .sprinter:
+                    bots[i].focusPoint = superMousePosition
+                    bots[i].focusTimer = profile.replanInterval + 0.12
+                    if intent != .escape { intent = .forage }
+                case .opportunist, .trickster:
+                    // Soft lock — only if mouse is within 500pt (they don't cross the map for it)
+                    if distToMouse < 500 {
+                        bots[i].focusPoint = superMousePosition
+                        bots[i].focusTimer = profile.replanInterval + 0.08
+                    }
+                default:
+                    break   // scavenger & coward: food utility bias only, no explicit focus lock
+                }
+            }
+        }
+
         let candidates = candidateAngles(botIndex: i, intent: intent, threats: threats, foods: foods)
 
         var best = BotDecision(
@@ -5895,18 +6068,34 @@ class GameScene: SKScene {
             }
 
             // Circled escape behavior: override target angle to find most clearance
+            // Tests 16 directions against player body AND nearby bot bodies.
             if bots[i].isCircled {
                 var bestAngle = bots[i].angle
                 var bestClearance: CGFloat = 0
-                let testCount = 12
+                let testCount = 16
+                let probeDistance: CGFloat = 110
+                // Pre-collect nearby bot indices (broad-phase) to avoid inner triple-loop
+                let nearbyBotIndices = bots.indices.filter { j in
+                    j != i && bots[j].isActive &&
+                    abs(bots[j].position.x - bots[i].position.x) < 300 &&
+                    abs(bots[j].position.y - bots[i].position.y) < 300
+                }
                 for testIdx in 0..<testCount {
                     let testAngle = CGFloat(testIdx) * (2 * .pi / CGFloat(testCount))
+                    let tx = bots[i].position.x + cos(testAngle) * probeDistance
+                    let ty = bots[i].position.y + sin(testAngle) * probeDistance
                     var minDist: CGFloat = 999
+                    // Player body
                     for pt in bodyPositionCache {
-                        let tx = bots[i].position.x + cos(testAngle) * 100
-                        let ty = bots[i].position.y + sin(testAngle) * 100
                         let d = hypot(pt.x - tx, pt.y - ty)
                         if d < minDist { minDist = d }
+                    }
+                    // Other bot bodies
+                    for j in nearbyBotIndices {
+                        for pt in bots[j].bodyPositionCache {
+                            let d = hypot(pt.x - tx, pt.y - ty)
+                            if d < minDist { minDist = d }
+                        }
                     }
                     if minDist > bestClearance {
                         bestClearance = minDist
@@ -6238,6 +6427,669 @@ class GameScene: SKScene {
         if      diff >  maxTurn { current += maxTurn }
         else if diff < -maxTurn { current -= maxTurn }
         else                    { current  = target  }
+    }
+
+    // MARK: - Super Mouse
+
+    // MARK: Super Mouse HUD
+
+    /// Shows a bold banner + creates screen-edge arrow + minimap dot when mouse spawns.
+    func showSuperMouseAlert() {
+        let cam = cameraNode
+        let zoom = cameraScale()
+        let halfW = size.width  * zoom / 2
+        let halfH = size.height * zoom / 2
+
+        // --- Banner ---
+        let banner = SKNode()
+        banner.zPosition = 510
+        banner.name = "superMouseBanner"
+
+        let bg = SKShapeNode(rectOf: CGSize(width: 320 * zoom, height: 46 * zoom),
+                             cornerRadius: 12 * zoom)
+        bg.fillColor = SKColor(red: 0.10, green: 0.07, blue: 0.02, alpha: 0.88)
+        bg.strokeColor = SKColor(red: 1.0, green: 0.82, blue: 0.18, alpha: 0.9)
+        bg.lineWidth = 1.5 * zoom
+        bg.glowWidth = 6 * zoom
+        banner.addChild(bg)
+
+        let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+        lbl.text = "🐭  SUPER MOUSE IS OUT!  +100pts"
+        lbl.fontSize = 14 * zoom
+        lbl.fontColor = SKColor(red: 1.0, green: 0.92, blue: 0.55, alpha: 1.0)
+        lbl.verticalAlignmentMode = .center
+        lbl.horizontalAlignmentMode = .center
+        banner.addChild(lbl)
+
+        // Position near top of screen in camera space
+        banner.position = CGPoint(x: cam.position.x, y: cam.position.y + halfH - 90 * zoom)
+        addChild(banner)
+
+        // Animate: drop in, hold, fade out
+        let dropIn  = SKAction.moveBy(x: 0, y: -14 * zoom, duration: 0.25)
+        dropIn.timingMode = .easeOut
+        let hold    = SKAction.wait(forDuration: 3.0)
+        let fadeOut = SKAction.fadeOut(withDuration: 0.5)
+        let remove  = SKAction.removeFromParent()
+        banner.run(SKAction.sequence([dropIn, hold, fadeOut, remove]))
+
+        // Pulse border to grab attention
+        let pulseBorder = SKAction.sequence([
+            SKAction.customAction(withDuration: 0) { node, _ in
+                (node as? SKShapeNode)?.glowWidth = 14 * zoom
+            },
+            SKAction.wait(forDuration: 0.3),
+            SKAction.customAction(withDuration: 0) { node, _ in
+                (node as? SKShapeNode)?.glowWidth = 4 * zoom
+            },
+            SKAction.wait(forDuration: 0.3)
+        ])
+        bg.run(SKAction.repeat(pulseBorder, count: 4))
+
+        // --- Screen-edge arrow ---
+        createSuperMouseArrow()
+
+        // --- Minimap dot ---
+        createSuperMouseMinimapDot()
+
+        // Countdown label is created at setup; just ensure it exists
+        createSuperMouseCountdownLabel()
+    }
+
+    private func createSuperMouseArrow() {
+        let node = SKNode()
+        node.zPosition = 506
+        node.isHidden = true
+        node.name = "superMouseArrow"
+
+        let ring = SKShapeNode(circleOfRadius: 16)
+        ring.fillColor = SKColor(red: 0.10, green: 0.06, blue: 0.02, alpha: 0.55)
+        ring.strokeColor = SKColor(red: 1.0, green: 0.82, blue: 0.18, alpha: 0.7)
+        ring.lineWidth = 1.5
+        node.addChild(ring)
+
+        let arrowPath = CGMutablePath()
+        arrowPath.move(to: CGPoint(x: 0, y: 13))
+        arrowPath.addLine(to: CGPoint(x: 9, y: -8))
+        arrowPath.addLine(to: CGPoint(x: 0, y: -3))
+        arrowPath.addLine(to: CGPoint(x: -9, y: -8))
+        arrowPath.closeSubpath()
+        let arrow = SKShapeNode(path: arrowPath)
+        arrow.fillColor = SKColor(red: 1.0, green: 0.82, blue: 0.18, alpha: 0.95)
+        arrow.strokeColor = SKColor(red: 1.0, green: 0.94, blue: 0.62, alpha: 0.9)
+        arrow.lineWidth = 1.0
+        arrow.glowWidth = 5
+        node.addChild(arrow)
+
+        let emoji = SKLabelNode(text: "🐭")
+        emoji.fontSize = 13
+        emoji.verticalAlignmentMode = .center
+        emoji.horizontalAlignmentMode = .center
+        emoji.position = CGPoint(x: 0, y: -1)
+        node.addChild(emoji)
+
+        addChild(node)
+        superMouseArrowNode = node
+    }
+
+    private func createSuperMouseMinimapDot() {
+        guard let minimap = minimapNode else { return }
+        let dot = SKShapeNode(circleOfRadius: 4)
+        dot.fillColor = SKColor(red: 1.0, green: 0.85, blue: 0.15, alpha: 1.0)
+        dot.strokeColor = SKColor(red: 1.0, green: 1.0, blue: 0.6, alpha: 0.9)
+        dot.lineWidth = 1.0
+        dot.glowWidth = 5
+        dot.zPosition = 10
+        dot.name = "superMouseMinimapDot"
+        let pulse = SKAction.sequence([
+            SKAction.scale(to: 1.5, duration: 0.4),
+            SKAction.scale(to: 0.8, duration: 0.4)
+        ])
+        dot.run(SKAction.repeatForever(pulse))
+        minimap.addChild(dot)
+        superMouseMinimapDot = dot
+    }
+
+    func createSuperMouseCountdownLabel() {
+        guard superMouseCountdownLabel == nil else { return }
+        let zoom = cameraScale()
+        let hw = size.width  * zoom / 2
+        let hh = size.height * zoom / 2
+        let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+        lbl.fontSize = 12 * zoom
+        lbl.fontColor = SKColor(red: 1.0, green: 0.82, blue: 0.2, alpha: 0.9)
+        lbl.horizontalAlignmentMode = .right
+        lbl.verticalAlignmentMode = .top
+        lbl.position = CGPoint(x: cameraNode.position.x + hw - 18 * zoom,
+                               y: cameraNode.position.y + hh - 50 * zoom)
+        lbl.zPosition = 508
+        lbl.isHidden = true
+        lbl.name = "superMouseCountdown"
+        addChild(lbl)
+        superMouseCountdownLabel = lbl
+    }
+
+    func hideSuperMouseHUD() {
+        superMouseArrowNode?.removeFromParent()
+        superMouseArrowNode = nil
+        superMouseMinimapDot?.removeFromParent()
+        superMouseMinimapDot = nil
+        // Keep countdown label alive — it shows the "in Xs" dormant hint
+    }
+
+    func updateSuperMouseHUD() {
+        let isVisible = superMouseState == .active || superMouseState == .trapped
+
+        // --- Minimap dot position ---
+        if let dot = superMouseMinimapDot, isVisible {
+            let mapSize: CGFloat = 118
+            let world = CGFloat(worldSize)
+            dot.position = CGPoint(
+                x: (superMousePosition.x / world - 0.5) * mapSize,
+                y: (superMousePosition.y / world - 0.5) * mapSize
+            )
+            dot.isHidden = false
+        } else {
+            superMouseMinimapDot?.isHidden = true
+        }
+
+        // --- Screen-edge arrow ---
+        guard let arrowNode = superMouseArrowNode else { return }
+        guard isVisible else { arrowNode.isHidden = true; return }
+
+        let zoom  = cameraScale()
+        let halfW = size.width  * zoom / 2
+        let halfH = size.height * zoom / 2
+        let dx = superMousePosition.x - cameraNode.position.x
+        let dy = superMousePosition.y - cameraNode.position.y
+        let inView = abs(dx) <= halfW - 60 && abs(dy) <= halfH - 90
+
+        if inView {
+            arrowNode.isHidden = true
+        } else {
+            arrowNode.isHidden = false
+            let angle = atan2(dy, dx)
+            arrowNode.zRotation = angle - .pi / 2
+            // Clamp to screen edge
+            let edgeX = cameraNode.position.x + max(-halfW + 36, min(halfW - 36, cos(angle) * halfW * 0.88))
+            let edgeY = cameraNode.position.y + max(-halfH + 36, min(halfH - 36, sin(angle) * halfH * 0.88))
+            arrowNode.position = CGPoint(x: edgeX, y: edgeY)
+        }
+
+        // --- Countdown / "Coming soon" hint ---
+        if let cntLabel = superMouseCountdownLabel {
+            let zoom2 = cameraScale()
+            let hw = size.width * zoom2 / 2
+            let hh = size.height * zoom2 / 2
+            cntLabel.position = CGPoint(x: cameraNode.position.x + hw - 18 * zoom2,
+                                        y: cameraNode.position.y + hh - 50 * zoom2)
+
+            if isVisible {
+                // Active: show escape countdown
+                let timeLeft = max(0, superMouseActiveLimit - superMouseTimer)
+                let secs = Int(ceil(timeLeft))
+                cntLabel.text = "🐭 \(secs)s"
+                cntLabel.fontColor = secs <= 5
+                    ? SKColor(red: 1.0, green: 0.35, blue: 0.3, alpha: 1.0)
+                    : SKColor(red: 1.0, green: 0.82, blue: 0.2, alpha: 0.9)
+                cntLabel.isHidden = false
+            } else if superMouseState == .dormant {
+                // Dormant: show "coming soon" hint in last 20s
+                let remaining = superMouseSpawnInterval - superMouseTimer
+                if remaining <= 20 {
+                    let secs = Int(ceil(remaining))
+                    cntLabel.text = "🐭 in \(secs)s"
+                    cntLabel.fontColor = SKColor(red: 0.7, green: 0.7, blue: 0.7, alpha: 0.55)
+                    cntLabel.isHidden = false
+                } else {
+                    cntLabel.isHidden = true
+                }
+            } else {
+                cntLabel.isHidden = true
+            }
+        }
+    }
+
+    func spawnMouseHole() {
+        // Pick a position at least 600pt from walls and 500pt from player
+        var pos = CGPoint.zero
+        let margin: CGFloat = 600
+        for _ in 0..<30 {
+            let candidate = CGPoint(
+                x: CGFloat.random(in: arenaMinX + margin ... arenaMaxX - margin),
+                y: CGFloat.random(in: arenaMinY + margin ... arenaMaxY - margin)
+            )
+            let dPlayer = hypot(snakeHead.position.x - candidate.x,
+                                snakeHead.position.y - candidate.y)
+            if dPlayer > 500 { pos = candidate; break }
+        }
+        if pos == .zero {
+            pos = CGPoint(x: (arenaMinX + arenaMaxX) / 2 + CGFloat.random(in: -600...600),
+                          y: (arenaMinY + arenaMaxY) / 2 + CGFloat.random(in: -600...600))
+        }
+        superMouseHolePosition = pos
+
+        let hole = SKNode()
+        // Outer dark shadow oval
+        let shadow = SKShapeNode(ellipseOf: CGSize(width: 90, height: 56))
+        shadow.fillColor = SKColor(white: 0, alpha: 0.35)
+        shadow.strokeColor = .clear
+        shadow.zPosition = -0.5
+        hole.addChild(shadow)
+        // Concentric depth rings
+        for (r, a) in [(36, 0.9), (26, 0.95), (16, 1.0)] as [(Int, Double)] {
+            let ring = SKShapeNode(circleOfRadius: CGFloat(r))
+            ring.fillColor = SKColor(white: 0, alpha: CGFloat(a))
+            ring.strokeColor = SKColor(white: 0.08, alpha: 0.6)
+            ring.lineWidth = 1.5
+            ring.zPosition = CGFloat(r) / 10.0
+            hole.addChild(ring)
+        }
+        // Pulsing inner dot (life indicator)
+        let dot = SKShapeNode(circleOfRadius: 6)
+        dot.fillColor = SKColor(red: 0.5, green: 0.3, blue: 0.1, alpha: 0.8)
+        dot.strokeColor = .clear
+        dot.zPosition = 5
+        dot.name = "holeDot"
+        let pulse = SKAction.sequence([
+            SKAction.scale(to: 1.3, duration: 0.5),
+            SKAction.scale(to: 0.8, duration: 0.5)
+        ])
+        dot.run(SKAction.repeatForever(pulse))
+        hole.addChild(dot)
+
+        hole.position = pos
+        hole.setScale(0.01)
+        hole.zPosition = 2
+        addChild(hole)
+        superMouseHoleNode = hole
+
+        // Grow animation
+        hole.run(SKAction.scale(to: 1.0, duration: 0.8))
+    }
+
+    func despawnMouseHole() {
+        guard let hole = superMouseHoleNode else { return }
+        hole.run(SKAction.sequence([
+            SKAction.scale(to: 0.01, duration: 0.7),
+            SKAction.removeFromParent()
+        ]))
+        superMouseHoleNode = nil
+    }
+
+    func beginMouseEmerge() {
+        // Create mouse node at the hole, scale from 0
+        let mouse = SuperMouseNode()
+        mouse.position = superMouseHolePosition
+        mouse.setScale(0.01)
+        mouse.zPosition = 10
+        addChild(mouse)
+        superMouseNode = mouse
+        superMousePosition = superMouseHolePosition
+        superMouseAngle = CGFloat.random(in: 0 ..< .pi * 2)
+        superMouseEmergeProgress = 0
+
+        mouse.run(SKAction.scale(to: 1.0, duration: 0.6))
+        showSuperMouseAlert()
+    }
+
+    func beginMouseRetreat() {
+        // Visual: mouse node fades as it moves back to hole
+        superMouseNode?.run(SKAction.sequence([
+            SKAction.fadeOut(withDuration: 1.4),
+            SKAction.removeFromParent()
+        ]))
+        hideSuperMouseHUD()
+        showSuperMouseEscapedBanner()
+    }
+
+    private func showSuperMouseEscapedBanner() {
+        let zoom = cameraScale()
+        let halfH = size.height * zoom / 2
+
+        let banner = SKNode()
+        banner.zPosition = 510
+
+        let bg = SKShapeNode(rectOf: CGSize(width: 280 * zoom, height: 40 * zoom),
+                             cornerRadius: 10 * zoom)
+        bg.fillColor = SKColor(red: 0.18, green: 0.04, blue: 0.04, alpha: 0.85)
+        bg.strokeColor = SKColor(red: 0.9, green: 0.3, blue: 0.3, alpha: 0.8)
+        bg.lineWidth = 1.2 * zoom
+        banner.addChild(bg)
+
+        let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
+        lbl.text = "🐭 The mouse got away!"
+        lbl.fontSize = 13 * zoom
+        lbl.fontColor = SKColor(red: 1.0, green: 0.65, blue: 0.55, alpha: 1.0)
+        lbl.verticalAlignmentMode = .center
+        lbl.horizontalAlignmentMode = .center
+        banner.addChild(lbl)
+
+        banner.position = CGPoint(x: cameraNode.position.x,
+                                  y: cameraNode.position.y + halfH - 90 * zoom)
+        addChild(banner)
+
+        banner.run(SKAction.sequence([
+            SKAction.wait(forDuration: 2.2),
+            SKAction.fadeOut(withDuration: 0.4),
+            SKAction.removeFromParent()
+        ]))
+    }
+
+    // MARK: Super Mouse AI
+
+    /// Returns the best escape heading and whether the mouse is trapped.
+    func chooseSuperMouseHeading() -> (angle: CGFloat, isTrapped: Bool) {
+        // --- Step 1: Snapshot nearby body segments (within 260pt) ---
+        // Building once here avoids checking all segments inside the per-angle loop.
+        var nearbyBodyPts: [CGPoint] = []
+        nearbyBodyPts.reserveCapacity(80)
+        let scanRadius: CGFloat  = 260
+        let scanRadSq:  CGFloat  = scanRadius * scanRadius
+        let blockR:     CGFloat  = 22   // treat a probe as "blocked" if within this of a body pt
+        let blockRSq:   CGFloat  = blockR * blockR
+
+        // Player body segments
+        for pt in bodyPositionCache {
+            let dx = pt.x - superMousePosition.x
+            let dy = pt.y - superMousePosition.y
+            if abs(dx) < scanRadius && abs(dy) < scanRadius && dx*dx + dy*dy < scanRadSq {
+                nearbyBodyPts.append(pt)
+            }
+        }
+        // Active bot body segments
+        for i in 0..<bots.count where bots[i].isActive {
+            for pt in bots[i].bodyPositionCache {
+                let dx = pt.x - superMousePosition.x
+                let dy = pt.y - superMousePosition.y
+                if abs(dx) < scanRadius && abs(dy) < scanRadius && dx*dx + dy*dy < scanRadSq {
+                    nearbyBodyPts.append(pt)
+                }
+            }
+        }
+
+        // Helper: is a world point blocked by any nearby body segment?
+        func bodyBlocked(_ p: CGPoint) -> Bool {
+            for pt in nearbyBodyPts {
+                let dx = pt.x - p.x; let dy = pt.y - p.y
+                if abs(dx) < blockR && abs(dy) < blockR && dx*dx + dy*dy < blockRSq { return true }
+            }
+            return false
+        }
+
+        // --- Step 2: Score 24 candidate angles ---
+        let candidateStep: CGFloat = .pi / 12   // every 15°
+        var bestAngle  = superMouseAngle
+        var bestScore: CGFloat = -.infinity
+        var blockedCount = 0
+        let wallMargin: CGFloat = 100
+
+        var candidate: CGFloat = 0
+        while candidate < .pi * 2 {
+            defer { candidate += candidateStep }
+
+            let projected = GameLogic.projectedPoint(from: superMousePosition,
+                                                     angle: candidate, distance: 100)
+
+            // Hard reject: wall
+            if projected.x < arenaMinX + wallMargin || projected.x > arenaMaxX - wallMargin
+            || projected.y < arenaMinY + wallMargin || projected.y > arenaMaxY - wallMargin {
+                blockedCount += 1; continue
+            }
+
+            // Hard reject: immediate body collision
+            if bodyBlocked(projected) { blockedCount += 1; continue }
+
+            var score: CGFloat = 0
+
+            // Reward distance from player head
+            score += hypot(snakeHead.position.x - projected.x,
+                           snakeHead.position.y - projected.y) * 0.8
+
+            // Reward distance from bot heads (within 500pt)
+            for i in 0..<bots.count where bots[i].isActive {
+                let bdx = bots[i].position.x - projected.x
+                let bdy = bots[i].position.y - projected.y
+                if abs(bdx) < 500 && abs(bdy) < 500 {
+                    score += hypot(bdx, bdy) * 0.3
+                }
+            }
+
+            // Turn efficiency — prefer not reversing direction
+            var turnDiff = abs(candidate - superMouseAngle)
+            while turnDiff > .pi { turnDiff = abs(turnDiff - 2 * .pi) }
+            score -= turnDiff * 8
+
+            // Multi-step look-ahead: 5 probes × 50pt — checks BOTH walls AND body
+            var probe = projected
+            var pathClear = true
+            for step in 1...5 {
+                probe = GameLogic.projectedPoint(from: probe, angle: candidate, distance: 50)
+                let weight = CGFloat(6 - step)  // closer obstacle → heavier penalty
+
+                let hitWall = probe.x < arenaMinX + wallMargin || probe.x > arenaMaxX - wallMargin
+                           || probe.y < arenaMinY + wallMargin || probe.y > arenaMaxY - wallMargin
+                if hitWall {
+                    score -= 50 * weight
+                    pathClear = false; break
+                }
+                if bodyBlocked(probe) {
+                    score -= 65 * weight   // body walls penalised more than arena walls
+                    pathClear = false; break
+                }
+                // Reward open distance from player along this path
+                score += hypot(snakeHead.position.x - probe.x,
+                               snakeHead.position.y - probe.y) * 0.10
+            }
+            if pathClear { score += 35 }  // bonus for a fully clear corridor
+
+            if score > bestScore { bestScore = score; bestAngle = candidate }
+        }
+
+        // Trapped = 18+ of 24 directions blocked by walls OR body segments
+        let isTrapped = blockedCount >= 18
+        return (bestAngle, isTrapped)
+    }
+
+    // MARK: Super Mouse State Machine
+
+    func updateSuperMouse(dt: CGFloat) {
+        guard gameStarted, !isGameOver, !isPausedGame else { return }
+
+        switch superMouseState {
+
+        case .dormant:
+            superMouseTimer += dt
+            if superMouseTimer >= superMouseSpawnInterval {
+                superMouseTimer = 0
+                spawnMouseHole()
+                superMouseState = .spawningHole
+            }
+
+        case .spawningHole:
+            superMouseTimer += dt
+            if superMouseTimer >= 1.5 {
+                superMouseTimer = 0
+                beginMouseEmerge()
+                superMouseState = .emerging
+            }
+
+        case .emerging:
+            superMouseTimer += dt
+            superMouseEmergeProgress = min(superMouseTimer / 2.0, 1.0)
+            // Move mouse slowly outward from hole as it emerges
+            let emergeOffset: CGFloat = 40 * superMouseEmergeProgress
+            superMousePosition = CGPoint(
+                x: superMouseHolePosition.x + cos(superMouseAngle) * emergeOffset,
+                y: superMouseHolePosition.y + sin(superMouseAngle) * emergeOffset
+            )
+            superMouseNode?.position = superMousePosition
+            superMouseNode?.zRotation = superMouseAngle - .pi / 2
+            superMouseNode?.update(dt: dt, speed: 0, state: .emerging)
+            if superMouseEmergeProgress >= 1.0 {
+                superMouseTimer = 0
+                superMouseCurrentSpeed = superMouseBaseSpeed
+                superMouseState = .active
+            }
+
+        case .active:
+            superMouseTimer += dt
+            if superMouseTimer >= superMouseActiveLimit {
+                superMouseTimer = 0
+                superMouseState = .retreating
+                beginMouseRetreat()
+                return
+            }
+            moveSuperMouse(dt: dt, state: .active)
+
+        case .trapped:
+            moveSuperMouse(dt: dt, state: .trapped)
+            // Check if it escaped (replan will update state)
+
+        case .caught:
+            break   // handled by rewardSuperMouseCatch()
+
+        case .retreating:
+            superMouseTimer += dt
+            // Lerp back to hole
+            if let _ = superMouseHoleNode {
+                let t = min(superMouseTimer * 1.2, 1.0)
+                superMousePosition = CGPoint(
+                    x: superMousePosition.x + (superMouseHolePosition.x - superMousePosition.x) * t * dt * 3,
+                    y: superMousePosition.y + (superMouseHolePosition.y - superMousePosition.y) * t * dt * 3
+                )
+                superMouseNode?.position = superMousePosition
+            }
+            if superMouseTimer >= 1.6 {
+                superMouseTimer = 0
+                superMouseNode?.removeFromParent()
+                superMouseNode = nil
+                superMouseState = .despawning
+                despawnMouseHole()
+            }
+
+        case .despawning:
+            superMouseTimer += dt
+            if superMouseTimer >= 1.0 {
+                superMouseTimer = 0
+                superMouseState = .dormant
+            }
+        }
+    }
+
+    private func moveSuperMouse(dt: CGFloat, state: SuperMouseState) {
+        // AI replan every 0.08s
+        superMouseReplanTimer += dt
+        if superMouseReplanTimer >= 0.08 {
+            superMouseReplanTimer = 0
+            let result = chooseSuperMouseHeading()
+            superMouseAngle = result.angle
+            if state == .active && result.isTrapped {
+                superMouseState = .trapped
+            } else if state == .trapped && !result.isTrapped {
+                superMouseState = .active
+            }
+        }
+
+        // Speed boost when any snake head is very close
+        var nearestThreatDist = hypot(snakeHead.position.x - superMousePosition.x,
+                                      snakeHead.position.y - superMousePosition.y)
+        for i in 0..<bots.count where bots[i].isActive {
+            let d = hypot(bots[i].position.x - superMousePosition.x,
+                          bots[i].position.y - superMousePosition.y)
+            if d < nearestThreatDist { nearestThreatDist = d }
+        }
+        let speedMul: CGFloat = (nearestThreatDist < 200) ? 1.22 : (state == .trapped ? 0.60 : 1.0)
+        superMouseCurrentSpeed = superMouseBaseSpeed * speedMul
+
+        let dist = superMouseCurrentSpeed * dt
+        superMousePosition = GameLogic.projectedPoint(from: superMousePosition,
+                                                      angle: superMouseAngle,
+                                                      distance: dist)
+        // Clamp to arena
+        superMousePosition.x = max(arenaMinX + 60, min(arenaMaxX - 60, superMousePosition.x))
+        superMousePosition.y = max(arenaMinY + 60, min(arenaMaxY - 60, superMousePosition.y))
+
+        superMouseNode?.position = superMousePosition
+        superMouseNode?.zRotation = superMouseAngle - .pi / 2
+        superMouseNode?.update(dt: dt, speed: superMouseCurrentSpeed, state: state)
+
+        checkPlayerCatchesMouse()
+        checkBotCatchesMouse()
+    }
+
+    private func checkBotCatchesMouse() {
+        guard superMouseNode != nil else { return }
+        let threshold: CGFloat = 13 + 18   // headRadius + mouseRadius
+        for i in 0..<bots.count where bots[i].isActive {
+            let dx = bots[i].position.x - superMousePosition.x
+            let dy = bots[i].position.y - superMousePosition.y
+            if abs(dx) < threshold && abs(dy) < threshold && hypot(dx, dy) < threshold {
+                // Bot eats the mouse — smaller reward (20 pts nutrition), mouse escapes
+                bots[i].score += 20
+                spawnFloatingText("🐭 +20", at: superMousePosition,
+                                  color: SKColor(red: 0.9, green: 0.7, blue: 0.2, alpha: 1.0))
+                spawnEatParticles(at: superMousePosition)
+                superMouseState = .retreating
+                beginMouseRetreat()
+                return
+            }
+        }
+    }
+
+    func checkPlayerCatchesMouse() {
+        guard superMouseNode != nil else { return }
+        let dist = hypot(snakeHead.position.x - superMousePosition.x,
+                         snakeHead.position.y - superMousePosition.y)
+        if dist < 13 + 18 {   // headRadius(13) + mouseBodyRadius(18)
+            rewardSuperMouseCatch()
+        }
+    }
+
+    func rewardSuperMouseCatch() {
+        guard superMouseState == .active || superMouseState == .trapped else { return }
+        superMouseState = .caught
+        hideSuperMouseHUD()
+
+        // Celebration animation
+        superMouseNode?.run(SKAction.sequence([
+            SKAction.scale(to: 1.7, duration: 0.15),
+            SKAction.fadeOut(withDuration: 0.45),
+            SKAction.removeFromParent()
+        ]))
+        superMouseNode = nil
+
+        // Score
+        score += 100
+        spawnFloatingText("🐭 SUPER MOUSE +100!", at: superMousePosition,
+                          color: SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0))
+        spawnEatParticles(at: superMousePosition)
+        updateScoreDisplay()
+        updateSpeedForScore()
+
+        // Super power: multiplier ×2 (10s) + ghost (6s)
+        multiplierActive   = true
+        multiplierTimeLeft = max(multiplierTimeLeft, 10.0)
+        scoreMultiplier    = 2
+        ghostActive        = true
+        ghostTimeLeft      = max(ghostTimeLeft, 6.0)
+        showMultiplierEffect()
+        showGhostEffect()
+        spawnFloatingText("⚡ SUPER POWER!", at: CGPoint(x: superMousePosition.x, y: superMousePosition.y + 70),
+                          color: SKColor(red: 0.4, green: 1.0, blue: 1.0, alpha: 1.0))
+        refreshPowerUpPanel()
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+
+        // Despawn hole then reset to dormant
+        let holeRef = superMouseHoleNode
+        superMouseHoleNode = nil
+        holeRef?.run(SKAction.sequence([
+            SKAction.wait(forDuration: 0.8),
+            SKAction.scale(to: 0.01, duration: 0.5),
+            SKAction.removeFromParent()
+        ]))
+        superMouseTimer = 0
+        superMouseState = .dormant
     }
 
     // MARK: - Collision Detection
@@ -6573,6 +7425,9 @@ class GameScene: SKScene {
 
         if !isSpecialOfflineMode { checkFoodCollisions() }
 
+        // --- Super Mouse ---
+        if !isSpecialOfflineMode { updateSuperMouse(dt: dt) }
+
         // --- Trail food spawning (player) ---
         if !isSpecialOfflineMode, gameStarted, let tailPos = bodyPositionCache.last {
             trailFoodTimer += dt
@@ -6671,6 +7526,7 @@ class GameScene: SKScene {
         if leaderArrowUpdateTimer >= 0.1 {
             leaderArrowUpdateTimer = 0
             updateLeaderArrow()
+            updateSuperMouseHUD()
         }
 
         // --- Mini Leaderboard (refresh on change, with 1 Hz fallback) ---
