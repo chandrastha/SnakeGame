@@ -433,6 +433,7 @@ class GameScene: SKScene {
         // B (Circle) → quick-exit to Main Menu from game-over
         gp.buttonB.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed, let self, self.isGameOver else { return }
+            PlayerEconomy.shared.commitSession()
             self.shutdown()
             self.onGameOver?(self.score)
         }

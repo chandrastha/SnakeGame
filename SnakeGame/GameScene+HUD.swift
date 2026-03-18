@@ -431,8 +431,12 @@ extension GameScene {
         overlay.children
             .filter { $0.name == "watchAdCoinsButton" }
             .forEach { $0.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.2), SKAction.removeFromParent()])) }
-        // Update controller button order
+        // Update controller button order and clamp focus index to new bounds
         gameOverButtonOrder.removeAll { $0 == "watchAdCoinsButton" }
+        if !gameOverButtonOrder.isEmpty {
+            gameOverFocusedIndex = min(gameOverFocusedIndex, gameOverButtonOrder.count - 1)
+        }
+        if connectedController != nil { applyGameOverFocusHighlight() }
     }
 
     // MARK: - Score Panel
