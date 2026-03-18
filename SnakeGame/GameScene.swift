@@ -631,6 +631,7 @@ class GameScene: SKScene {
     }
 
     func setupNewGame() {
+        GameCenterManager.shared.resetSession()
         selectedSnakeColorIndex = normalizedSnakeColorIndex(selectedSnakeColorIndex)
         hasShutdown         = false
         isGameOver          = false

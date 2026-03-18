@@ -7,18 +7,44 @@ class GameCenterManager: NSObject, GKGameCenterControllerDelegate {
     let highScoreLeaderboardID = "co.chandrashrestha.viperun.highscore"
     private(set) var isAuthenticated = false
 
+    // P2 fix: guard against duplicate submissions on resize/rotation
+    private var hasSubmittedScoreThisRound = false
+
+    // P1 fix: store auth VC and retry once scene activates
+    private var pendingAuthViewController: UIViewController?
+
     func authenticate() {
         let player = GKLocalPlayer.local
         player.authenticateHandler = { [weak self] viewController, _ in
+            guard let self else { return }
             if let vc = viewController {
-                Self.rootViewController()?.present(vc, animated: true)
+                if let root = Self.rootViewController() {
+                    root.present(vc, animated: true)
+                } else {
+                    self.pendingAuthViewController = vc
+                    NotificationCenter.default.addObserver(
+                        self,
+                        selector: #selector(self.sceneDidActivate),
+                        name: UIScene.didActivateNotification,
+                        object: nil
+                    )
+                }
             }
-            self?.isAuthenticated = player.isAuthenticated
+            self.isAuthenticated = player.isAuthenticated
+        }
+    }
+
+    @objc private func sceneDidActivate() {
+        NotificationCenter.default.removeObserver(self, name: UIScene.didActivateNotification, object: nil)
+        if let vc = pendingAuthViewController, let root = Self.rootViewController() {
+            root.present(vc, animated: true)
+            pendingAuthViewController = nil
         }
     }
 
     func submitScore(_ score: Int) {
-        guard GKLocalPlayer.local.isAuthenticated else { return }
+        guard GKLocalPlayer.local.isAuthenticated, !hasSubmittedScoreThisRound else { return }
+        hasSubmittedScoreThisRound = true
         GKLeaderboard.submitScore(
             score, context: 0,
             player: GKLocalPlayer.local,
@@ -26,6 +52,10 @@ class GameCenterManager: NSObject, GKGameCenterControllerDelegate {
         ) { error in
             if let error { print("GC score error: \(error)") }
         }
+    }
+
+    func resetSession() {
+        hasSubmittedScoreThisRound = false
     }
 
     func showLeaderboard() {
