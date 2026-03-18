@@ -189,6 +189,7 @@ extension GameScene {
                 bots[i].personality = personalities[i % personalities.count]
             }
             configureBotIdentity(index: i, preservePersonality: true)
+            bots[i].ghostTimeLeft = 4.0   // initial spawn protection only (respawns keep ghostTimeLeft = 0)
 
             if bots[i].isNemesis && gameMode == .challenge {
                 bots[i].isDead = true
@@ -1479,6 +1480,7 @@ extension GameScene {
             if bots[i].spawnTimer > 0 { bots[i].spawnTimer -= dt }
             updateBotBoostState(index: i, dt: dt)
             applyBotMagnetEffect(botIndex: i, dt: dt)
+            applyBotPassiveMagnetEffect(botIndex: i)
 
             // Tick circled timer
             if bots[i].circledTimer > 0 {
@@ -1587,9 +1589,9 @@ extension GameScene {
         case .multiplier:
             bots[botIndex].multiplierTimeLeft = 15.0
         case .magnet:
-            bots[botIndex].magnetTimeLeft = 6.0
+            bots[botIndex].magnetTimeLeft = 12.0
         case .ghost:
-            bots[botIndex].ghostTimeLeft = 4.0
+            bots[botIndex].ghostTimeLeft = 12.0
         case .regular, .trail, .death:
             break
         case .shrink:
@@ -1629,6 +1631,31 @@ extension GameScene {
             food.position.y += (dy / dist) * pull
         }
         foodGridDirty = true   // food positions changed; grid indices are stale
+    }
+
+    /// Passive always-on micro-magnet for bots: mirrors applyPassiveMagnetEffect() for the player.
+    private func applyBotPassiveMagnetEffect(botIndex: Int) {
+        let radius: CGFloat   = passiveMagnetRadius
+        let strength: CGFloat = passiveMagnetPullStrength
+        let radiusSq = radius * radius
+        let headX = bots[botIndex].position.x
+        let headY = bots[botIndex].position.y
+        var moved = false
+        for (i, food) in foodItems.enumerated() {
+            guard food.parent != nil else { continue }
+            if foodTypes[i] == .trail || foodTypes[i] == .death { continue }
+            let dx = headX - food.position.x
+            if abs(dx) >= radius { continue }
+            let dy = headY - food.position.y
+            if abs(dy) >= radius { continue }
+            let distSq = dx * dx + dy * dy
+            guard distSq > 1, distSq < radiusSq else { continue }
+            let dist = sqrt(distSq)
+            food.position.x += (dx / dist) * strength
+            food.position.y += (dy / dist) * strength
+            moved = true
+        }
+        if moved { foodGridDirty = true }
     }
 
     private func botNutrition(for type: FoodType, botIndex: Int) -> Int {
@@ -1758,6 +1785,27 @@ extension GameScene {
                                     y: food.position.y + (dy / dist) * pullStrength)
         }
         foodGridDirty = true   // food positions changed; grid indices are stale
+    }
+
+    /// Passive always-on micro-magnet: gentle pull within ≈ 2× head-diameter radius.
+    /// Runs every other frame (odd frames), independent of magnetActive.
+    func applyPassiveMagnetEffect() {
+        let radiusSq = passiveMagnetRadius * passiveMagnetRadius
+        let headX = snakeHead.position.x
+        let headY = snakeHead.position.y
+        for food in foodItems {
+            guard food.parent != nil else { continue }
+            let dx = headX - food.position.x
+            if abs(dx) >= passiveMagnetRadius { continue }
+            let dy = headY - food.position.y
+            if abs(dy) >= passiveMagnetRadius { continue }
+            let distSq = dx * dx + dy * dy
+            guard distSq > 1, distSq < radiusSq else { continue }
+            let dist = hypot(dx, dy)
+            food.position = CGPoint(x: food.position.x + (dx / dist) * passiveMagnetPullStrength,
+                                    y: food.position.y + (dy / dist) * passiveMagnetPullStrength)
+        }
+        foodGridDirty = true
     }
 
     /// ✂️ Shrink — consolation bonus first, then reduce score by ~10% so syncSnakeLength() contracts body.
