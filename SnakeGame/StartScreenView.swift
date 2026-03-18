@@ -16,9 +16,10 @@ struct StartScreenView: View {
     @AppStorage("playerName")             private var playerName: String = "Player"
 
 
-    @State private var showImagePicker:   Bool = false
-    @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
-    @State private var showSourcePicker:  Bool = false
+    @State private var showImagePicker:      Bool = false
+    @State private var imagePickerSource:    UIImagePickerController.SourceType = .photoLibrary
+    @State private var showSourcePicker:     Bool = false
+    @State private var showSelfieCaptureView: Bool = false
     @State private var showCustomize:          Bool = false
     @State private var showPlayAreaCustomize:  Bool = false
     @State private var pulsePlay:         Bool = false
@@ -82,10 +83,19 @@ struct StartScreenView: View {
         // Image picker
         .confirmationDialog("Choose Photo", isPresented: $showSourcePicker, titleVisibility: .visible) {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Take Selfie") { imagePickerSource = .camera; showImagePicker = true }
+                Button("Take Selfie") { showSelfieCaptureView = true }
             }
             Button("Choose from Library") { imagePickerSource = .photoLibrary; showImagePicker = true }
             Button("Cancel", role: .cancel) {}
+        }
+        .fullScreenCover(isPresented: $showSelfieCaptureView) {
+            SelfieCaptureView(
+                onCapture: { image in
+                    showSelfieCaptureView = false
+                    playerImage = AvatarStore.save(image) ?? image
+                },
+                onCancel: { showSelfieCaptureView = false }
+            )
         }
         .sheet(isPresented: $showImagePicker) {
             ImagePickerView(sourceType: imagePickerSource) { image in
