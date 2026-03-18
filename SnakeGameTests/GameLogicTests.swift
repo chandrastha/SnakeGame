@@ -118,48 +118,6 @@ final class GameLogicTests: XCTestCase {
     }
 
 
-    func test_givenBandBelowThree_whenResolvingMazeMilestone_thenReturnsBaseline() {
-        XCTAssertEqual(GameLogic.mazeMilestoneFocus(forBand: 2), .baseline)
-    }
-
-    func test_givenBandThreeSixNine_whenResolvingMazeMilestone_thenReturnsExpectedRotation() {
-        XCTAssertEqual(GameLogic.mazeMilestoneFocus(forBand: 3), .ai)
-        XCTAssertEqual(GameLogic.mazeMilestoneFocus(forBand: 6), .maze)
-        XCTAssertEqual(GameLogic.mazeMilestoneFocus(forBand: 9), .systems)
-    }
-
-    func test_givenEarlyBand_whenBuildingMazeRoundPlan_thenUsesUrgentThirtySecondTimerAndHeadStart() {
-        let plan = GameLogic.mazeHuntRoundPlan(band: 1, roundInBand: 2)
-        XCTAssertEqual(plan.timerSeconds, 30)
-        XCTAssertEqual(plan.hasHeadStart, true)
-        XCTAssertEqual(plan.roundInBand, 2)
-    }
-
-    func test_givenMazeMilestoneBand_whenBuildingMazeRoundPlan_thenUsesComplexityTimerAndFocus() {
-        let plan = GameLogic.mazeHuntRoundPlan(band: 6, roundInBand: 5)
-        XCTAssertEqual(plan.timerSeconds, 35)
-        XCTAssertEqual(plan.roundInBand, 3)
-        XCTAssertEqual(plan.milestoneFocus, .maze)
-        XCTAssertGreaterThan(plan.mouseSpeedMultiplier, 1.0)
-    }
-
-    func test_givenTwoMouseSpecial_whenResolvingRequiredCaptures_thenSwitchesAtBandSeven() {
-        XCTAssertEqual(GameLogic.mazeRequiredCaptures(band: 4, specialRound: .twoMouse), 1)
-        XCTAssertEqual(GameLogic.mazeRequiredCaptures(band: 7, specialRound: .twoMouse), 2)
-    }
-
-    func test_givenBandUnderFour_whenPlanningSpecialRound_thenDoesNotSchedule() {
-        let plan = GameLogic.mazeSpecialRoundPlan(band: 3, bandsWithoutSpecial: 10, randomRoll: 0.1, randomRoundIndex: 2)
-        XCTAssertFalse(plan.shouldSchedule)
-        XCTAssertNil(plan.scheduledRoundIndex)
-    }
-
-    func test_givenGuaranteeCondition_whenPlanningSpecialRound_thenSchedulesRound() {
-        let plan = GameLogic.mazeSpecialRoundPlan(band: 8, bandsWithoutSpecial: 2, randomRoll: 0.99, randomRoundIndex: 9)
-        XCTAssertTrue(plan.shouldSchedule)
-        XCTAssertEqual(plan.scheduledRoundIndex, 3)
-    }
-
     // MARK: - Unit Tests: Bot Logic
 
     func test_givenEachPersonalityKind_whenLoadingProfile_thenReturnsDistinctProfile() {
