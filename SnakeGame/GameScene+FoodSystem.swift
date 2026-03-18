@@ -30,20 +30,37 @@ extension GameScene {
         default:     candidate = .shrink        // 1%
         }
 
-        switch candidate {
-        case .shield:
-            if foodTypes.filter({ $0 == .shield }).count >= 2 { return .regular }
-        case .multiplier:
-            if foodTypes.filter({ $0 == .multiplier }).count >= 3 { return .regular }
-        case .magnet:
-            if foodTypes.filter({ $0 == .magnet }).count >= 3 { return .regular }
-        case .ghost:
-            if foodTypes.filter({ $0 == .ghost }).count >= 3 { return .regular }
-        case .shrink:
-            if foodTypes.filter({ $0 == .shrink }).count >= 3 { return .regular }
-        default: break
+        guard candidate != .regular else { return .regular }
+
+        // Enforce 30-second cooldown for this special type (remaining seconds > 0 = locked)
+        if let remaining = specialFoodCooldowns[candidate], remaining > 0 {
+            return .regular
         }
+        // Max 1 of each special type at a time
+        if activeSpecialCount(for: candidate) >= 1 { return .regular }
+        // Max 4 special items total at a time
+        if totalActiveSpecialCount() >= 4 { return .regular }
+
         return candidate
+    }
+
+    /// Counts active instances of a specific FoodType in the live foodTypes array.
+    private func activeSpecialCount(for type: FoodType) -> Int {
+        var n = 0
+        for t in foodTypes where t == type { n += 1 }
+        return n
+    }
+
+    /// Counts all active special food items (shield, multiplier, magnet, ghost, shrink).
+    private func totalActiveSpecialCount() -> Int {
+        var n = 0
+        for t in foodTypes {
+            switch t {
+            case .shield, .multiplier, .magnet, .ghost, .shrink: n += 1
+            default: break
+            }
+        }
+        return n
     }
 
     func makeRegularFoodNode() -> SKLabelNode {
@@ -389,6 +406,14 @@ extension GameScene {
         foodItems[index].removeFromParent()
         removeFoodItem(at: index)
         clusterBonusDirty = true
+        // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout.
+        // Stored as remaining seconds (CGFloat), ticked down by dt in updatePowerUps()
+        // so the cooldown freezes during pause/backgrounding, matching other timers.
+        switch type {
+        case .shield, .multiplier, .magnet, .ghost, .shrink:
+            specialFoodCooldowns[type] = 30.0
+        default: break
+        }
         spawnFood()
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
 
@@ -440,9 +465,19 @@ extension GameScene {
         let bonus = GameLogic.comboBonus(forComboCount: comboCount)
         let total = base + bonus
         score += total
-        // Award 1 coin per food (2 for death food which is rarer/stronger)
-        let coinReward = (type == .death) ? 2 : (type == .shrink ? 0 : 1)
-        if coinReward > 0 { PlayerEconomy.shared.sessionCoins += coinReward }
+
+        // Coin earning: 1 coin per 10 regular/special eats; 1 coin per 8 death eats; 0 for shrink/trail
+        switch type {
+        case .death:
+            deathFoodEatenForCoin += 1
+            if deathFoodEatenForCoin >= 8 { deathFoodEatenForCoin = 0; PlayerEconomy.shared.sessionCoins += 1 }
+        case .shrink, .trail:
+            break
+        default: // regular, shield, multiplier, magnet, ghost
+            regularFoodEatenForCoin += 1
+            if regularFoodEatenForCoin >= 10 { regularFoodEatenForCoin = 0; PlayerEconomy.shared.sessionCoins += 1 }
+        }
+
         if total > 0 {
             let text  = bonus > 0 ? "+\(total) combo!" : "+\(total)"
             let color: SKColor = bonus > 0

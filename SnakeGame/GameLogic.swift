@@ -217,7 +217,7 @@ enum GameLogic {
     /// Combo begins at the 2nd consecutive eat within the time window.
     static func comboBonus(forComboCount count: Int) -> Int {
         guard count >= 2 else { return 0 }
-        return min(count - 1, 8)   // +1 per consecutive eat, cap at +8
+        return min(count - 1, 8) / 2   // halved: combo 3=+1, 5=+2, 7=+3, 9+=+4
     }
 
     /// Returns true when the combo count hits a notable streak milestone.
@@ -415,8 +415,10 @@ enum GameLogic {
     ///   - scavengerBias: From `BotPersonalityProfile.scavengerBias`; extra weight
     ///     for `.death` and `.trail` food (corpse scavenging reward).
     ///
-    /// Base values: regular=12, trail=6, death=24, shield=11,
-    ///              multiplier=13, magnet=9, ghost=10, shrink=3.
+    /// Base values: regular=12, trail=6, death=24, shield=32,
+    ///              multiplier=36, magnet=28, ghost=26, shrink=0.
+    ///  Special food is rare (max 1 per type on the map), so base values are high
+    ///  enough to beat nearby regular food even after long-range distance decay.
     static func botFoodValue(
         type: FoodType,
         clusterBonus: CGFloat,
@@ -428,11 +430,11 @@ enum GameLogic {
         case .regular:    base = 12
         case .trail:      base = 6
         case .death:      base = 24  // High base — killing food is risky but rewarding.
-        case .shield:     base = 11
-        case .multiplier: base = 13
-        case .magnet:     base = 9
-        case .ghost:      base = 10
-        case .shrink:     base = 3   // Low base — shrink food offers little upside.
+        case .shield:     base = 32  // Rare; absorbs one death — worth a long detour.
+        case .multiplier: base = 36  // Score doubler — highest expected value.
+        case .magnet:     base = 28  // Food-pulling radius is a strong advantage.
+        case .ghost:      base = 26  // Body-pass-through is tactically valuable.
+        case .shrink:     base = 0   // Zero — bots should never path toward shrink.
         }
 
         // Cluster bonus rewards bots for targeting food-dense areas.

@@ -265,6 +265,16 @@ class GameScene: SKScene {
     var hasUsedRevive: Bool = false
     var hasDoubledCoins: Bool = false
 
+    // MARK: - Coin Earning Counters
+    var regularFoodEatenForCoin: Int = 0   // 1 coin per 10 regular/special eats
+    var deathFoodEatenForCoin:   Int = 0   // 1 coin per 8 death food eats
+
+    // MARK: - Special Food Cooldowns
+    // Maps FoodType → remaining seconds before that type may respawn.
+    // Ticked down by dt in updatePowerUps() so it freezes while the game is paused,
+    // consistent with multiplierTimeLeft / magnetTimeLeft / ghostTimeLeft.
+    var specialFoodCooldowns: [FoodType: CGFloat] = [:]
+
     // MARK: - Super Mouse
     var superMouseState: SuperMouseState = .dormant
     var superMouseTimer: CGFloat = 0
@@ -646,8 +656,11 @@ class GameScene: SKScene {
         gameStarted         = false
         isPausedGame        = false
         scoreMultiplier     = 1
-        hasUsedRevive       = false
-        hasDoubledCoins     = false
+        hasUsedRevive            = false
+        hasDoubledCoins          = false
+        regularFoodEatenForCoin  = 0
+        deathFoodEatenForCoin    = 0
+        specialFoodCooldowns.removeAll()
         PlayerEconomy.shared.resetSession()
         shieldActive        = false
         multiplierActive    = false
@@ -2815,6 +2828,12 @@ class GameScene: SKScene {
 
         if shouldRefreshPowerUpPanel || multiplierSecondsChanged || magnetSecondsChanged || ghostSecondsChanged {
             refreshPowerUpPanel()
+        }
+
+        // Tick special-food respawn cooldowns via dt so they freeze during pause/backgrounding.
+        for key in specialFoodCooldowns.keys {
+            specialFoodCooldowns[key] = max(0, specialFoodCooldowns[key]! - dt)
+            if specialFoodCooldowns[key] == 0 { specialFoodCooldowns.removeValue(forKey: key) }
         }
     }
 
