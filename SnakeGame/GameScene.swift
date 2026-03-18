@@ -24,8 +24,9 @@ class GameScene: SKScene {
 
     // MARK: - Audio
     var backgroundMusicPlayer: AVAudioPlayer?
-    let eatFoodAction = SKAction.playSoundFileNamed("eat_food.wav", waitForCompletion: false)
-    let deathAction   = SKAction.playSoundFileNamed("death.wav",    waitForCompletion: false)
+    let eatFoodAction        = SKAction.playSoundFileNamed("eat_food.wav",    waitForCompletion: false)
+    let eatSpecialFoodAction = SKAction.playSoundFileNamed("eat_special.wav", waitForCompletion: false)
+    let deathAction          = SKAction.playSoundFileNamed("death.wav",       waitForCompletion: false)
     var lastEatSoundTime: TimeInterval = 0   // throttles eat sounds to prevent stutter
 
     // MARK: - Timing
@@ -63,7 +64,7 @@ class GameScene: SKScene {
     let initialBotBodyCount:     Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
-    let foodCount:               Int     = 340
+    let foodCount:               Int     = 240
     let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
@@ -129,7 +130,7 @@ class GameScene: SKScene {
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
-    let maxTrailFoodItems:   Int     = 220    // hard cap on active .trail nodes
+    let maxTrailFoodItems:   Int     = 120    // hard cap on active .trail nodes
     // Trail food: makeTrailFoodNode — simple texture-backed sprite (pre-rendered per color theme).
     // Using SKSpriteNode with a cached SKTexture avoids allocating 1–5 nested SKShapeNodes
     // per spawn (53/sec while boosting). Cache is pre-warmed at game start.
@@ -244,7 +245,9 @@ class GameScene: SKScene {
     var invincibleTimeLeft:  CGFloat = 0
     var magnetActive:        Bool    = false
     var magnetTimeLeft:      CGFloat = 0
-    let magnetRadius:        CGFloat = 220.0
+    let magnetRadius:        CGFloat = 330.0
+    let passiveMagnetRadius:       CGFloat = 52.0   // always-on gentle pull (≈ 2× head diameter)
+    let passiveMagnetPullStrength: CGFloat = 2.0    // gentle vs active 5.5
     var ghostActive:         Bool    = false
     var ghostTimeLeft:       CGFloat = 0
     var score:          Int = 0
@@ -2995,6 +2998,7 @@ class GameScene: SKScene {
 
         // --- Magnet power-up: pull food every other frame ---
         if magnetActive && frameCounter % 2 == 0 { applyMagnetEffect() }
+        if frameCounter % 2 == 1 { applyPassiveMagnetEffect() }
 
         // --- Mode-specific ---
         if isSnakeRaceMode {

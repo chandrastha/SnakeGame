@@ -22,12 +22,12 @@ extension GameScene {
         let roll = Int.random(in: 0...99)
         let candidate: FoodType
         switch roll {
-        case 0...89:  candidate = .regular
-        case 90...91: candidate = .shield
-        case 92...93: candidate = .multiplier
-        case 94...95: candidate = .magnet
-        case 96...97: candidate = .ghost
-        default:      candidate = .shrink
+        case 0...94: candidate = .regular       // 95%
+        case 95:     candidate = .shield        // 1%
+        case 96:     candidate = .multiplier    // 1%
+        case 97:     candidate = .magnet        // 1%
+        case 98:     candidate = .ghost         // 1%
+        default:     candidate = .shrink        // 1%
         }
 
         guard candidate != .regular else { return .regular }
@@ -92,7 +92,7 @@ extension GameScene {
 
     func makeIconFoodNode(_ text: String) -> SKLabelNode {
         let food = SKLabelNode(text: text)
-        food.fontSize                = 17
+        food.fontSize                = 22
         food.verticalAlignmentMode   = .center
         food.horizontalAlignmentMode = .center
         return food
@@ -424,15 +424,22 @@ extension GameScene {
             spawnFloatingText("⭐ ×2 Score (15s)!", at: CGPoint(x: foodPos.x, y: foodPos.y + 60))
         case .magnet:
             magnetActive   = true
-            magnetTimeLeft = 6.0
+            magnetTimeLeft = 12.0
             showMagnetEffect()
             showMagnetActivation()
         case .ghost:
             ghostActive    = true
-            ghostTimeLeft  = 4.0
+            ghostTimeLeft  = 12.0
             showGhostEffect()
         case .shrink:
-            applyShrink()
+            if score < 120 {
+                spawnFloatingText("Too small to shrink!", at: CGPoint(x: foodPos.x, y: foodPos.y + 60))
+                spawnEatParticles(at: foodPos)
+                refreshPowerUpPanel()
+                return
+            } else {
+                applyShrink()
+            }
         }
 
         // Per-type point values; power-ups award 2 pts (parity with botNutrition)
@@ -482,7 +489,12 @@ extension GameScene {
         // Throttle eat sounds: max one per 80ms to prevent stutter during fast eating
         if lastUpdateTime - lastEatSoundTime > 0.08 {
             lastEatSoundTime = lastUpdateTime
-            run(eatFoodAction)
+            switch type {
+            case .shield, .multiplier, .magnet, .ghost, .shrink:
+                run(eatSpecialFoodAction)
+            default:
+                run(eatFoodAction)
+            }
         }
         spawnEatParticles(at: foodPos)
         refreshPowerUpPanel()
