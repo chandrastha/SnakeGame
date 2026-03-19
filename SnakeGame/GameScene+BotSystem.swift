@@ -598,11 +598,29 @@ extension GameScene {
 
     /// Random position in a ring 500–1050 px from the player, clamped to the arena.
     private func randomPositionNearPlayer() -> CGPoint {
+        let p = snakeHead.position
+        // After clamping to the arena the effective radius can collapse near walls/corners,
+        // placing a bot dangerously close to the player. Resample up to 8 times until the
+        // clamped point is still at least 400 px away; fall back to a forced offset when
+        // all samples fail (e.g. player is wedged into a corner).
+        let minDistSq: CGFloat = 400 * 400
+        for _ in 0..<8 {
+            let angle = CGFloat.random(in: 0...(2 * .pi))
+            let dist  = CGFloat.random(in: 500...1050)
+            let raw   = CGPoint(x: p.x + cos(angle) * dist,
+                                y: p.y + sin(angle) * dist)
+            let clamped = CGPoint(
+                x: min(max(raw.x, arenaMinX + 150), arenaMaxX - 150),
+                y: min(max(raw.y, arenaMinY + 150), arenaMaxY - 150)
+            )
+            let dx = clamped.x - p.x
+            let dy = clamped.y - p.y
+            if dx*dx + dy*dy >= minDistSq { return clamped }
+        }
+        // Fallback: push exactly 450 px in a random direction, then clamp.
         let angle = CGFloat.random(in: 0...(2 * .pi))
-        let dist  = CGFloat.random(in: 500...1050)
-        let p     = snakeHead.position
-        let raw   = CGPoint(x: p.x + cos(angle) * dist,
-                            y: p.y + sin(angle) * dist)
+        let raw   = CGPoint(x: p.x + cos(angle) * 450,
+                            y: p.y + sin(angle) * 450)
         return CGPoint(
             x: min(max(raw.x, arenaMinX + 150), arenaMaxX - 150),
             y: min(max(raw.y, arenaMinY + 150), arenaMaxY - 150)
