@@ -86,7 +86,7 @@ extension GameScene {
         } else {
             let lbLeftEdge = cx - halfW + (20 + leftInset) * controlScale
             miniLeaderboard?.position = CGPoint(
-                x: lbLeftEdge + 92 * controlScale,
+                x: lbLeftEdge + 75 * controlScale,
                 y: cy + halfH - minimapInset.y * controlScale - miniLeaderboardPanelHeight / 2
             )
         }

@@ -612,7 +612,11 @@ extension GameScene {
     /// If fewer than minNearbyBots are near the player, recycle far-away inactive bots
     /// so they fast-respawn near the player on their next finishRespawn call.
     func ensureNearbyBots() {
-        let needed = minNearbyBots - activeBotsNearPlayer(excluding: -1)
+        // Count bots already committed to a fast respawn (timer ≤ 0.5 s, set by a
+        // previous ensureNearbyBots call). Normal respawn timers are 2–4 s, so
+        // ≤ 0.5 s is an unambiguous signal that the slot is already spoken for.
+        let pendingNearRespawn = bots.filter { $0.isDead && $0.respawnTimer > 0 && $0.respawnTimer <= 0.5 }.count
+        let needed = minNearbyBots - activeBotsNearPlayer(excluding: -1) - pendingNearRespawn
         guard needed > 0 else { return }
 
         let recycleDist   = botDeactivationDistance * 1.5   // 2250 px — definitely off-screen
