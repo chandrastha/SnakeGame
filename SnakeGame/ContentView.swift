@@ -7,6 +7,7 @@ import SwiftUI
 import SpriteKit
 
 struct ContentView: View {
+    @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding: Bool = false
     @State private var isPlaying: Bool = false
     @State private var selectedGameMode: GameMode = .offline
 
@@ -23,7 +24,12 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            if isPlaying {
+            if !hasSeenOnboarding {
+                OnboardingView(playerImage: $playerImage, onComplete: {
+                    hasSeenOnboarding = true
+                })
+                .transition(.opacity)
+            } else if isPlaying {
                 GameView(
                     gameMode:     selectedGameMode,
                     colorIndex:   safeSnakeColorIndex,
@@ -47,6 +53,7 @@ struct ContentView: View {
                 .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.4), value: hasSeenOnboarding)
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
     }
 }
