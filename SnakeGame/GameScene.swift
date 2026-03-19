@@ -334,6 +334,8 @@ class GameScene: SKScene {
     let botCollisionBroadPhaseRadius: CGFloat = 260.0
     let botActivationDistance: CGFloat = 1200.0
     let botDeactivationDistance: CGFloat = 1500.0
+    /// Scales with player score so the arena fills up as the snake grows (6 at start, up to 12).
+    var minNearbyBots: Int { max(6, min(12, 6 + score / 80)) }
     var botVisibilityUpdateTimer: CGFloat = 0
     var circledDetectionTimer: CGFloat = 0
     var frameCounter = 0

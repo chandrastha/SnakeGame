@@ -241,10 +241,11 @@ final class PlayAreaLayoutStore: ObservableObject {
                 : HUDElementConfig(normalizedX: 0.50, normalizedY: 0.78)
 
         case .miniLeaderboard:
-            // Center = 112pt from left, 113pt from top → x=112/390, y=1-113/844
+            // Center = 95pt from left (20 left-inset + 75 half-width of 150pt panel),
+            // 113pt from top → portrait x=95/390≈0.24, landscape x=95/844≈0.11
             return isLandscape
-                ? HUDElementConfig(normalizedX: 0.13, normalizedY: 0.69)
-                : HUDElementConfig(normalizedX: 0.29, normalizedY: 0.87)
+                ? HUDElementConfig(normalizedX: 0.11, normalizedY: 0.69)
+                : HUDElementConfig(normalizedX: 0.24, normalizedY: 0.87)
 
         case .leaderArrow:
             // 74pt from top → y = 1 - 74/844
