@@ -40,8 +40,8 @@ struct PlayAreaCustomizeView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { selectedElement = nil }
 
-                // HUD element replicas (pause button is fixed in-game, not user-repositionable)
-                ForEach(HUDElement.allCases.filter { $0 != .pauseButton }, id: \.self) { element in
+                // HUD element replicas
+                ForEach(HUDElement.allCases, id: \.self) { element in
                     let cfg = currentDraft[element]
                         ?? PlayAreaLayoutStore.defaultConfig(for: element, isLandscape: isLandscape)
 
@@ -508,7 +508,7 @@ private struct GameElementView: View {
                 .padding(.horizontal, 8).frame(height: 20)
             }
         }
-        .frame(width: 150)
+        .frame(width: 184)
         .padding(.bottom, 4)
         .background(
             RoundedRectangle(cornerRadius: 14)
