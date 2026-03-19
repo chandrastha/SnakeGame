@@ -55,6 +55,13 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.4), value: hasSeenOnboarding)
         .animation(.easeInOut(duration: 0.4), value: isPlaying)
+        .onAppear {
+            // Migration: existing installs already have a playerName key set —
+            // skip onboarding so they don't see it on first launch after upgrade.
+            if !hasSeenOnboarding && UserDefaults.standard.object(forKey: "playerName") != nil {
+                hasSeenOnboarding = true
+            }
+        }
     }
 }
 
