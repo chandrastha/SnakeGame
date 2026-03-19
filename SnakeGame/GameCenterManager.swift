@@ -1,11 +1,13 @@
+import Combine
 import GameKit
 import UIKit
 
-class GameCenterManager: NSObject, GKGameCenterControllerDelegate {
+class GameCenterManager: NSObject, ObservableObject, GKGameCenterControllerDelegate {
     static let shared = GameCenterManager()
 
     let highScoreLeaderboardID = "co.chandrashrestha.viperun.highscore"
     private(set) var isAuthenticated = false
+    @Published var gcDisplayName: String? = nil
 
     // P2 fix: guard against duplicate submissions on resize/rotation
     private var hasSubmittedScoreThisRound = false
@@ -31,6 +33,9 @@ class GameCenterManager: NSObject, GKGameCenterControllerDelegate {
                 }
             }
             self.isAuthenticated = player.isAuthenticated
+            DispatchQueue.main.async {
+                self.gcDisplayName = player.isAuthenticated ? player.displayName : nil
+            }
         }
     }
 
