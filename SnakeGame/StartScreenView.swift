@@ -23,7 +23,7 @@ struct StartScreenView: View {
     @State private var showSelfieCaptureView: Bool = false
     @State private var showCustomize:          Bool = false
     @State private var showPlayAreaCustomize:  Bool = false
-    @State private var pulsePlay:         Bool = false
+    @State private var showSettingsMenu:       Bool = false
     @State private var controllerConnected: Bool = false
 
     // Detect compact vertical class = iPhone landscape
@@ -35,39 +35,22 @@ struct StartScreenView: View {
 
     var body: some View {
         ZStack {
-            // Layered gradient background
-            LinearGradient(
-                colors: [
-                    Color(red: 0.08, green: 0.12, blue: 0.22),
-                    Color(red: 0.15, green: 0.22, blue: 0.38)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            background
 
-            // Subtle radial glow at top center
-            RadialGradient(
-                colors: [
-                    Color(red: 0.2, green: 0.7, blue: 0.3).opacity(0.12),
-                    Color.clear
-                ],
-                center: .top,
-                startRadius: 0,
-                endRadius: 300
-            )
-            .ignoresSafeArea()
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.horizontal, isLandscape ? 18 : 20)
+                    .padding(.top, isLandscape ? 8 : 12)
+                    .padding(.bottom, isLandscape ? 8 : 10)
 
-            if isLandscape {
-                landscapeLayout
-            } else {
-                portraitLayout
+                if isLandscape {
+                    landscapeLayout
+                } else {
+                    portraitLayout
+                }
             }
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                pulsePlay = true
-            }
             if let controller = GCController.controllers().first {
                 controllerConnected = true
                 registerControllerHandlers(controller)
@@ -103,6 +86,12 @@ struct StartScreenView: View {
                 playerImage = AvatarStore.save(image) ?? image
             }
         }
+        .confirmationDialog("Settings", isPresented: $showSettingsMenu, titleVisibility: .visible) {
+            Button("Skins") { showCustomize = true }
+            Button("Layout") { showPlayAreaCustomize = true }
+            Button("Ranks") { GameCenterManager.shared.showLeaderboard() }
+            Button("Cancel", role: .cancel) {}
+        }
         .sheet(isPresented: $showCustomize)          { SnakeCustomizeView() }
         .sheet(isPresented: $showPlayAreaCustomize) { PlayAreaCustomizeView() }
     }
@@ -112,29 +101,18 @@ struct StartScreenView: View {
     // ─────────────────────────────────────────────
     private var portraitLayout: some View {
         VStack(spacing: 0) {
-            Spacer()
+            Spacer(minLength: 6)
 
             avatarView(size: 90)
                 .padding(.bottom, 10)
 
             playerNameField(width: 150)
-                .padding(.bottom, 8)
-
-            Text("🐍").font(.system(size: 60)).padding(.bottom, 2)
-
-            Text("VIPERUN")
-                .font(.system(size: 38, weight: .black))
-                .foregroundStyle(titleGradient)
-                .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.55), radius: 14, x: 0, y: 0)
-                .padding(.bottom, 20)
+                .padding(.bottom, 14)
 
             profileRow.padding(.bottom, 14)
 
-            coinBalancePill.padding(.bottom, 18)
-
-            modeSelector.padding(.bottom, 30)
-
-            playButton
+            modeSelector
+                .padding(.bottom, 26)
 
             Spacer()
 
@@ -149,7 +127,7 @@ struct StartScreenView: View {
     private var landscapeLayout: some View {
         HStack(alignment: .center, spacing: 0) {
 
-            // ── Left column: branding + score ──
+            // ── Left column: profile/actions ──
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
@@ -157,19 +135,9 @@ struct StartScreenView: View {
                     .padding(.bottom, 6)
 
                 playerNameField(width: 120)
-                    .padding(.bottom, 6)
-
-                Text("🐍").font(.system(size: 36)).padding(.bottom, 2)
-
-                Text("VIPERUN")
-                    .font(.system(size: 26, weight: .black))
-                    .foregroundStyle(titleGradient)
-                    .shadow(color: Color(red: 0.3, green: 0.9, blue: 0.3).opacity(0.5), radius: 10, x: 0, y: 0)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 10)
 
                 profileRow
-
-                coinBalancePill.padding(.top, 10)
 
                 Spacer(minLength: 0)
 
@@ -185,13 +153,11 @@ struct StartScreenView: View {
                 .frame(width: 1)
                 .padding(.vertical, 20)
 
-            // ── Right column: modes + play ──
+            // ── Right column: modes ──
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
-                modeSelector.padding(.bottom, 14)
-
-                playButtonCompact
+                modeSelector
 
                 Spacer(minLength: 0)
             }
@@ -200,6 +166,31 @@ struct StartScreenView: View {
             .padding(.vertical, 12)
         }
         .padding(.horizontal, 8)
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            coinBalancePill
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: { showSettingsMenu = true }) {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.03, green: 0.10, blue: 0.22).opacity(0.78))
+                        .frame(width: isLandscape ? 42 : 46, height: isLandscape ? 42 : 46)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: isLandscape ? 17 : 18, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.88))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+            .accessibilityHint("Opens settings actions")
+        }
     }
 
     // ─────────────────────────────────────────────
@@ -266,26 +257,19 @@ struct StartScreenView: View {
     private var coinBalancePill: some View {
         HStack(spacing: 6) {
             Text("🪙")
-                .font(.system(size: 16))
+                .font(.system(size: isLandscape ? 14 : 16))
             Text("\(economy.coins)")
-                .font(.system(size: 15, weight: .black))
+                .font(.system(size: isLandscape ? 14 : 15, weight: .black))
                 .foregroundStyle(Color(red: 1.0, green: 0.90, blue: 0.30))
             Text("coins")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: isLandscape ? 12 : 13, weight: .semibold))
                 .foregroundStyle(Color.white.opacity(0.55))
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.08))
+        .padding(.horizontal, isLandscape ? 14 : 18)
+        .padding(.vertical, isLandscape ? 7 : 8)
+        .background(Color(red: 0.04, green: 0.10, blue: 0.22).opacity(0.72))
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color(red: 1.0, green: 0.82, blue: 0.20).opacity(0.35), lineWidth: 1))
-    }
-
-    private var titleGradient: LinearGradient {
-        LinearGradient(
-            colors: [Color(red: 0.3, green: 0.9, blue: 0.3), Color(red: 1.0, green: 0.85, blue: 0.0)],
-            startPoint: .leading, endPoint: .trailing
-        )
+        .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1))
     }
 
     private var profileRow: some View {
@@ -334,67 +318,11 @@ struct StartScreenView: View {
 
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    ModeButton(icon: "🐍", title: "Casual", isSelected: selectedGameMode == .offline) { selectedGameMode = .offline }
+                    ModeButton(icon: "🐍", title: "Casual", isSelected: selectedGameMode == .offline) { startGame(in: .offline) }
                         .accessibilityIdentifier("modeCasual")
-                    ModeButton(icon: "⚔️", title: "Expert", isSelected: selectedGameMode == .challenge) { selectedGameMode = .challenge }
+                    ModeButton(icon: "⚔️", title: "Expert", isSelected: selectedGameMode == .challenge) { startGame(in: .challenge) }
                         .accessibilityIdentifier("modeExpert")
                 }
-            }
-        }
-    }
-
-    private var playButton: some View {
-        VStack(spacing: 6) {
-            Button(action: { onPlayTapped() }) {
-                Text("PLAY")
-                    .font(.system(size: 28, weight: .black))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 220, height: 65)
-                    .background(LinearGradient(
-                        colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(
-                        controllerConnected ? Color.white.opacity(0.75) : Color.white.opacity(0.25), lineWidth: controllerConnected ? 2 : 1
-                    ))
-                    .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.65), radius: 18, x: 0, y: 4)
-            }
-            .scaleEffect(pulsePlay ? 1.035 : 1.0)
-            .accessibilityIdentifier("playButton")
-            if controllerConnected {
-                Text("🎮  Ⓐ Play  ·  ◀ ▶ Switch Mode")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.white.opacity(0.40))
-            }
-        }
-    }
-
-    /// Compact version of the play button used in landscape
-    private var playButtonCompact: some View {
-        VStack(spacing: 5) {
-            Button(action: { onPlayTapped() }) {
-                Text("▶  PLAY")
-                    .font(.system(size: 22, weight: .black))
-                    .foregroundStyle(Color.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(LinearGradient(
-                        colors: [Color(red: 0.25, green: 0.88, blue: 0.38), Color(red: 0.12, green: 0.65, blue: 0.22)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                    .clipShape(RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(
-                        controllerConnected ? Color.white.opacity(0.75) : Color.white.opacity(0.25), lineWidth: controllerConnected ? 2 : 1
-                    ))
-                    .shadow(color: Color(red: 0.2, green: 0.85, blue: 0.3).opacity(0.6), radius: 14, x: 0, y: 3)
-            }
-            .scaleEffect(pulsePlay ? 1.035 : 1.0)
-            .accessibilityIdentifier("playButton")
-            if controllerConnected {
-                Text("🎮  Ⓐ Play  ·  ◀ ▶ Mode")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.white.opacity(0.40))
             }
         }
     }
@@ -416,7 +344,7 @@ struct StartScreenView: View {
     private func registerControllerHandlers(_ controller: GCController) {
         controller.extendedGamepad?.buttonA.pressedChangedHandler = { _, _, pressed in
             guard pressed else { return }
-            DispatchQueue.main.async { onPlayTapped() }
+            DispatchQueue.main.async { startGame(in: selectedGameMode) }
         }
         controller.extendedGamepad?.dpad.left.pressedChangedHandler = { _, _, pressed in
             guard pressed else { return }
@@ -426,6 +354,42 @@ struct StartScreenView: View {
             guard pressed else { return }
             DispatchQueue.main.async { selectedGameMode = .challenge }
         }
+    }
+
+    private var background: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.02, green: 0.08, blue: 0.20),
+                    Color(red: 0.01, green: 0.05, blue: 0.16),
+                    Color(red: 0.01, green: 0.02, blue: 0.10)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [
+                    Color(red: 0.22, green: 0.86, blue: 0.56).opacity(0.24),
+                    Color.clear
+                ],
+                center: .top,
+                startRadius: 20,
+                endRadius: 360
+            )
+
+            LinearGradient(
+                colors: [Color.clear, Color(red: 0.0, green: 0.25, blue: 0.30).opacity(0.10), Color.clear],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
+        .ignoresSafeArea()
+    }
+
+    private func startGame(in mode: GameMode) {
+        selectedGameMode = mode
+        onPlayTapped()
     }
 }
 
