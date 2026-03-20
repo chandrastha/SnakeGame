@@ -55,8 +55,15 @@ struct StartScreenView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(10)
             }
+
+            if showSourcePicker {
+                photoSourceModalOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(20)
+            }
         }
         .animation(.easeInOut(duration: 0.20), value: showSettingsMenu)
+        .animation(.easeInOut(duration: 0.20), value: showSourcePicker)
         .onAppear {
             if let controller = GCController.controllers().first {
                 controllerConnected = true
@@ -72,13 +79,6 @@ struct StartScreenView: View {
             controllerConnected = false
         }
         // Image picker
-        .confirmationDialog("Choose Photo", isPresented: $showSourcePicker, titleVisibility: .visible) {
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Take Selfie") { showSelfieCaptureView = true }
-            }
-            Button("Choose from Library") { imagePickerSource = .photoLibrary; showImagePicker = true }
-            Button("Cancel", role: .cancel) {}
-        }
         .fullScreenCover(isPresented: $showSelfieCaptureView) {
             SelfieCaptureView(
                 onCapture: { image in
@@ -283,6 +283,102 @@ struct StartScreenView: View {
         }
     }
 
+    private var photoSourceModalOverlay: some View {
+        GeometryReader { proxy in
+            let cardWidth = min(isLandscape ? 360 : 328, proxy.size.width - 42)
+
+            ZStack {
+                Color.black.opacity(0.58)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showSourcePicker = false
+                    }
+
+                ZStack {
+                    Circle()
+                        .fill(currentTheme.swiftUIColor.opacity(0.14))
+                        .frame(width: cardWidth * 0.88, height: cardWidth * 0.88)
+                        .blur(radius: 22)
+                        .offset(x: -cardWidth * 0.24, y: -48)
+
+                    Circle()
+                        .fill(Color(red: 0.30, green: 0.86, blue: 1.0).opacity(0.10))
+                        .frame(width: cardWidth * 0.70, height: cardWidth * 0.70)
+                        .blur(radius: 18)
+                        .offset(x: cardWidth * 0.22, y: 68)
+
+                    VStack(spacing: 14) {
+                        Text("CHOOSE PHOTO")
+                            .font(.system(size: isLandscape ? 27 : 29, weight: .black, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .tracking(1)
+                            .minimumScaleFactor(0.80)
+                            .lineLimit(1)
+
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            photoSourceModalButton(
+                                title: "Take Selfie",
+                                systemImage: "camera.fill",
+                                tint: Color(red: 0.35, green: 1.0, blue: 0.63)
+                            ) {
+                                showSourcePicker = false
+                                showSelfieCaptureView = true
+                            }
+                        }
+
+                        photoSourceModalButton(
+                            title: "Choose from Library",
+                            systemImage: "photo.on.rectangle.angled",
+                            tint: Color(red: 0.35, green: 0.83, blue: 1.0)
+                        ) {
+                            showSourcePicker = false
+                            imagePickerSource = .photoLibrary
+                            showImagePicker = true
+                        }
+
+                        Button(action: { showSourcePicker = false }) {
+                            Text("Cancel")
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.white.opacity(0.62))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.top, 24)
+                    .padding(.bottom, 18)
+                }
+                .frame(width: cardWidth)
+                .background(
+                    RoundedRectangle(cornerRadius: 34)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.11, green: 0.17, blue: 0.31).opacity(0.97),
+                                    Color(red: 0.09, green: 0.15, blue: 0.28).opacity(0.97)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34)
+                        .stroke(currentTheme.swiftUIColor.opacity(0.42), lineWidth: 1.6)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        .padding(8)
+                )
+                .shadow(color: currentTheme.swiftUIColor.opacity(0.35), radius: 26, y: 12)
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
     private func settingsModalButton(
         title: String,
         systemImage: String,
@@ -309,6 +405,38 @@ struct StartScreenView: View {
                     .stroke(tint.opacity(0.45), lineWidth: 1.2)
             )
             .shadow(color: tint.opacity(0.20), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func photoSourceModalButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.system(size: isLandscape ? 21 : 23, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .minimumScaleFactor(0.80)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: isLandscape ? 60 : 64)
+            .background(
+                RoundedRectangle(cornerRadius: 21)
+                    .fill(Color.white.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 21)
+                    .stroke(tint.opacity(0.45), lineWidth: 1.2)
+            )
+            .shadow(color: tint.opacity(0.18), radius: 9, y: 4)
         }
         .buttonStyle(.plain)
     }
