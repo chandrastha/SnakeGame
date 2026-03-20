@@ -38,8 +38,6 @@ struct OnboardingView: View {
                             .tag(0)
                         ControlsPage(currentStep: $currentStep, metrics: metrics, isActive: currentStep == 1)
                             .tag(1)
-                        SurvivePage(currentStep: $currentStep, metrics: metrics, isActive: currentStep == 2)
-                            .tag(2)
                         ProfilePage(
                             localName: $localName,
                             userHasEditedName: $userHasEditedName,
@@ -47,15 +45,15 @@ struct OnboardingView: View {
                             showSourcePicker: $showSourcePicker,
                             onComplete: finishOnboarding,
                             metrics: metrics,
-                            isActive: currentStep == 3
+                            isActive: currentStep == 2
                         )
-                        .tag(3)
+                        .tag(2)
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
                     .animation(.easeInOut(duration: 0.3), value: currentStep)
                     .frame(maxHeight: .infinity)
 
-                    OnboardingDots(count: 4, current: currentStep, metrics: metrics)
+                    OnboardingDots(count: 3, current: currentStep, metrics: metrics)
                         .padding(.bottom, metrics.dotsBottomPadding)
                 }
                 .frame(maxWidth: metrics.contentMaxWidth)
@@ -268,7 +266,7 @@ private struct WelcomePage: View {
             }
 
             Button("Skip to Profile") {
-                currentStep = 3
+                currentStep = 2
             }
             .font(.system(size: metrics.secondaryActionSize, weight: .semibold, design: .rounded))
             .foregroundStyle(Color.white.opacity(0.52))
@@ -465,126 +463,13 @@ private struct ControlsPage: View {
             }
 
             Button("Skip to Profile") {
-                currentStep = 3
+                currentStep = 2
             }
             .font(.system(size: metrics.secondaryActionSize, weight: .semibold, design: .rounded))
             .foregroundStyle(Color.white.opacity(0.5))
             .accessibilityHint("Skip this step and jump to profile setup")
         }
         .padding(.bottom, metrics.ctaBottomLift)
-    }
-}
-
-// MARK: - Survive Page
-
-private struct SurvivePage: View {
-    @Binding var currentStep: Int
-    let metrics: OnboardingLayoutMetrics
-    let isActive: Bool
-    @AppStorage("selectedSnakeColorIndex") private var selectedColorIndex: Int = 0
-
-    private var selectedTheme: SnakeColorTheme {
-        snakeColorThemes[normalizedSnakeColorIndex(selectedColorIndex)]
-    }
-
-    var body: some View {
-        Group {
-            if metrics.isLandscape {
-                HStack(spacing: metrics.sectionSpacing) {
-                    VStack(spacing: metrics.compactGap) {
-                        titleBlock
-                        foodGrid
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-                    VStack(spacing: metrics.compactGap) {
-                        hazardList
-                        Spacer(minLength: 0)
-                        ctaCluster
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                }
-            } else {
-                VStack(spacing: metrics.sectionSpacing) {
-                    titleBlock
-                    foodGrid
-                    .padding(.top, 20)
-                    hazardList
-                    .padding(.top, 30)
-                    Spacer(minLength: 0)
-                    ctaCluster
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    private var titleBlock: some View {
-        VStack(spacing: metrics.textGap) {
-            Text("Stay Alive")
-                .font(.system(size: metrics.pageTitleSize, weight: .black, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.95))
-                .minimumScaleFactor(0.8)
-                .lineLimit(1)
-
-            Text("Know your food from your foes")
-                .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.66))
-                .minimumScaleFactor(0.8)
-                .lineLimit(1)
-        }
-    }
-
-    private var foodGrid: some View {
-        VStack(alignment: .leading, spacing: metrics.textGap) {
-            sectionLabel("Food Sources", color: Color(red: 0.25, green: 0.95, blue: 0.60))
-
-            let columns = [GridItem(.flexible(), spacing: metrics.compactGap), GridItem(.flexible(), spacing: metrics.compactGap)]
-            LazyVGrid(columns: columns, spacing: metrics.compactGap) {
-                FoodInfoCard(type: .regular, title: "Normal", subtitle: "Eat fruit to grow.", accent: Color(red: 0.30, green: 0.92, blue: 0.56), metrics: metrics, theme: selectedTheme)
-                FoodInfoCard(type: .multiplier, title: "Special", subtitle: "Rare high-value drops.", accent: Color(red: 0.10, green: 0.66, blue: 1.0), metrics: metrics, theme: selectedTheme)
-                FoodInfoCard(type: .death, title: "Death", subtitle: "Remains from fallen snakes.", accent: Color(red: 1.0, green: 0.48, blue: 0.52), metrics: metrics, theme: selectedTheme)
-                FoodInfoCard(type: .trail, title: "Trail", subtitle: "Body pellets from movement.", accent: Color(red: 0.96, green: 0.82, blue: 0.28), metrics: metrics, theme: selectedTheme)
-            }
-        }
-    }
-
-    private var hazardList: some View {
-        VStack(alignment: .leading, spacing: metrics.textGap) {
-            sectionLabel("Hazards", color: Color(red: 1.0, green: 0.50, blue: 0.52))
-
-            HazardInfoRow(icon: "xmark.square.fill", title: "Arena Walls", subtitle: "Instant termination on contact.", accent: Color(red: 1.0, green: 0.50, blue: 0.52), metrics: metrics)
-            HazardInfoRow(icon: "car.rear.and.collision.road.lane", title: "Body Crash", subtitle: "Hitting any viper body ends the run.", accent: Color(red: 1.0, green: 0.50, blue: 0.52), metrics: metrics)
-        }
-    }
-
-    private var ctaCluster: some View {
-        VStack(spacing: metrics.textGap) {
-            OnboardingPrimaryButton(label: "Set Up Profile", isActive: isActive, showsChevron: true) {
-                currentStep = 3
-            }
-
-            Button("Skip") {
-                currentStep = 3
-            }
-            .font(.system(size: metrics.secondaryActionSize, weight: .semibold, design: .rounded))
-            .foregroundStyle(Color.white.opacity(0.5))
-            .accessibilityHint("Skip this step and continue to profile setup")
-        }
-        .padding(.bottom, metrics.ctaBottomLift)
-    }
-
-    private func sectionLabel(_ text: String, color: Color) -> some View {
-        HStack(spacing: 8) {
-            Capsule()
-                .fill(color)
-                .frame(width: 6, height: 24)
-            Text(text)
-                .font(.system(size: metrics.sectionLabelSize, weight: .bold, design: .rounded))
-                .foregroundStyle(color)
-                .kerning(2)
-                .textCase(.uppercase)
-        }
     }
 }
 
