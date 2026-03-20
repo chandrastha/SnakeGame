@@ -49,7 +49,14 @@ struct StartScreenView: View {
                     portraitLayout
                 }
             }
+
+            if showSettingsMenu {
+                settingsModalOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(10)
+            }
         }
+        .animation(.easeInOut(duration: 0.20), value: showSettingsMenu)
         .onAppear {
             if let controller = GCController.controllers().first {
                 controllerConnected = true
@@ -85,12 +92,6 @@ struct StartScreenView: View {
             ImagePickerView(sourceType: imagePickerSource) { image in
                 playerImage = AvatarStore.save(image) ?? image
             }
-        }
-        .confirmationDialog("Settings", isPresented: $showSettingsMenu, titleVisibility: .visible) {
-            Button("Skins") { showCustomize = true }
-            Button("Layout") { showPlayAreaCustomize = true }
-            Button("Ranks") { GameCenterManager.shared.showLeaderboard() }
-            Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showCustomize)          { SnakeCustomizeView() }
         .sheet(isPresented: $showPlayAreaCustomize) { PlayAreaCustomizeView() }
@@ -191,6 +192,125 @@ struct StartScreenView: View {
             .accessibilityLabel("Settings")
             .accessibilityHint("Opens settings actions")
         }
+    }
+
+    private var settingsModalOverlay: some View {
+        GeometryReader { proxy in
+            let cardWidth = min(isLandscape ? 350 : 320, proxy.size.width - 42)
+
+            ZStack {
+                Color.black.opacity(0.56)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showSettingsMenu = false
+                    }
+
+                ZStack {
+                    Circle()
+                        .fill(currentTheme.swiftUIColor.opacity(0.14))
+                        .frame(width: cardWidth * 0.90, height: cardWidth * 0.90)
+                        .blur(radius: 22)
+                        .offset(x: -cardWidth * 0.26, y: -44)
+
+                    Circle()
+                        .fill(Color(red: 0.30, green: 0.86, blue: 1.0).opacity(0.12))
+                        .frame(width: cardWidth * 0.78, height: cardWidth * 0.78)
+                        .blur(radius: 20)
+                        .offset(x: cardWidth * 0.20, y: 70)
+
+                    VStack(spacing: 16) {
+                        Text("SETTINGS")
+                            .font(.system(size: isLandscape ? 30 : 32, weight: .black, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .tracking(1.2)
+
+                        settingsModalButton(
+                            title: "Skins",
+                            systemImage: "paintpalette.fill",
+                            tint: Color(red: 0.35, green: 1.0, blue: 0.63)
+                        ) {
+                            showSettingsMenu = false
+                            showCustomize = true
+                        }
+
+                        settingsModalButton(
+                            title: "Layout",
+                            systemImage: "squares.leading.rectangle",
+                            tint: Color(red: 0.35, green: 0.83, blue: 1.0)
+                        ) {
+                            showSettingsMenu = false
+                            showPlayAreaCustomize = true
+                        }
+
+                        settingsModalButton(
+                            title: "Ranks",
+                            systemImage: "trophy.fill",
+                            tint: Color(red: 1.0, green: 0.84, blue: 0.30)
+                        ) {
+                            showSettingsMenu = false
+                            GameCenterManager.shared.showLeaderboard()
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 26)
+                }
+                .frame(width: cardWidth)
+                .background(
+                    RoundedRectangle(cornerRadius: 34)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.11, green: 0.17, blue: 0.31).opacity(0.96),
+                                    Color(red: 0.09, green: 0.15, blue: 0.28).opacity(0.96)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34)
+                        .stroke(Color(red: 0.45, green: 0.92, blue: 1.0).opacity(0.44), lineWidth: 1.6)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        .padding(8)
+                )
+                .shadow(color: Color(red: 0.32, green: 0.88, blue: 1.0).opacity(0.35), radius: 26, y: 12)
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
+    private func settingsModalButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: isLandscape ? 62 : 66)
+            .background(
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(Color.white.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22)
+                    .stroke(tint.opacity(0.45), lineWidth: 1.2)
+            )
+            .shadow(color: tint.opacity(0.20), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
     }
 
     // ─────────────────────────────────────────────

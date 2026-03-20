@@ -106,125 +106,160 @@ extension GameScene {
         gameOverOverlay?.removeFromParent()
         gameOverOverlay = nil
 
-        let cx = cameraNode.position.x, cy = cameraNode.position.y
-        let canRevive       = !hasUsedRevive
-        let canDoubleCoins  = !hasDoubledCoins
-        let isExpert        = gameMode == .challenge
+        let cx = cameraNode.position.x
+        let cy = cameraNode.position.y
+        let canRevive = !hasUsedRevive
+        let canDoubleCoins = !hasDoubledCoins
+        let isExpert = gameMode == .challenge
 
         let overlay = SKNode()
         overlay.zPosition = 1000
-        overlay.name      = "gameOverOverlay"
+        overlay.name = "gameOverOverlay"
 
-        // Dimmed full-screen background
-        let bg = SKShapeNode(rectOf: CGSize(width: size.width * 2, height: size.height * 2))
-        bg.fillColor   = SKColor(red: 0.06, green: 0.08, blue: 0.18, alpha: 0.88)
+        // Onboarding-aligned palette + rounded typography style.
+        let accentColor = SKColor(red: 0.24, green: 0.95, blue: 0.60, alpha: 1.0)
+        let secondaryAccent = SKColor(red: 0.33, green: 1.0, blue: 0.56, alpha: 1.0)
+        let panelFill = SKColor(red: 0.02, green: 0.08, blue: 0.18, alpha: 0.94)
+        let panelStroke = SKColor(red: 0.24, green: 0.95, blue: 0.60, alpha: 0.26)
+        let primaryTextColor = SKColor(white: 1.0, alpha: 0.95)
+        let roundedFont = "ArialRoundedMTBold"
+
+        let bg = SKShapeNode(rectOf: CGSize(width: size.width * 2.4, height: size.height * 2.4))
+        bg.fillColor = SKColor(red: 0.01, green: 0.05, blue: 0.16, alpha: 0.90)
         bg.strokeColor = .clear
-        bg.position    = CGPoint(x: cx, y: cy)
+        bg.position = CGPoint(x: cx, y: cy)
         overlay.addChild(bg)
 
-        // Card layout constants — all positions relative to card centre (cx, cy)
-        let cardW: CGFloat = min(300, size.width * 0.82)
-        // Height grows with button count: base 140 (title+score+coins+divider) + 62 per button + 36 bottom pad
-        let adButtonCount  = (canRevive ? 1 : 0) + (canDoubleCoins ? 1 : 0)
-        let totalButtons   = adButtonCount + 2   // + Play Again + Main Menu
-        let cardH: CGFloat = 140 + CGFloat(totalButtons) * 62 + 36
-        let cardCY = cy   // card vertically centred on screen
+        let adButtonCount = (canRevive ? 1 : 0) + (canDoubleCoins ? 1 : 0)
+        let totalButtons = adButtonCount + 2
+        let cardW: CGFloat = min(320, size.width * 0.84)
+        let cardH: CGFloat = 154 + CGFloat(totalButtons) * 62 + 30
+        let cardCY = cy
 
-        // Card glow ring (outside the card for depth)
-        let glowRing = SKShapeNode(rectOf: CGSize(width: cardW + 12, height: cardH + 12), cornerRadius: 26)
-        glowRing.fillColor   = .clear
-        glowRing.strokeColor = isExpert
-            ? SKColor(red: 1.0, green: 0.45, blue: 0.20, alpha: 0.35)
-            : SKColor(red: 0.35, green: 0.78, blue: 0.92, alpha: 0.35)
-        glowRing.lineWidth   = 2
-        glowRing.glowWidth   = 14
-        glowRing.position    = CGPoint(x: cx, y: cardCY)
+        let ambientOne = SKShapeNode(circleOfRadius: max(cardW, cardH) * 0.48)
+        ambientOne.fillColor = accentColor.withAlphaComponent(0.08)
+        ambientOne.strokeColor = .clear
+        ambientOne.position = CGPoint(x: cx - cardW * 0.35, y: cardCY + cardH * 0.28)
+        overlay.addChild(ambientOne)
+
+        let ambientTwo = SKShapeNode(circleOfRadius: max(cardW, cardH) * 0.40)
+        ambientTwo.fillColor = secondaryAccent.withAlphaComponent(0.06)
+        ambientTwo.strokeColor = .clear
+        ambientTwo.position = CGPoint(x: cx + cardW * 0.40, y: cardCY - cardH * 0.18)
+        overlay.addChild(ambientTwo)
+
+        let glowRing = SKShapeNode(rectOf: CGSize(width: cardW + 14, height: cardH + 14), cornerRadius: 28)
+        glowRing.fillColor = .clear
+        glowRing.strokeColor = accentColor.withAlphaComponent(0.42)
+        glowRing.lineWidth = 2
+        glowRing.glowWidth = 18
+        glowRing.position = CGPoint(x: cx, y: cardCY)
         overlay.addChild(glowRing)
 
-        // Main card
-        let card = SKShapeNode(rectOf: CGSize(width: cardW, height: cardH), cornerRadius: 22)
-        card.fillColor   = SKColor(red: 0.12, green: 0.16, blue: 0.28, alpha: 0.97)
-        card.strokeColor = isExpert
-            ? SKColor(red: 1.0, green: 0.60, blue: 0.20, alpha: 0.30)
-            : SKColor(red: 0.40, green: 0.82, blue: 0.75, alpha: 0.30)
-        card.lineWidth   = 1.5
-        card.position    = CGPoint(x: cx, y: cardCY)
+        let outerRing = SKShapeNode(rectOf: CGSize(width: cardW + 20, height: cardH + 20), cornerRadius: 30)
+        outerRing.fillColor = .clear
+        outerRing.strokeColor = SKColor(white: 1.0, alpha: 0.08)
+        outerRing.lineWidth = 1
+        outerRing.position = CGPoint(x: cx, y: cardCY)
+        overlay.addChild(outerRing)
+
+        let card = SKShapeNode(rectOf: CGSize(width: cardW, height: cardH), cornerRadius: 24)
+        card.fillColor = panelFill
+        card.strokeColor = panelStroke
+        card.lineWidth = 1.8
+        card.position = CGPoint(x: cx, y: cardCY)
         overlay.addChild(card)
 
-        // Title
-        let titleLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        titleLabel.text                    = title
-        titleLabel.fontSize                = 34
-        titleLabel.fontColor               = .white
+        let innerBorder = SKShapeNode(rectOf: CGSize(width: cardW - 10, height: cardH - 10), cornerRadius: 20)
+        innerBorder.fillColor = .clear
+        innerBorder.strokeColor = SKColor(white: 1.0, alpha: 0.07)
+        innerBorder.lineWidth = 1
+        innerBorder.position = CGPoint(x: cx, y: cardCY)
+        overlay.addChild(innerBorder)
+
+        let titleLabel = SKLabelNode(fontNamed: roundedFont)
+        titleLabel.text = title
+        titleLabel.fontSize = 34
+        titleLabel.fontColor = primaryTextColor
         titleLabel.horizontalAlignmentMode = .center
-        titleLabel.verticalAlignmentMode   = .center
-        titleLabel.position                = CGPoint(x: cx, y: cardCY + cardH / 2 - 46)
+        titleLabel.verticalAlignmentMode = .center
+        titleLabel.position = CGPoint(x: cx, y: cardCY + cardH / 2 - 48)
         overlay.addChild(titleLabel)
 
-        // Score display
-        let scoreLine = SKLabelNode(fontNamed: "Arial-BoldMT")
-        scoreLine.text                    = "Score  \(score)"
-        scoreLine.fontSize                = 28
-        scoreLine.fontColor               = isExpert
-            ? SKColor(red: 1.0, green: 0.72, blue: 0.35, alpha: 1.0)
-            : SKColor(red: 0.45, green: 0.95, blue: 0.85, alpha: 1.0)
+        let scoreLine = SKLabelNode(fontNamed: roundedFont)
+        scoreLine.text = "Score \(score)"
+        scoreLine.fontSize = 29
+        scoreLine.fontColor = isExpert
+            ? SKColor(red: 1.0, green: 0.92, blue: 0.40, alpha: 1.0)
+            : secondaryAccent
         scoreLine.horizontalAlignmentMode = .center
-        scoreLine.verticalAlignmentMode   = .center
-        scoreLine.position                = CGPoint(x: cx, y: cardCY + cardH / 2 - 96)
+        scoreLine.verticalAlignmentMode = .center
+        scoreLine.position = CGPoint(x: cx, y: cardCY + cardH / 2 - 98)
         overlay.addChild(scoreLine)
 
-        // Divider line
         let divPath = CGMutablePath()
-        divPath.move(to: CGPoint(x: cx - cardW * 0.36, y: cardCY + cardH / 2 - 120))
-        divPath.addLine(to: CGPoint(x: cx + cardW * 0.36, y: cardCY + cardH / 2 - 120))
+        divPath.move(to: CGPoint(x: cx - cardW * 0.36, y: cardCY + cardH / 2 - 123))
+        divPath.addLine(to: CGPoint(x: cx + cardW * 0.36, y: cardCY + cardH / 2 - 123))
         let div = SKShapeNode(path: divPath)
-        div.strokeColor = SKColor(white: 1.0, alpha: 0.12)
-        div.lineWidth   = 1
+        div.strokeColor = SKColor(white: 1.0, alpha: 0.14)
+        div.lineWidth = 1
         overlay.addChild(div)
 
-        // Coins earned this run
-        let coinsLabel = SKLabelNode(fontNamed: "Arial-BoldMT")
-        coinsLabel.name                    = "coinsEarnedLabel"
-        coinsLabel.text                    = "🪙 +\(PlayerEconomy.shared.sessionCoins) coins"
-        coinsLabel.fontSize                = 18
-        coinsLabel.fontColor               = SKColor(red: 1.0, green: 0.82, blue: 0.20, alpha: 0.90)
+        let coinsLabel = SKLabelNode(fontNamed: roundedFont)
+        coinsLabel.name = "coinsEarnedLabel"
+        coinsLabel.text = "🪙 +\(PlayerEconomy.shared.sessionCoins) coins"
+        coinsLabel.fontSize = 18
+        coinsLabel.fontColor = SKColor(red: 1.0, green: 0.90, blue: 0.30, alpha: 0.95)
         coinsLabel.horizontalAlignmentMode = .center
-        coinsLabel.verticalAlignmentMode   = .center
-        coinsLabel.position                = CGPoint(x: cx, y: cardCY + cardH / 2 - 138)
+        coinsLabel.verticalAlignmentMode = .center
+        coinsLabel.position = CGPoint(x: cx, y: cardCY + cardH / 2 - 142)
         overlay.addChild(coinsLabel)
 
-        // Button Y positions (inside card, below score/divider/coins)
         let buttonSpacing: CGFloat = 62
-        let firstBtnY = cardCY - cardH / 2 + 36 + CGFloat(totalButtons - 1) * buttonSpacing
+        let firstBtnY = cardCY - cardH / 2 + 42 + CGFloat(totalButtons - 1) * buttonSpacing
+        let buttonWidth = cardW - 52
 
-        // Helper to build a pill button
-        func makeButton(label: String, fillColor: SKColor, strokeColor: SKColor,
-                        glowW: CGFloat, yPos: CGFloat, name: String) {
-            let btnBg = SKShapeNode(rectOf: CGSize(width: cardW - 56, height: 50), cornerRadius: 14)
-            btnBg.fillColor   = fillColor
+        func makeButton(
+            label: String,
+            fillColor: SKColor,
+            strokeColor: SKColor,
+            glowW: CGFloat,
+            yPos: CGFloat,
+            name: String,
+            textColor: SKColor = .white
+        ) {
+            let btnBg = SKShapeNode(rectOf: CGSize(width: buttonWidth, height: 50), cornerRadius: 15)
+            btnBg.fillColor = fillColor
             btnBg.strokeColor = strokeColor
-            btnBg.lineWidth   = 1.5
-            btnBg.glowWidth   = glowW
-            btnBg.position    = CGPoint(x: cx, y: yPos)
-            btnBg.name        = name
+            btnBg.lineWidth = 1.6
+            btnBg.glowWidth = glowW
+            btnBg.position = CGPoint(x: cx, y: yPos)
+            btnBg.name = name
             overlay.addChild(btnBg)
 
-            // Specular highlight strip on button
-            let btnSheen = SKShapeNode(rectOf: CGSize(width: cardW - 80, height: 10), cornerRadius: 5)
-            btnSheen.fillColor   = SKColor(white: 1.0, alpha: 0.14)
+            let btnInner = SKShapeNode(rectOf: CGSize(width: buttonWidth - 8, height: 38), cornerRadius: 11)
+            btnInner.fillColor = SKColor(white: 1.0, alpha: 0.06)
+            btnInner.strokeColor = .clear
+            btnInner.position = CGPoint(x: cx, y: yPos)
+            btnInner.name = name
+            overlay.addChild(btnInner)
+
+            let btnSheen = SKShapeNode(rectOf: CGSize(width: buttonWidth - 26, height: 9), cornerRadius: 4.5)
+            btnSheen.fillColor = SKColor(white: 1.0, alpha: 0.16)
             btnSheen.strokeColor = .clear
-            btnSheen.position    = CGPoint(x: cx, y: yPos + 14)
-            btnSheen.zPosition   = 0.5
+            btnSheen.position = CGPoint(x: cx, y: yPos + 14)
+            btnSheen.zPosition = 0.5
+            btnSheen.name = name
             overlay.addChild(btnSheen)
 
-            let lbl = SKLabelNode(fontNamed: "Arial-BoldMT")
-            lbl.text                    = label
-            lbl.fontSize                = 19
-            lbl.fontColor               = .white
+            let lbl = SKLabelNode(fontNamed: roundedFont)
+            lbl.text = label
+            lbl.fontSize = 18
+            lbl.fontColor = textColor
             lbl.horizontalAlignmentMode = .center
-            lbl.verticalAlignmentMode   = .center
-            lbl.position                = CGPoint(x: cx, y: yPos)
-            lbl.name                    = name
+            lbl.verticalAlignmentMode = .center
+            lbl.position = CGPoint(x: cx, y: yPos)
+            lbl.name = name
             overlay.addChild(lbl)
         }
 
@@ -233,12 +268,13 @@ extension GameScene {
 
         if canRevive {
             makeButton(
-                label:       "📺 Watch Ad → Revive",
-                fillColor:   SKColor(red: 0.90, green: 0.58, blue: 0.0, alpha: 1.0),
-                strokeColor: SKColor(red: 1.0, green: 0.85, blue: 0.25, alpha: 0.70),
-                glowW:       10,
-                yPos:        nextBtnY,
-                name:        "watchAdReviveButton"
+                label: "📺 Watch Ad → Revive",
+                fillColor: SKColor(red: 0.93, green: 0.72, blue: 0.16, alpha: 1.0),
+                strokeColor: SKColor(red: 1.0, green: 0.92, blue: 0.40, alpha: 0.72),
+                glowW: 8,
+                yPos: nextBtnY,
+                name: "watchAdReviveButton",
+                textColor: SKColor(red: 0.20, green: 0.16, blue: 0.04, alpha: 1.0)
             )
             buttonOrder.append("watchAdReviveButton")
             nextBtnY -= buttonSpacing
@@ -246,57 +282,63 @@ extension GameScene {
 
         if canDoubleCoins {
             makeButton(
-                label:       "📺 2× Coins",
-                fillColor:   SKColor(red: 0.15, green: 0.55, blue: 0.85, alpha: 1.0),
-                strokeColor: SKColor(red: 0.50, green: 0.85, blue: 1.0, alpha: 0.60),
-                glowW:       8,
-                yPos:        nextBtnY,
-                name:        "watchAdCoinsButton"
+                label: "📺 2× Coins",
+                fillColor: SKColor(red: 0.10, green: 0.36, blue: 0.54, alpha: 1.0),
+                strokeColor: SKColor(red: 0.24, green: 0.82, blue: 0.66, alpha: 0.62),
+                glowW: 6,
+                yPos: nextBtnY,
+                name: "watchAdCoinsButton"
             )
             buttonOrder.append("watchAdCoinsButton")
             nextBtnY -= buttonSpacing
         }
 
         makeButton(
-            label:       "Play Again",
-            fillColor:   SKColor(red: 0.18, green: 0.70, blue: 0.60, alpha: 1.0),
-            strokeColor: SKColor(white: 1.0, alpha: 0.22),
-            glowW:       6,
-            yPos:        nextBtnY,
-            name:        "restartButton"
+            label: "Play Again",
+            fillColor: SKColor(red: 0.24, green: 0.95, blue: 0.60, alpha: 1.0),
+            strokeColor: SKColor(red: 0.62, green: 1.0, blue: 0.82, alpha: 0.66),
+            glowW: 9,
+            yPos: nextBtnY,
+            name: "restartButton",
+            textColor: SKColor(red: 0.02, green: 0.22, blue: 0.14, alpha: 1.0)
         )
         buttonOrder.append("restartButton")
         nextBtnY -= buttonSpacing
 
         makeButton(
-            label:       "Main Menu",
-            fillColor:   SKColor(red: 0.18, green: 0.22, blue: 0.36, alpha: 0.95),
+            label: "Main Menu",
+            fillColor: SKColor(red: 0.03, green: 0.11, blue: 0.24, alpha: 0.92),
             strokeColor: SKColor(white: 1.0, alpha: 0.18),
-            glowW:       0,
-            yPos:        nextBtnY,
-            name:        "playAgainButton"
+            glowW: 0,
+            yPos: nextBtnY,
+            name: "playAgainButton"
         )
         buttonOrder.append("playAgainButton")
 
-        // Controller navigation
         gameOverButtonOrder = buttonOrder
         gameOverFocusedIndex = 0
 
         if connectedController != nil {
-            let hint = SKLabelNode(fontNamed: "Arial")
-            hint.text = "↕  Navigate   ·   A Confirm   ·   B Menu"
-            hint.fontSize = 11
-            hint.fontColor = SKColor(white: 1, alpha: 0.32)
+            let hint = SKLabelNode(fontNamed: roundedFont)
+            hint.text = "↕ Navigate   ·   A Confirm   ·   B Menu"
+            hint.fontSize = 10.5
+            hint.fontColor = SKColor(white: 1.0, alpha: 0.34)
             hint.horizontalAlignmentMode = .center
-            hint.verticalAlignmentMode   = .center
+            hint.verticalAlignmentMode = .center
             hint.position = CGPoint(x: cx, y: cardCY - cardH / 2 + 20)
             overlay.addChild(hint)
         }
 
         overlay.alpha = 0
+        overlay.setScale(0.965)
         addChild(overlay)
         gameOverOverlay = overlay
-        overlay.run(SKAction.fadeIn(withDuration: 0.35))
+        overlay.run(
+            SKAction.group([
+                SKAction.fadeIn(withDuration: 0.24),
+                SKAction.scale(to: 1.0, duration: 0.24)
+            ])
+        )
         if connectedController != nil { applyGameOverFocusHighlight() }
     }
 
@@ -334,7 +376,10 @@ extension GameScene {
     func confirmGameOverSelection() {
         guard isGameOver, !gameOverButtonOrder.isEmpty else { return }
         switch gameOverButtonOrder[gameOverFocusedIndex] {
-        case "reviveButton":    revivePlayer()
+        case "watchAdReviveButton", "reviveButton":
+            revivePlayer()
+        case "watchAdCoinsButton":
+            handleWatchAdDoubleCoins()
         case "restartButton":   GameCenterManager.shared.submitScore(score); restartGame()
         case "playAgainButton": GameCenterManager.shared.submitScore(score); shutdown(); onGameOver?(score)
         default: break
