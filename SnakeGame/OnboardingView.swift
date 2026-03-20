@@ -280,12 +280,50 @@ private struct WelcomePage: View {
 
 // MARK: - Controls Page
 
+private enum ControlsTutorialStage: Int, CaseIterable {
+    case move
+    case eatGrow
+    case boost
+    case dodge
+    case enjoy
+
+    var title: String {
+        switch self {
+        case .move: return "Move Your Snake"
+        case .eatGrow: return "Eat and Grow"
+        case .boost: return "Use Boost"
+        case .dodge: return "Dodge Rivals"
+        case .enjoy: return "Enjoy the Arena"
+        }
+    }
+
+    var instruction: String {
+        switch self {
+        case .move:
+            return "Drag the joystick and keep moving to learn steering."
+        case .eatGrow:
+            return "Collect consumables to increase score and body length."
+        case .boost:
+            return "Hold boost while moving to sprint and drain energy."
+        case .dodge:
+            return "Get close to the rival snake, then pull away safely."
+        case .enjoy:
+            return "Keep moving smoothly for a moment. Then continue."
+        }
+    }
+
+}
+
 private struct ControlsPage: View {
     @Binding var currentStep: Int
     let metrics: OnboardingLayoutMetrics
     let isActive: Bool
     @State private var joystickInput: CGSize = .zero
     @State private var boostHeld: Bool = false
+    @State private var tutorialStage: ControlsTutorialStage = .move
+    @State private var tutorialProgress: CGFloat = 0
+    @State private var tutorialCompleted: Bool = false
+    @State private var tutorialLength: Int = 1
 
     var body: some View {
         Group {
@@ -322,23 +360,70 @@ private struct ControlsPage: View {
 
     private var titleBlock: some View {
         VStack(spacing: metrics.textGap) {
-            Text("CONTROLS")
+            Text("CONTROLS TRAINING")
                 .font(.system(size: metrics.pageTitleSize, weight: .black, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.95))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            Text("Drag joystick to steer. Hold boost to sprint.")
+
+            Text(tutorialStage.title)
                 .font(.system(size: metrics.subtitleSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color(red: 1.0, green: 0.92, blue: 0.40).opacity(0.88))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+
+            Text(tutorialCompleted ? "Training complete. Continue to the next onboarding page." : tutorialStage.instruction)
+                .font(.system(size: metrics.tinyLabelSize + 1, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+
         }
         .frame(maxWidth: .infinity)
     }
 
     private var previewPanel: some View {
-        ControlsTrainingMiniGame(joystickInput: $joystickInput, boostHeld: $boostHeld, metrics: metrics)
-            .frame(minHeight: metrics.previewHeight)
+        VStack(spacing: max(6, metrics.textGap * 0.9)) {
+            trainingIndicator
+
+            ControlsTrainingMiniGame(
+                joystickInput: $joystickInput,
+                boostHeld: $boostHeld,
+                tutorialStage: $tutorialStage,
+                tutorialProgress: $tutorialProgress,
+                tutorialCompleted: $tutorialCompleted,
+                tutorialLength: $tutorialLength,
+                metrics: metrics
+            )
+                .frame(minHeight: metrics.previewHeight)
+        }
+    }
+
+    private var trainingIndicator: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Step \(tutorialStage.rawValue + 1) \(tutorialStage.title). Len \(tutorialLength)")
+                    .font(.system(size: metrics.tinyLabelSize, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.66))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 0)
+                Text("\(Int((tutorialCompleted ? 1 : tutorialProgress) * 100))%")
+                    .font(.system(size: metrics.tinyLabelSize, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(red: 0.28, green: 0.95, blue: 0.64))
+            }
+
+            Capsule()
+                .fill(Color.white.opacity(0.15))
+                .frame(height: 6)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(Color(red: 0.28, green: 0.95, blue: 0.64))
+                        .frame(maxWidth: .infinity)
+                        .scaleEffect(x: tutorialCompleted ? 1 : max(0.02, tutorialProgress), y: 1, anchor: .leading)
+                }
+        }
+        .padding(.horizontal, 8)
     }
 
     private var trainingControls: some View {
@@ -353,10 +438,14 @@ private struct ControlsPage: View {
             .frame(maxWidth: .infinity)
 
             VStack(spacing: metrics.textGap) {
-                TrainingBoostButton(isHeld: $boostHeld, metrics: metrics)
+                TrainingBoostButton(
+                    isHeld: $boostHeld,
+                    metrics: metrics,
+                    isEnabled: tutorialStage.rawValue >= ControlsTutorialStage.boost.rawValue
+                )
                 Text("BOOST")
                     .font(.system(size: metrics.sectionLabelSize, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color(red: 1.0, green: 0.90, blue: 0.25))
+                    .foregroundStyle(Color(red: 1.0, green: 0.90, blue: 0.25).opacity(tutorialStage.rawValue >= ControlsTutorialStage.boost.rawValue ? 1 : 0.45))
                     .kerning(2)
             }
             .frame(maxWidth: .infinity)
@@ -366,7 +455,12 @@ private struct ControlsPage: View {
 
     private var ctaCluster: some View {
         VStack(spacing: metrics.textGap) {
-            OnboardingPrimaryButton(label: "Next", isActive: isActive, showsChevron: true) {
+            OnboardingPrimaryButton(
+                label: tutorialCompleted ? "Next" : "Complete Training to Continue",
+                isActive: isActive,
+                showsChevron: tutorialCompleted,
+                isEnabled: tutorialCompleted
+            ) {
                 currentStep = 2
             }
 
@@ -734,6 +828,7 @@ private struct OnboardingPrimaryButton: View {
     let label: String
     let isActive: Bool
     var showsChevron: Bool = true
+    var isEnabled: Bool = true
     let action: () -> Void
 
     @State private var hasEntered: Bool = false
@@ -751,10 +846,10 @@ private struct OnboardingPrimaryButton: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 18, weight: .bold))
                         .offset(x: chevronShifted ? 4 : 0)
-                        .opacity(0.92)
+                        .opacity(isEnabled ? 0.92 : 0.42)
                 }
             }
-            .foregroundStyle(Color(red: 0.01, green: 0.20, blue: 0.12))
+            .foregroundStyle(isEnabled ? Color(red: 0.01, green: 0.20, blue: 0.12) : Color.white.opacity(0.68))
             .frame(maxWidth: .infinity)
             .frame(minHeight: 56)
             .padding(.vertical, 2)
@@ -762,7 +857,9 @@ private struct OnboardingPrimaryButton: View {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(
                         LinearGradient(
-                            colors: [Color(red: 0.24, green: 0.95, blue: 0.60), Color(red: 0.16, green: 0.86, blue: 0.54)],
+                            colors: isEnabled
+                                ? [Color(red: 0.24, green: 0.95, blue: 0.60), Color(red: 0.16, green: 0.86, blue: 0.54)]
+                                : [Color.white.opacity(0.20), Color.white.opacity(0.12)],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
@@ -772,33 +869,45 @@ private struct OnboardingPrimaryButton: View {
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(Color.white.opacity(0.2), lineWidth: 0.8)
             )
-            .scaleEffect((hasEntered ? 1.0 : 0.96) * (pulsing && isActive ? 1.02 : 1.0))
+            .scaleEffect((hasEntered ? 1.0 : 0.96) * (pulsing && isActive && isEnabled ? 1.02 : 1.0))
             .opacity(hasEntered ? 1 : 0)
             .offset(y: hasEntered ? 0 : 18)
-            .shadow(color: Color(red: 0.24, green: 0.95, blue: 0.60).opacity(isActive ? (pulsing ? 0.46 : 0.34) : 0.2),
-                    radius: isActive ? (pulsing ? 16 : 10) : 6,
+            .shadow(color: (isEnabled ? Color(red: 0.24, green: 0.95, blue: 0.60) : Color.white).opacity(isActive ? (pulsing ? 0.46 : 0.34) : 0.2),
+                    radius: isActive ? (pulsing && isEnabled ? 16 : 10) : 6,
                     x: 0,
                     y: isActive ? 8 : 4)
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
         .accessibilityLabel(label)
         .accessibilityHint("Advances onboarding")
         .onAppear {
-            if isActive {
+            if isActive && isEnabled {
                 activateAnimations()
             } else {
                 hasEntered = true
             }
         }
         .onChange(of: isActive) { active in
-            if active {
+            if active && isEnabled {
                 activateAnimations()
             } else {
                 withAnimation(.easeOut(duration: 0.12)) {
                     pulsing = false
                     chevronShifted = false
                 }
-                hasEntered = false
+                hasEntered = true
+            }
+        }
+        .onChange(of: isEnabled) { enabled in
+            if enabled && isActive {
+                activateAnimations()
+            } else if !enabled {
+                withAnimation(.easeOut(duration: 0.12)) {
+                    pulsing = false
+                    chevronShifted = false
+                }
+                hasEntered = true
             }
         }
     }
@@ -813,7 +922,7 @@ private struct OnboardingPrimaryButton: View {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
-            guard isActive else { return }
+            guard isActive && isEnabled else { return }
             withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
                 pulsing = true
             }
@@ -871,10 +980,49 @@ private struct MiniSnakeHeadGlyph: View {
     }
 }
 
+private struct RivalSnakeHeadGlyph: View {
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(red: 0.88, green: 0.22, blue: 0.25))
+                .overlay(
+                    Circle()
+                        .stroke(Color(red: 1.0, green: 0.52, blue: 0.56).opacity(0.9), lineWidth: max(1.0, size * 0.08))
+                )
+                .shadow(color: Color(red: 1.0, green: 0.42, blue: 0.40).opacity(0.48), radius: size * 0.20)
+
+            HStack(spacing: size * 0.18) {
+                Circle()
+                    .fill(Color.white.opacity(0.94))
+                    .frame(width: size * 0.20, height: size * 0.20)
+                    .overlay(
+                        Circle()
+                            .fill(Color.black.opacity(0.84))
+                            .frame(width: size * 0.10, height: size * 0.10)
+                    )
+                Circle()
+                    .fill(Color.white.opacity(0.94))
+                    .frame(width: size * 0.20, height: size * 0.20)
+                    .overlay(
+                        Circle()
+                            .fill(Color.black.opacity(0.84))
+                            .frame(width: size * 0.10, height: size * 0.10)
+                    )
+            }
+            .offset(y: -size * 0.06)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 private struct TrainingJoystick: View {
     @Binding var input: CGSize
     let metrics: OnboardingLayoutMetrics
     @State private var thumbOffset: CGSize = .zero
+    @State private var hasInteracted: Bool = false
+    @State private var isGuidancePulsing: Bool = false
 
     private var scale: CGFloat {
         let base: CGFloat
@@ -895,6 +1043,20 @@ private struct TrainingJoystick: View {
 
     var body: some View {
         ZStack {
+            if !hasInteracted {
+                Circle()
+                    .stroke(Color(red: 0.32, green: 0.98, blue: 0.62).opacity(0.72), lineWidth: 2.2)
+                    .frame(width: baseRadius * 2.30, height: baseRadius * 2.30)
+                    .scaleEffect(isGuidancePulsing ? 1.08 : 0.94)
+                    .opacity(isGuidancePulsing ? 0.85 : 0.28)
+
+                Circle()
+                    .stroke(Color(red: 0.32, green: 0.98, blue: 0.62).opacity(0.42), lineWidth: 1.4)
+                    .frame(width: baseRadius * 2.58, height: baseRadius * 2.58)
+                    .scaleEffect(isGuidancePulsing ? 1.12 : 0.98)
+                    .opacity(isGuidancePulsing ? 0.45 : 0.14)
+            }
+
             Circle()
                 .fill(Color(red: 0.15, green: 0.30, blue: 0.20).opacity(0.18))
                 .frame(width: baseRadius * 2, height: baseRadius * 2)
@@ -910,12 +1072,38 @@ private struct TrainingJoystick: View {
                 .shadow(color: Color(red: 0.25, green: 0.80, blue: 0.40).opacity(0.5), radius: 6)
                 .frame(width: thumbRadius * 2, height: thumbRadius * 2)
                 .offset(thumbOffset)
+
+            if !hasInteracted {
+                VStack(spacing: 4) {
+                    Image(systemName: "hand.tap.fill")
+                        .font(.system(size: 12 * scale, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.95))
+                    Text("Touch & drag")
+                        .font(.system(size: 10 * scale, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.84))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.36))
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.20), lineWidth: 0.8)
+                        )
+                )
+                .offset(y: baseRadius + 22)
+                .allowsHitTesting(false)
+            }
         }
         .frame(width: baseRadius * 2, height: baseRadius * 2)
         .contentShape(Circle())
         .highPriorityGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
+                    if !hasInteracted {
+                        hasInteracted = true
+                    }
                     let localX = value.location.x - baseRadius
                     let localY = value.location.y - baseRadius
                     let dist = hypot(localX, localY)
@@ -941,6 +1129,12 @@ private struct TrainingJoystick: View {
                     }
                 }
         )
+        .onAppear {
+            guard !hasInteracted else { return }
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                isGuidancePulsing = true
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Joystick")
         .accessibilityHint("Drag in any direction to steer the training snake")
@@ -950,6 +1144,9 @@ private struct TrainingJoystick: View {
 private struct TrainingBoostButton: View {
     @Binding var isHeld: Bool
     let metrics: OnboardingLayoutMetrics
+    var isEnabled: Bool = true
+    @State private var hasInteracted: Bool = false
+    @State private var isGuidancePulsing: Bool = false
 
     private var scale: CGFloat {
         let base: CGFloat
@@ -969,33 +1166,89 @@ private struct TrainingBoostButton: View {
 
     var body: some View {
         ZStack {
+            if !hasInteracted && isEnabled {
+                Circle()
+                    .stroke(Color(red: 1.0, green: 0.92, blue: 0.20).opacity(0.86), lineWidth: 2.2)
+                    .frame(width: radius * 2.32, height: radius * 2.32)
+                    .scaleEffect(isGuidancePulsing ? 1.09 : 0.95)
+                    .opacity(isGuidancePulsing ? 0.82 : 0.26)
+
+                Circle()
+                    .stroke(Color(red: 1.0, green: 0.92, blue: 0.20).opacity(0.48), lineWidth: 1.4)
+                    .frame(width: radius * 2.60, height: radius * 2.60)
+                    .scaleEffect(isGuidancePulsing ? 1.13 : 0.99)
+                    .opacity(isGuidancePulsing ? 0.46 : 0.15)
+            }
+
             Circle()
-                .fill(isHeld ? Color(red: 1.0, green: 0.85, blue: 0.0).opacity(0.35) : Color.white.opacity(0.10))
+                .fill(isHeld && isEnabled ? Color(red: 1.0, green: 0.85, blue: 0.0).opacity(0.35) : Color.white.opacity(isEnabled ? 0.10 : 0.06))
                 .frame(width: radius * 2, height: radius * 2)
             Circle()
                 .stroke(
-                    isHeld
+                    isHeld && isEnabled
                     ? Color(red: 1.0, green: 0.90, blue: 0.0).opacity(0.85)
-                    : Color.white.opacity(0.40),
+                    : Color.white.opacity(isEnabled ? 0.40 : 0.20),
                     lineWidth: 1.5
                 )
                 .frame(width: radius * 2, height: radius * 2)
             Text("⚡")
                 .font(.system(size: 20 * scale))
+                .opacity(isEnabled ? 1 : 0.45)
+
+            if !hasInteracted && isEnabled {
+                Text("HOLD")
+                    .font(.system(size: 10 * scale, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.82))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.black.opacity(0.32))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+                            )
+                    )
+                    .offset(y: radius + 22)
+                    .allowsHitTesting(false)
+            }
         }
-        .shadow(color: Color(red: 1.0, green: 0.90, blue: 0.2).opacity(isHeld ? 0.45 : 0), radius: 12)
-        .scaleEffect(isHeld ? 1.12 : 1.0)
+        .shadow(color: Color(red: 1.0, green: 0.90, blue: 0.2).opacity(isHeld && isEnabled ? 0.45 : 0), radius: 12)
+        .scaleEffect(isHeld && isEnabled ? 1.12 : 1.0)
+        .opacity(isEnabled ? 1 : 0.66)
         .animation(.easeOut(duration: 0.09), value: isHeld)
         .contentShape(Circle())
         .highPriorityGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
+                    guard isEnabled else { return }
+                    if !hasInteracted {
+                        hasInteracted = true
+                    }
                     if !isHeld { isHeld = true }
                 }
                 .onEnded { _ in
                     isHeld = false
                 }
         )
+        .onAppear {
+            guard isEnabled, !hasInteracted else { return }
+            withAnimation(.easeInOut(duration: 0.92).repeatForever(autoreverses: true)) {
+                isGuidancePulsing = true
+            }
+        }
+        .onChange(of: isEnabled) { enabled in
+            if !enabled {
+                isHeld = false
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isGuidancePulsing = false
+                }
+            } else if !hasInteracted {
+                withAnimation(.easeInOut(duration: 0.92).repeatForever(autoreverses: true)) {
+                    isGuidancePulsing = true
+                }
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Boost")
         .accessibilityHint("Hold to speed up in the controls training arena")
@@ -1005,6 +1258,10 @@ private struct TrainingBoostButton: View {
 private struct ControlsTrainingMiniGame: View {
     @Binding var joystickInput: CGSize
     @Binding var boostHeld: Bool
+    @Binding var tutorialStage: ControlsTutorialStage
+    @Binding var tutorialProgress: CGFloat
+    @Binding var tutorialCompleted: Bool
+    @Binding var tutorialLength: Int
     let metrics: OnboardingLayoutMetrics
     @AppStorage("selectedSnakeColorIndex") private var selectedColorIndex: Int = 0
 
@@ -1016,8 +1273,18 @@ private struct ControlsTrainingMiniGame: View {
     @State private var regularFood: CGPoint = CGPoint(x: 0.72, y: 0.56)
     @State private var specialFood: CGPoint = CGPoint(x: 0.60, y: 0.26)
     @State private var trailFood: CGPoint = CGPoint(x: 0.35, y: 0.30)
+    @State private var deathFood: CGPoint = CGPoint(x: 0.80, y: 0.74)
+    @State private var rivalHead: CGPoint = CGPoint(x: 0.74, y: 0.30)
+    @State private var rivalTrail: [CGPoint] = []
+    @State private var rivalPhase: CGFloat = 0.65
     @State private var boostEnergy: CGFloat = 1
     @State private var score: Int = 0
+    @State private var movementDuration: CGFloat = 0
+    @State private var boostDuration: CGFloat = 0
+    @State private var dodgeExposure: Bool = false
+    @State private var dodgeSafeDuration: CGFloat = 0
+    @State private var enjoyDuration: CGFloat = 0
+    @State private var stageFoodEaten: Int = 0
 
     private let tick = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
     private let hazardZone = CGRect(x: 0.46, y: 0.34, width: 0.18, height: 0.18)
@@ -1026,34 +1293,56 @@ private struct ControlsTrainingMiniGame: View {
         snakeColorThemes[normalizedSnakeColorIndex(selectedColorIndex)]
     }
 
-    private var trainingHint: String {
-        let boosting = boostHeld && boostEnergy > 0.01
-        if boosting {
-            return "Boosting"
-        }
-        if abs(joystickInput.width) > 0.08 || abs(joystickInput.height) > 0.08 {
-            return "Steering"
-        }
-        return "Drag joystick to steer"
+    private var consumablesUnlocked: Bool {
+        tutorialStage.rawValue >= ControlsTutorialStage.eatGrow.rawValue
+    }
+
+    private var boostUnlocked: Bool {
+        tutorialStage.rawValue >= ControlsTutorialStage.boost.rawValue
+    }
+
+    private var dodgeUnlocked: Bool {
+        tutorialStage.rawValue >= ControlsTutorialStage.dodge.rawValue
     }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: metrics.cardCorner + 2)
-                .fill(Color(red: 0.01, green: 0.03, blue: 0.08).opacity(0.88))
+                .fill(Color(red: 0.01, green: 0.03, blue: 0.08).opacity(0.94))
                 .overlay(
                     RoundedRectangle(cornerRadius: metrics.cardCorner + 2)
-                        .stroke(Color(red: 0.20, green: 0.38, blue: 0.70).opacity(0.35), lineWidth: 1.5)
+                        .stroke(Color(red: 0.35, green: 0.84, blue: 1.0).opacity(0.30), lineWidth: 1.5)
                 )
 
             GeometryReader { geo in
                 ZStack {
+                    arenaBackdrop
+                    arenaGlowOrbs(in: geo.size)
                     GridOverlay()
+                    arenaDangerBoundary(in: geo.size)
 
-                    hazardView(in: geo.size)
-                    foodView(symbol: GameFoodPalette.regularEmojis[score % GameFoodPalette.regularEmojis.count], at: regularFood, in: geo.size)
-                    foodView(symbol: "⭐", at: specialFood, in: geo.size)
-                    trailPelletView(at: trailFood, in: geo.size)
+                    if dodgeUnlocked {
+                        hazardView(in: geo.size)
+                    }
+                    if consumablesUnlocked {
+                        foodView(symbol: GameFoodPalette.regularEmojis[score % GameFoodPalette.regularEmojis.count], at: regularFood, in: geo.size)
+                        foodView(symbol: "⭐", at: specialFood, in: geo.size)
+                        trailPelletView(at: trailFood, in: geo.size)
+                        deathFoodView(at: deathFood, in: geo.size)
+                    }
+
+                    if dodgeUnlocked {
+                        ForEach(Array(rivalTrail.prefix(14).enumerated()), id: \.offset) { idx, segment in
+                            Circle()
+                                .fill(Color(red: 1.0, green: 0.38, blue: 0.36).opacity(0.86 - Double(idx) * 0.05))
+                                .frame(width: max(4, metrics.foodIconSize + 2 - CGFloat(idx) * 0.45),
+                                       height: max(4, metrics.foodIconSize + 2 - CGFloat(idx) * 0.45))
+                                .position(point(from: segment, in: geo.size))
+                        }
+
+                        RivalSnakeHeadGlyph(size: metrics.foodIconSize + 10)
+                            .position(point(from: rivalHead, in: geo.size))
+                    }
 
                     ForEach(Array(trail.prefix(16).enumerated()), id: \.offset) { idx, segment in
                         Circle()
@@ -1070,49 +1359,21 @@ private struct ControlsTrainingMiniGame: View {
                                 .stroke(Color(red: 1.0, green: 0.90, blue: 0.2).opacity(boostHeld && boostEnergy > 0 ? 0.5 : 0), lineWidth: 1)
                                 .frame(width: metrics.foodIconSize + 20, height: metrics.foodIconSize + 20)
                         )
+
+                    arenaBorder(in: geo.size)
                 }
+                .clipShape(RoundedRectangle(cornerRadius: metrics.cardCorner))
                 .padding(8)
                 .onAppear {
                     boardSize = geo.size
                     lastTick = nil
+                    tutorialLength = trail.count + 1
                 }
                 .onChange(of: geo.size) { newValue in
                     boardSize = newValue
                 }
             }
             .padding(4)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("TRAINING")
-                        .font(.system(size: metrics.tinyLabelSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.white.opacity(0.52))
-                    Text("Score \(score)")
-                        .font(.system(size: metrics.tinyLabelSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.24, green: 0.95, blue: 0.60))
-                }
-
-                HStack(spacing: 6) {
-                    Text("⚡")
-                        .font(.system(size: metrics.tinyLabelSize + 2))
-                    Capsule()
-                        .fill(Color.white.opacity(0.16))
-                        .frame(width: 74, height: 6)
-                        .overlay(
-                            GeometryReader { proxy in
-                                Capsule()
-                                    .fill(Color(red: 1.0, green: 0.90, blue: 0.2))
-                                    .frame(width: proxy.size.width * boostEnergy, height: proxy.size.height)
-                            }
-                        )
-                    Text(trainingHint)
-                        .font(.system(size: metrics.tinyLabelSize, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color.white.opacity(0.60))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
-            }
-            .padding(10)
         }
         .onReceive(tick) { now in
             step(at: now)
@@ -1121,6 +1382,8 @@ private struct ControlsTrainingMiniGame: View {
             lastTick = nil
             boostHeld = false
             joystickInput = .zero
+            rivalTrail.removeAll(keepingCapacity: false)
+            tutorialLength = 1
         }
     }
 
@@ -1137,7 +1400,7 @@ private struct ControlsTrainingMiniGame: View {
             snakeDirection = CGVector(dx: inputVector.dx / inputMagnitude, dy: inputVector.dy / inputMagnitude)
         }
 
-        let canBoost = boostHeld && boostEnergy > 0.01
+        let canBoost = boostUnlocked && boostHeld && boostEnergy > 0.01
         let speed: CGFloat = canBoost ? 0.56 : 0.36
         var newHead = CGPoint(
             x: snakeHead.x + snakeDirection.dx * speed * dt,
@@ -1146,13 +1409,16 @@ private struct ControlsTrainingMiniGame: View {
 
         let edgeMin: CGFloat = 0.06
         let edgeMax: CGFloat = 0.94
+        var hitArenaBoundary = false
         newHead.x = min(max(newHead.x, edgeMin), edgeMax)
         newHead.y = min(max(newHead.y, edgeMin), edgeMax)
         if newHead.x == edgeMin || newHead.x == edgeMax {
             snakeDirection.dx *= -1
+            hitArenaBoundary = true
         }
         if newHead.y == edgeMin || newHead.y == edgeMax {
             snakeDirection.dy *= -1
+            hitArenaBoundary = true
         }
 
         trail.insert(snakeHead, at: 0)
@@ -1161,28 +1427,71 @@ private struct ControlsTrainingMiniGame: View {
             trail.removeLast(trail.count - maxTrail)
         }
 
-        if distance(newHead, regularFood) < 0.06 {
-            score += 1
-            regularFood = randomArenaPoint(excluding: [newHead, specialFood, trailFood])
-            boostEnergy = min(1, boostEnergy + 0.10)
+        if dodgeUnlocked {
+            rivalTrail.insert(rivalHead, at: 0)
+            if rivalTrail.count > 12 {
+                rivalTrail.removeLast(rivalTrail.count - 12)
+            }
+
+            rivalPhase += dt * (canBoost ? 1.45 : 1.20)
+            rivalHead = CGPoint(
+                x: min(max(0.50 + 0.30 * cos(rivalPhase), edgeMin + 0.01), edgeMax - 0.01),
+                y: min(max(0.50 + 0.24 * sin(rivalPhase * 0.86 + 0.6), edgeMin + 0.01), edgeMax - 0.01)
+            )
         }
 
-        if distance(newHead, specialFood) < 0.065 {
-            score += 3
-            specialFood = randomArenaPoint(excluding: [newHead, regularFood, trailFood])
-            boostEnergy = min(1, boostEnergy + 0.20)
+        if consumablesUnlocked {
+            if distance(newHead, regularFood) < 0.06 {
+                score += 1
+                stageFoodEaten += 1
+                regularFood = randomArenaPoint(excluding: [newHead, specialFood, trailFood, deathFood, rivalHead])
+                boostEnergy = min(1, boostEnergy + 0.10)
+            }
+
+            if distance(newHead, specialFood) < 0.065 {
+                score += 3
+                stageFoodEaten += 1
+                specialFood = randomArenaPoint(excluding: [newHead, regularFood, trailFood, deathFood, rivalHead])
+                boostEnergy = min(1, boostEnergy + 0.20)
+            }
+
+            if distance(newHead, trailFood) < 0.055 {
+                score += 1
+                stageFoodEaten += 1
+                trailFood = randomArenaPoint(excluding: [newHead, regularFood, specialFood, deathFood, rivalHead])
+            }
+
+            if distance(newHead, deathFood) < 0.060 {
+                score += 2
+                stageFoodEaten += 1
+                deathFood = randomArenaPoint(excluding: [newHead, regularFood, specialFood, trailFood, rivalHead])
+            }
         }
 
-        if distance(newHead, trailFood) < 0.055 {
-            score += 1
-            trailFood = randomArenaPoint(excluding: [newHead, regularFood, specialFood])
-        }
+        let rivalDistance = distance(newHead, rivalHead)
+        let collidedWithRival = dodgeUnlocked && rivalDistance < 0.06
 
-        if hazardZone.contains(newHead) {
+        if dodgeUnlocked && hazardZone.contains(newHead) {
             score = max(0, score - 2)
             trail = Array(trail.prefix(max(4, trail.count / 2)))
             newHead = CGPoint(x: 0.18, y: 0.60)
             snakeDirection = CGVector(dx: 1, dy: 0)
+            dodgeExposure = false
+            dodgeSafeDuration = 0
+        }
+
+        if collidedWithRival {
+            score = max(0, score - 3)
+            trail = Array(trail.prefix(max(4, trail.count / 2)))
+            newHead = CGPoint(x: 0.20, y: 0.62)
+            snakeDirection = CGVector(dx: 1, dy: 0)
+            dodgeExposure = false
+            dodgeSafeDuration = 0
+        }
+
+        if hitArenaBoundary {
+            score = max(0, score - 1)
+            trail = Array(trail.prefix(max(5, trail.count - 3)))
         }
 
         if canBoost {
@@ -1191,6 +1500,14 @@ private struct ControlsTrainingMiniGame: View {
             boostEnergy = min(1, boostEnergy + dt * 0.24)
         }
 
+        updateTutorialProgress(
+            dt: dt,
+            inputMagnitude: inputMagnitude,
+            canBoost: canBoost,
+            rivalDistance: rivalDistance
+        )
+
+        tutorialLength = trail.count + 1
         snakeHead = newHead
     }
 
@@ -1213,6 +1530,185 @@ private struct ControlsTrainingMiniGame: View {
         hypot(lhs.x - rhs.x, lhs.y - rhs.y)
     }
 
+    private func updateTutorialProgress(
+        dt: CGFloat,
+        inputMagnitude: CGFloat,
+        canBoost: Bool,
+        rivalDistance: CGFloat
+    ) {
+        if tutorialCompleted {
+            tutorialProgress = 1
+            return
+        }
+
+        switch tutorialStage {
+        case .move:
+            if inputMagnitude > 0.18 {
+                movementDuration += dt
+            } else {
+                movementDuration = max(0, movementDuration - dt * 0.4)
+            }
+            tutorialProgress = min(1, movementDuration / 1.4)
+            if tutorialProgress >= 1 {
+                advanceTutorial(to: .eatGrow)
+            }
+
+        case .eatGrow:
+            tutorialProgress = min(1, CGFloat(stageFoodEaten) / 3.0)
+            if stageFoodEaten >= 3 {
+                advanceTutorial(to: .boost)
+            }
+
+        case .boost:
+            if canBoost {
+                boostDuration += dt
+            } else {
+                boostDuration = max(0, boostDuration - dt * 0.3)
+            }
+            tutorialProgress = min(1, boostDuration / 1.1)
+            if tutorialProgress >= 1 {
+                advanceTutorial(to: .dodge)
+            }
+
+        case .dodge:
+            if rivalDistance < 0.18 {
+                dodgeExposure = true
+                dodgeSafeDuration = 0
+            } else if dodgeExposure {
+                dodgeSafeDuration += dt
+            }
+            tutorialProgress = dodgeExposure ? min(1, dodgeSafeDuration / 1.2) : 0
+            if tutorialProgress >= 1 {
+                advanceTutorial(to: .enjoy)
+            }
+
+        case .enjoy:
+            let engaged = inputMagnitude > 0.12 || canBoost
+            if engaged {
+                enjoyDuration += dt
+            } else {
+                enjoyDuration = max(0, enjoyDuration - dt * 0.35)
+            }
+            tutorialProgress = min(1, enjoyDuration / 2.0)
+            if tutorialProgress >= 1 {
+                tutorialProgress = 1
+                tutorialCompleted = true
+            }
+        }
+    }
+
+    private func advanceTutorial(to stage: ControlsTutorialStage) {
+        tutorialStage = stage
+        tutorialProgress = 0
+        movementDuration = 0
+        boostDuration = 0
+        dodgeExposure = false
+        dodgeSafeDuration = 0
+        enjoyDuration = 0
+        stageFoodEaten = 0
+        if stage.rawValue < ControlsTutorialStage.boost.rawValue {
+            boostHeld = false
+        }
+    }
+
+    private var arenaBackdrop: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.05, green: 0.14, blue: 0.20),
+                    Color(red: 0.03, green: 0.12, blue: 0.15),
+                    Color(red: 0.02, green: 0.08, blue: 0.13)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            LinearGradient(
+                colors: [Color.clear, Color(red: 0.34, green: 0.86, blue: 1.0).opacity(0.08), Color.clear],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func arenaGlowOrbs(in size: CGSize) -> some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color(red: 0.35, green: 0.80, blue: 0.96).opacity(0.16), Color.clear],
+                        center: .center,
+                        startRadius: 6,
+                        endRadius: size.width * 0.29
+                    )
+                )
+                .frame(width: size.width * 0.58, height: size.width * 0.58)
+                .position(x: size.width * 0.20, y: size.height * 0.22)
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color(red: 0.35, green: 0.80, blue: 0.96).opacity(0.16), Color.clear],
+                        center: .center,
+                        startRadius: 6,
+                        endRadius: size.width * 0.25
+                    )
+                )
+                .frame(width: size.width * 0.50, height: size.width * 0.50)
+                .position(x: size.width * 0.76, y: size.height * 0.36)
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color(red: 0.35, green: 0.80, blue: 0.96).opacity(0.16), Color.clear],
+                        center: .center,
+                        startRadius: 6,
+                        endRadius: size.width * 0.27
+                    )
+                )
+                .frame(width: size.width * 0.54, height: size.width * 0.54)
+                .position(x: size.width * 0.52, y: size.height * 0.78)
+        }
+    }
+
+    private func arenaRect(in size: CGSize) -> CGRect {
+        CGRect(
+            x: size.width * 0.06,
+            y: size.height * 0.06,
+            width: size.width * 0.88,
+            height: size.height * 0.88
+        )
+    }
+
+    @ViewBuilder
+    private func arenaDangerBoundary(in size: CGSize) -> some View {
+        let rect = arenaRect(in: size).insetBy(dx: size.width * 0.035, dy: size.height * 0.035)
+        RoundedRectangle(cornerRadius: 8)
+            .stroke(Color(red: 1.0, green: 0.46, blue: 0.42).opacity(0.22), lineWidth: 1.2)
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+    }
+
+    @ViewBuilder
+    private func arenaBorder(in size: CGSize) -> some View {
+        let rect = arenaRect(in: size)
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(red: 0.14, green: 0.88, blue: 1.0).opacity(0.30), lineWidth: 9)
+                .blur(radius: 2.5)
+
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(red: 0.20, green: 0.92, blue: 1.0).opacity(0.62), lineWidth: 2.2)
+
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(red: 0.55, green: 0.97, blue: 1.0).opacity(0.86), lineWidth: 1.0)
+        }
+        .frame(width: rect.width, height: rect.height)
+        .position(x: rect.midX, y: rect.midY)
+        .allowsHitTesting(false)
+    }
+
     @ViewBuilder
     private func foodView(symbol: String, at normalized: CGPoint, in size: CGSize) -> some View {
         Text(symbol)
@@ -1230,19 +1726,48 @@ private struct ControlsTrainingMiniGame: View {
     }
 
     @ViewBuilder
-    private func hazardView(in size: CGSize) -> some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color(red: 1.0, green: 0.30, blue: 0.32).opacity(0.24))
+    private func deathFoodView(at normalized: CGPoint, in size: CGSize) -> some View {
+        MiniSnakeHeadGlyph(theme: theme, size: metrics.foodIconSize + 6)
+            .position(point(from: normalized, in: size))
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(red: 1.0, green: 0.55, blue: 0.58).opacity(0.72), lineWidth: 1)
+                Circle()
+                    .stroke(Color(red: 1.0, green: 0.48, blue: 0.50).opacity(0.68), lineWidth: 1.0)
+                    .frame(width: metrics.foodIconSize + 14, height: metrics.foodIconSize + 14)
+                    .position(point(from: normalized, in: size))
+            )
+    }
+
+    @ViewBuilder
+    private func hazardView(in size: CGSize) -> some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(Color(red: 0.22, green: 0.06, blue: 0.08).opacity(0.58))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color(red: 1.0, green: 0.55, blue: 0.58).opacity(0.72), lineWidth: 1.2)
             )
             .frame(width: hazardZone.width * size.width, height: hazardZone.height * size.height)
             .position(point(from: CGPoint(x: hazardZone.midX, y: hazardZone.midY), in: size))
             .overlay(
-                Text("WALL")
-                    .font(.system(size: metrics.tinyLabelSize, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(0.7))
+                ZStack {
+                    Image("spawn_hole")
+                        .resizable()
+                        .scaledToFit()
+                        .opacity(0.90)
+                        .frame(width: hazardZone.width * size.width * 0.72,
+                               height: hazardZone.height * size.height * 0.72)
+
+                    Text("DANGER")
+                        .font(.system(size: metrics.tinyLabelSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.80))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(Color.black.opacity(0.35))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                        )
+                        .offset(y: hazardZone.height * size.height * 0.30)
+                }
                     .position(point(from: CGPoint(x: hazardZone.midX, y: hazardZone.midY), in: size))
             )
     }
@@ -1255,6 +1780,7 @@ private struct GridOverlay: View {
             let height = proxy.size.height
             let shortestSide = min(width, height)
             let spacing = max(18, min(34, shortestSide / 10.5))
+            let majorSpacing = spacing * 3
 
             Path { path in
                 var x: CGFloat = 0
@@ -1271,6 +1797,36 @@ private struct GridOverlay: View {
                 }
             }
             .stroke(Color.white.opacity(0.05), lineWidth: 0.6)
+
+            Path { path in
+                var x: CGFloat = majorSpacing
+                while x < width {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: height))
+                    x += majorSpacing
+                }
+                var y: CGFloat = majorSpacing
+                while y < height {
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: width, y: y))
+                    y += majorSpacing
+                }
+            }
+            .stroke(Color(red: 0.34, green: 0.82, blue: 1.0).opacity(0.18), lineWidth: 1)
+
+            Path { path in
+                let dotRadius: CGFloat = 1.2
+                var x: CGFloat = spacing
+                while x < width {
+                    var y: CGFloat = spacing
+                    while y < height {
+                        path.addEllipse(in: CGRect(x: x - dotRadius, y: y - dotRadius, width: dotRadius * 2, height: dotRadius * 2))
+                        y += spacing
+                    }
+                    x += spacing
+                }
+            }
+            .fill(Color.white.opacity(0.09))
         }
         .allowsHitTesting(false)
     }
