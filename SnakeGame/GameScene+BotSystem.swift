@@ -651,15 +651,23 @@ extension GameScene {
         let softLimit = collisionRadius + bodySegmentRadius + 24
         var minClearance = CGFloat.greatestFiniteMagnitude
 
-        // Use plain CGPoint cache instead of SKNode .position (avoids ObjC runtime overhead).
-        // Bounding-box fast rejection skips ~90% of hypot() calls.
-        for pos in bodyPositionCache {
-            let dx = point.x - pos.x
-            let dy = point.y - pos.y
-            if abs(dx) > hardLimit || abs(dy) > hardLimit { continue }
-            let dist = hypot(dx, dy) - hardLimit
-            minClearance = min(minClearance, dist)
-            if dist < 0 { return (dist, true) }
+        // Spatial index lookup: only check bodyPositionCache entries in the 3×3 cell neighborhood.
+        // Cell size (30 pt) > hardLimit (25 pt), so 3×3 covers all possible collisions.
+        let probeCell = gridCell(for: point)
+        for dcx in -1...1 {
+            for dcy in -1...1 {
+                guard let indices = playerBodyCellIndex[GridCell(x: probeCell.x + dcx, y: probeCell.y + dcy)] else { continue }
+                for idx in indices {
+                    guard idx < bodyPositionCache.count else { continue }  // cache may shrink mid-frame
+                    let pos = bodyPositionCache[idx]
+                    let dx = point.x - pos.x
+                    let dy = point.y - pos.y
+                    if abs(dx) > hardLimit || abs(dy) > hardLimit { continue }
+                    let dist = hypot(dx, dy) - hardLimit
+                    minClearance = min(minClearance, dist)
+                    if dist < 0 { return (dist, true) }
+                }
+            }
         }
 
         for j in bots.indices where j != i && bots[j].isActive && !bots[j].isDead {
@@ -1478,25 +1486,41 @@ extension GameScene {
         let halfCount = max(1, bodyCount / 2)
         let boostGlowCount = max(2, bodyCount / 6)
         let botNeedsRotation = pattern == .cylinder || pattern == .armor || pattern == .leaf
+
+        // Viewport culling: skip SKNode position writes for off-screen bot segments.
+        // bodyPositionCache is always fully updated by fillArcPositions() above.
+        let camPos = cameraNode.position
+        let extents = cameraHalfExtents()
+        let cullHalfW = extents.halfW + 60
+        let cullHalfH = extents.halfH + 60
+
         for (segmentIndex, segment) in bots[index].body.enumerated() {
-            segment.position = bots[index].bodyPositionCache[segmentIndex]
-            if botNeedsRotation && segmentIndex > 0
-               && segmentIndex < bots[index].bodyPositionCache.count {
-                let prev = bots[index].bodyPositionCache[segmentIndex - 1]
-                let curr = bots[index].bodyPositionCache[segmentIndex]
-                let dx = prev.x - curr.x
-                let dy = prev.y - curr.y
-                if dx * dx + dy * dy > 0.01 {
-                    segment.zRotation = atan2(dy, dx) - (.pi / 2)
+            let pos = bots[index].bodyPositionCache[segmentIndex]
+            let inViewport = abs(pos.x - camPos.x) < cullHalfW
+                          && abs(pos.y - camPos.y) < cullHalfH
+            if inViewport {
+                segment.position = pos
+                if segment.isHidden { segment.isHidden = false }
+                if botNeedsRotation && segmentIndex > 0
+                   && segmentIndex < bots[index].bodyPositionCache.count {
+                    let prev = bots[index].bodyPositionCache[segmentIndex - 1]
+                    let dx = prev.x - pos.x
+                    let dy = prev.y - pos.y
+                    if dx * dx + dy * dy > 0.01 {
+                        segment.zRotation = atan2(dy, dx) - (.pi / 2)
+                    }
                 }
+                let baseGlow: CGFloat = segmentIndex < halfCount ? leadingGlow : 0
+                let desiredGlow: CGFloat = (isBoosting && segmentIndex < boostGlowCount)
+                    ? max(baseGlow, 6)
+                    : baseGlow
+                // Guard SpriteKit glow write: setting glowWidth triggers an expensive re-render even
+                // when the value hasn't changed. Only write when the value actually differs.
+                if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
+            } else {
+                // Hide off-screen segments so stale positions don't show as ghost body parts.
+                if !segment.isHidden { segment.isHidden = true }
             }
-            let baseGlow: CGFloat = segmentIndex < halfCount ? leadingGlow : 0
-            let desiredGlow: CGFloat = (isBoosting && segmentIndex < boostGlowCount)
-                ? max(baseGlow, 6)
-                : baseGlow
-            // Guard SpriteKit glow write: setting glowWidth triggers an expensive re-render even
-            // when the value hasn't changed. Only write when the value actually differs.
-            if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
         }
     }
 
@@ -1600,8 +1624,13 @@ extension GameScene {
                 bots[i].trailFoodTimer += dt
                 let trailInterval = botTrailInterval * 0.65
                 if bots[i].isBoosting, bots[i].trailFoodTimer >= trailInterval {
-                    if let tailSeg = bots[i].body.last {
-                        spawnTrailFood(at: tailSeg.position,
+                    // Use bodyPositionCache (always current) — SKNode .position is stale for
+                    // off-screen segments due to viewport culling. Spawn near the head (index 6)
+                    // so the trail appears in the active play area, not ~7000px behind.
+                    let cache = bots[i].bodyPositionCache
+                    if !cache.isEmpty {
+                        let trailIdx = min(6, cache.count - 1)
+                        spawnTrailFood(at: cache[trailIdx],
                                        colorIndex: bots[i].colorIndex,
                                        patternIndex: bots[i].patternIndex)
                     }
@@ -1779,22 +1808,32 @@ extension GameScene {
 
     /// Offline: any active bot's head hitting the player's body kills that bot.
     func checkBotHeadsHitPlayerBody() {
-        
-        let interactionRadius = interactionRadiusForPlayerBody()
-        let interactionRadiusSq = interactionRadius * interactionRadius
         guard !bodyPositionCache.isEmpty else { return }
+        let combinedRadius = collisionRadius + bodySegmentRadius
+        let thresholdSq = combinedRadius * combinedRadius
         for i in 0..<bots.count {
             guard bots[i].isActive, !bots[i].isDead, bots[i].spawnTimer <= 0, let botHead = bots[i].head else { continue }
             if bots[i].ghostTimeLeft > 0 { continue }
-            let dx = snakeHead.position.x - botHead.position.x
-            let dy = snakeHead.position.y - botHead.position.y
-            guard dx * dx + dy * dy <= interactionRadiusSq else { continue }
-            if bodyOccupancyContains(botHead.position) && headCollidesWithPoints(
-                botHead.position,
-                points: bodyPositionCache,
-                combinedRadius: collisionRadius + bodySegmentRadius,
-                skip: 1
-            ) {
+            // Broad phase: occupancy set (O(9) cell checks).
+            guard bodyOccupancyContains(botHead.position) else { continue }
+            // Fine phase: spatial index lookup — only check segments in 3×3 cell neighborhood.
+            let probeCell = gridCell(for: botHead.position)
+            var hit = false
+            outerLoop: for dcx in -1...1 {
+                for dcy in -1...1 {
+                    guard let indices = playerBodyCellIndex[GridCell(x: probeCell.x + dcx, y: probeCell.y + dcy)] else { continue }
+                    for idx in indices {
+                        guard idx >= 1, idx < bodyPositionCache.count else { continue }  // skip seg 0; guard stale index
+                        let pos = bodyPositionCache[idx]
+                        let dx = botHead.position.x - pos.x
+                        let dy = botHead.position.y - pos.y
+                        if abs(dx) >= combinedRadius { continue }
+                        if abs(dy) >= combinedRadius { continue }
+                        if dx * dx + dy * dy < thresholdSq { hit = true; break outerLoop }
+                    }
+                }
+            }
+            if hit {
                 if bots[i].shieldCharges > 0 {
                     bots[i].shieldCharges -= 1
                 } else {

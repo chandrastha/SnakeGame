@@ -37,6 +37,7 @@ extension GameScene {
         }
         boostButtonNode?.position = boostButtonCenter
         boostButtonNode?.setScale(elementScale(for: .boostButton) * (isBoostHeld ? 1.15 : 1.0))
+        updateBoostMeterVisual()
 
         let si        = safeInsets
         let topInset  = si.top
@@ -98,6 +99,49 @@ extension GameScene {
                 y: cy + halfH - leaderArrowMarginTop() * controlScale
             )
         }
+    }
+
+    // MARK: - Boost Energy Meter Visual
+    /// Redraws the gold arc ring around the boost button to reflect boostEnergy (0–1).
+    /// Arc sweeps clockwise from 12 o'clock. Full = boost available for 12 s.
+    /// Only rebuilds the CGPath when energy changes by ≥ 0.005 (200-step resolution).
+    func updateBoostMeterVisual() {
+        guard let btn = boostButtonNode,
+              let arc = btn.childNode(withName: "boostMeterArc") as? SKShapeNode else { return }
+
+        // Casual mode: arc is never shown — boost is always available.
+        if gameMode != .challenge {
+            if !arc.isHidden { arc.isHidden = true }
+            return
+        }
+        if arc.isHidden { arc.isHidden = false }
+
+        // Quantise to 200 steps so path only rebuilds when visibly changed.
+        let quantised = (boostEnergy * 200).rounded() / 200
+        guard abs(quantised - lastBoostMeterEnergy) >= 0.005 else { return }
+        lastBoostMeterEnergy = quantised
+
+        // ── Arc path: clockwise from 12 o'clock (π/2) ───────────────────────
+        let arcRadius = boostButtonRadius + 6
+        let path = CGMutablePath()
+        if quantised > 0.005 {
+            let startAngle = CGFloat.pi / 2
+            let endAngle   = startAngle - quantised * 2 * .pi
+            path.addArc(center: .zero, radius: arcRadius,
+                        startAngle: startAngle, endAngle: endAngle, clockwise: true)
+        }
+        arc.path = path
+
+        // ── Green at ≥50% (boost available), yellow below 50% (charging) ───
+        let newColor: SKColor = quantised >= 0.50
+            ? SKColor(red: 0.10, green: 0.95, blue: 0.30, alpha: 1.0)   // green — ready
+            : SKColor(red: 1.00, green: 0.82, blue: 0.00, alpha: 1.0)   // yellow — charging
+        let newGlow:  CGFloat = isBoostHeld ? 12 : (quantised >= 0.50 ? 6 : 3)
+        let newWidth: CGFloat = isBoostHeld ? 5.0 : (quantised >= 0.50 ? 4.5 : 3.5)
+
+        if arc.strokeColor != newColor { arc.strokeColor = newColor }
+        if arc.glowWidth   != newGlow  { arc.glowWidth   = newGlow  }
+        if arc.lineWidth   != newWidth { arc.lineWidth   = newWidth  }
     }
 
 
@@ -835,7 +879,7 @@ extension GameScene {
             isPlayer: true
         )
 
-        for bot in bots where !bot.isDead {
+        for bot in bots where bot.isActive && !bot.isDead {
             if bot.score > best.score {
                 best = (name: bot.name, score: bot.score, position: bot.position, isPlayer: false)
             }

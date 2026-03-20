@@ -217,38 +217,19 @@ extension GameScene {
 
     // MARK: - Skin-Matched Food Node Builders
 
-    /// Returns (or creates) a cached SKTexture for trail food at the given color index.
-    /// Rendered once as a plain circle — pattern detail is indistinguishable at 5 pt effective radius.
-    private func trailFoodTexture(colorIndex: Int) -> SKTexture {
-        if let cached = trailFoodTextureCache[colorIndex] { return cached }
+    /// Trail food circle matching the snake's skin color.
+    /// SKShapeNode is used directly — SKView.texture(from:crop:) can silently return an
+    /// empty texture before the first GPU render pass, making sprite-based nodes invisible.
+    /// Radius 7 pt is visually distinct but smaller than regular food (foodRadius 12 pt).
+    func makeTrailFoodNode(colorIndex: Int, patternIndex: Int) -> SKNode {
         let idx   = colorIndex % snakeColorThemes.count
         let theme = snakeColorThemes[idx]
-        let r     = bodySegmentRadius          // 10 pt
-        let shape = SKShapeNode(circleOfRadius: r)
-        shape.fillColor   = theme.bodySKColor
-        shape.strokeColor = theme.bodyStrokeSKColor
-        shape.lineWidth   = 1.5
-        shape.glowWidth   = 2.0
-        let diameter = r * 2
-        let crop     = CGRect(x: -diameter, y: -diameter, width: diameter * 2, height: diameter * 2)
-        let texture  = (view as? SKView)?.texture(from: shape, crop: crop) ?? SKTexture()
-        trailFoodTextureCache[colorIndex] = texture
-        return texture
-    }
-
-    /// Pre-warm the trail food texture cache for all color themes.
-    /// Called once at game start so no allocations happen during gameplay.
-    func prewarmTrailFoodTextures() {
-        for i in 0..<snakeColorThemes.count { _ = trailFoodTexture(colorIndex: i) }
-    }
-
-    /// Tiny sprite matching the player/bot skin color. Uses a pre-rendered texture instead
-    /// of a nested SKShapeNode hierarchy — eliminates 1–5 CGPath allocs per spawn.
-    /// Effective radius ≈ 5 pt (scale 0.5 × bodySegmentRadius 10 pt).
-    func makeTrailFoodNode(colorIndex: Int, patternIndex: Int) -> SKNode {
-        let sprite = SKSpriteNode(texture: trailFoodTexture(colorIndex: colorIndex))
-        sprite.setScale(0.5)
-        return sprite
+        let node  = SKShapeNode(circleOfRadius: 7)
+        node.fillColor   = theme.bodySKColor
+        node.strokeColor = theme.bodyStrokeSKColor
+        node.lineWidth   = 1.5
+        node.glowWidth   = 4.0
+        return node
     }
 
     /// Body-segment circle matching a dead snake's skin, same visual size as regular food.
@@ -584,43 +565,60 @@ extension GameScene {
         let needsRotation = selectedSnakePattern == .cylinder
                          || selectedSnakePattern == .armor
                          || selectedSnakePattern == .leaf
-        for (index, segment) in bodySegments.enumerated() {
-            if index < bodyPositionCache.count {
-                segment.position = bodyPositionCache[index]
-            }
-            // Orient pill/leaf segments to face the direction of travel
-            if needsRotation && index > 0 && index < bodyPositionCache.count {
-                let prev = bodyPositionCache[index - 1]
-                let curr = bodyPositionCache[index]
-                let dx = prev.x - curr.x
-                let dy = prev.y - curr.y
-                if dx * dx + dy * dy > 0.01 {
-                    segment.zRotation = atan2(dy, dx) - (.pi / 2)
-                }
-            }
-            let progress = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
-            let scale = 1.0 - progress * 0.22
-            segment.setScale(scale)
-            segment.alpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
+        let isNeon = selectedSnakePattern == .neon
+        let boostBonus: CGFloat = isBoostHeld ? 4 : 0
 
-            // Glow gradient: bright leading quarter fades to nothing at the tail.
-            // Neon pattern keeps its full glow everywhere; boost adds extra.
-            let isNeon = selectedSnakePattern == .neon
-            let boostBonus: CGFloat = isBoostHeld ? 4 : 0
-            let baseGlow: CGFloat
-            if isNeon {
-                baseGlow = 10 + boostBonus
-            } else if index < max(1, count / 8) {
-                baseGlow = 6 + boostBonus       // first ~12%: bright rim
-            } else if index < max(1, count / 4) {
-                baseGlow = 3 + boostBonus * 0.5  // next ~12%: moderate rim
+        // Viewport bounds for culling SKNode writes (bodyPositionCache is always fully updated).
+        let camPos = cameraNode.position
+        let extents = cameraHalfExtents()
+        let cullHalfW = extents.halfW + 60
+        let cullHalfH = extents.halfH + 60
+
+        for (index, segment) in bodySegments.enumerated() {
+            let pos: CGPoint? = index < bodyPositionCache.count ? bodyPositionCache[index] : nil
+            let inViewport = pos.map {
+                abs($0.x - camPos.x) < cullHalfW && abs($0.y - camPos.y) < cullHalfH
+            } ?? false
+
+            if inViewport, let p = pos {
+                // Write position and unhide before any rendering work.
+                segment.position = p
+                if segment.isHidden { segment.isHidden = false }
+                // Orient pill/leaf segments to face the direction of travel
+                if needsRotation && index > 0 {
+                    let prev = bodyPositionCache[index - 1]
+                    let dx = prev.x - p.x
+                    let dy = prev.y - p.y
+                    if dx * dx + dy * dy > 0.01 {
+                        segment.zRotation = atan2(dy, dx) - (.pi / 2)
+                    }
+                }
+
+                let progress = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
+                let scale = 1.0 - progress * 0.22
+                segment.setScale(scale)
+                segment.alpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
+
+                // Glow gradient: bright leading quarter fades to nothing at the tail.
+                // Neon pattern keeps its full glow everywhere; boost adds extra.
+                let baseGlow: CGFloat
+                if isNeon {
+                    baseGlow = 10 + boostBonus
+                } else if index < max(1, count / 8) {
+                    baseGlow = 6 + boostBonus       // first ~12%: bright rim
+                } else if index < max(1, count / 4) {
+                    baseGlow = 3 + boostBonus * 0.5  // next ~12%: moderate rim
+                } else {
+                    baseGlow = 0
+                }
+                let desiredGlow: CGFloat = ghostActive ? baseGlow * 0.4 : baseGlow
+                // Guard: glowWidth triggers SpriteKit re-render every time it's set, even if unchanged.
+                if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
+                segment.zPosition = snakeHead.zPosition - 0.04 - CGFloat(index) * 0.0005
             } else {
-                baseGlow = 0
+                // Hide off-screen segments so stale positions don't show as ghost body parts.
+                if !segment.isHidden { segment.isHidden = true }
             }
-            let desiredGlow: CGFloat = ghostActive ? baseGlow * 0.4 : baseGlow
-            // Guard: glowWidth triggers SpriteKit re-render every time it's set, even if unchanged.
-            if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
-            segment.zPosition = snakeHead.zPosition - 0.04 - CGFloat(index) * 0.0005
         }
 
         playerBodyPathNode.alpha = ghostActive ? 0.18 : 0.30

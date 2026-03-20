@@ -84,6 +84,9 @@ class GameScene: SKScene {
     var positionHistory = PointRingBuffer()
     var bodyPositionCache: [CGPoint] = []
     var playerBodyOccupancy: Set<GridCell> = []
+    /// Maps each 30-pt grid cell → indices into bodyPositionCache for O(1) spatial lookup.
+    var playerBodyCellIndex: [GridCell: [Int]] = [:]
+    var lastHistoryCapacity: Int = 0
     var currentAngle: CGFloat = 0
     var targetAngle:  CGFloat = 0
     var isTouching:   Bool    = false
@@ -108,8 +111,16 @@ class GameScene: SKScene {
     var boostButtonCenter: CGPoint = .zero
     var boostButtonNode:   SKNode?
     var boostTouch:        UITouch?
-    // Boost score drain — replaces energy bar; costs 1 score point per 200ms
+    // Boost score drain — costs 1 score point per 200ms while boosting
     var boostScoreDrainTimer: CGFloat = 0
+
+    // MARK: - Boost Energy Meter
+    // Fills passively. Boost only engages when FULL; drains over 12 seconds then must refill.
+    var boostEnergy: CGFloat = 1.0
+    var lastBoostMeterEnergy: CGFloat = -1       // tracks last-drawn value; -1 forces first draw
+    let boostEnergyDrainRate: CGFloat = 1.0/12.0 // full→empty in exactly 12 s while boosting
+    let boostEnergyRegenRate: CGFloat = 1.0/15.0 // empty→full in 15 s while idle
+    let boostEnergyMinToStart: CGFloat = 0.50    // must be at least 50% charged to engage boost
 
     // MARK: - Food
     let fruitEmojis: [String] = ["🍎","🍊","🍋","🍇","🍓","🍉","🍑","🍌","🫐","🍒"]
@@ -130,11 +141,7 @@ class GameScene: SKScene {
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
-    let maxTrailFoodItems:   Int     = 120    // hard cap on active .trail nodes
-    // Trail food: makeTrailFoodNode — simple texture-backed sprite (pre-rendered per color theme).
-    // Using SKSpriteNode with a cached SKTexture avoids allocating 1–5 nested SKShapeNodes
-    // per spawn (53/sec while boosting). Cache is pre-warmed at game start.
-    var trailFoodTextureCache: [Int: SKTexture] = [:]
+    let maxTrailFoodItems:   Int     = 300    // hard cap on active .trail nodes
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
 
     // MARK: - Movement Heatmap (food density weighting)
@@ -677,6 +684,8 @@ class GameScene: SKScene {
         isBoostHeld         = false
         boostZoomExtra      = 0
         boostScoreDrainTimer = 0
+        boostEnergy         = 1.0
+        lastBoostMeterEnergy = -1  // force full redraw on next frame
         joystickTouch       = nil
         boostTouch          = nil
         joystickThumbOffset = .zero
@@ -819,7 +828,6 @@ class GameScene: SKScene {
         updateMiniLeaderboard()
 
         gameSetupComplete = true
-        prewarmTrailFoodTextures()   // build SKTexture cache before first trail spawn
         startGameImmediately()
 
         let playerTheme = snakeColorThemes[selectedSnakeColorIndex % snakeColorThemes.count]
@@ -1330,6 +1338,18 @@ class GameScene: SKScene {
         circle.name        = "boostCircle"
         btn.addChild(circle)
 
+        // Energy meter arc — drawn just outside the button rim, filled clockwise from 12 o'clock.
+        // Path is rebuilt each frame by updateBoostMeterVisual() as boostEnergy changes.
+        let arc = SKShapeNode()
+        arc.fillColor   = .clear
+        arc.strokeColor = SKColor(red: 0.10, green: 0.95, blue: 0.30, alpha: 1.0) // green = starts full
+        arc.lineWidth   = 4.0
+        arc.lineCap     = .round
+        arc.glowWidth   = 4
+        arc.name        = "boostMeterArc"
+        arc.zPosition   = 1    // renders above the circle ring
+        btn.addChild(arc)
+
         let label = SKLabelNode(text: "⚡")
         label.fontSize                = 20
         label.horizontalAlignmentMode = .center
@@ -1338,6 +1358,7 @@ class GameScene: SKScene {
 
         addChild(btn)
         boostButtonNode = btn
+        lastBoostMeterEnergy = -1   // trigger immediate first draw
     }
 
     func setBoostButtonActive(_ active: Bool) {
@@ -1875,8 +1896,7 @@ class GameScene: SKScene {
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
         let fallback = bodyPositionCache.dropLast().last ?? snakeHead.position
         bodyPositionCache[bodySegments.count - 1] = fallback
-        positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
-        updatePlayerBodyVisuals()
+        updateHistoryCapacityIfNeeded()
     }
 
     /// Grow or shrink the player body to match targetBodyCount.
@@ -1893,8 +1913,17 @@ class GameScene: SKScene {
             releaseBodySegmentNode(bodySegments.removeLast())
         }
         ensurePointCacheLength(bodySegments.count, cache: &bodyPositionCache)
-        positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
-        updatePlayerBodyVisuals()
+        updateHistoryCapacityIfNeeded()
+        // updatePlayerBodyVisuals() is called every frame via updatePlayerBodyPathAndCollisionSet(),
+        // so no extra call is needed here. The 1-frame lag when segments are added/removed is invisible.
+    }
+
+    @inline(__always) private func updateHistoryCapacityIfNeeded() {
+        let needed = historyCapacity(forSegmentCount: bodySegments.count)
+        if needed != lastHistoryCapacity {
+            positionHistory.setCapacity(needed)
+            lastHistoryCapacity = needed
+        }
     }
 
     private func configurePlayerBodyPathNodeIfNeeded() {
@@ -1937,9 +1966,11 @@ class GameScene: SKScene {
         // so the set is always fresh when it is actually consumed.
         if frameCounter % 2 == 0 {
             playerBodyOccupancy.removeAll(keepingCapacity: true)
-            for point in bodyPositionCache {
+            playerBodyCellIndex.removeAll(keepingCapacity: true)
+            for (idx, point) in bodyPositionCache.enumerated() {
                 let cell = gridCell(for: point)
                 playerBodyOccupancy.insert(cell)
+                playerBodyCellIndex[cell, default: []].append(idx)
             }
         }
     }
@@ -2738,7 +2769,7 @@ class GameScene: SKScene {
 
             let controlScale = hudControlScale()
             let boostDist = hypot(loc.x - boostButtonCenter.x, loc.y - boostButtonCenter.y)
-            let canBoost = score > 0
+            let canBoost = score > 0 && (gameMode != .challenge || boostEnergy >= boostEnergyMinToStart)
             if boostTouch == nil && boostDist < boostButtonRadius * 1.4 * controlScale && canBoost {
                 boostTouch  = touch
                 isBoostHeld = true
@@ -2854,30 +2885,64 @@ class GameScene: SKScene {
         tickCombo(dt: dt)
         frameCounter += 1
 
-        // --- Boost Drain ---
-        if isBoostHeld {
-            if score <= 0 {
-                // No score left — disengage boost
-                isBoostHeld = false
-                boostTouch  = nil
-                setBoostButtonActive(false)
-            } else {
-                boostScoreDrainTimer += dt
-                while boostScoreDrainTimer >= 0.2 {
-                    boostScoreDrainTimer -= 0.2
-                    score = max(0, score - 1)
-                    updateScoreDisplay()
-                    updateSpeedForScore()
-                    if score == 0 {
-                        isBoostHeld = false
-                        boostTouch = nil
-                        setBoostButtonActive(false)
-                        break
+        // --- Boost Drain / Energy Regen ---
+        if gameMode == .challenge {
+            // Expert: energy meter active — must be full to engage; drains over 12 s.
+            if isBoostHeld {
+                boostEnergy -= boostEnergyDrainRate * dt
+                if boostEnergy <= 0 || score <= 0 {
+                    boostEnergy = 0
+                    isBoostHeld = false
+                    boostTouch  = nil
+                    setBoostButtonActive(false)
+                } else {
+                    // Score costs 1 point every 200 ms (snake shrinks = risk/reward)
+                    boostScoreDrainTimer += dt
+                    while boostScoreDrainTimer >= 0.2 {
+                        boostScoreDrainTimer -= 0.2
+                        score = max(0, score - 1)
+                        updateScoreDisplay()
+                        updateSpeedForScore()
+                        if score == 0 {
+                            boostEnergy = 0
+                            isBoostHeld = false
+                            boostTouch  = nil
+                            setBoostButtonActive(false)
+                            break
+                        }
                     }
                 }
+            } else {
+                boostScoreDrainTimer = 0
+                // Passive regen when not boosting
+                boostEnergy = min(1.0, boostEnergy + boostEnergyRegenRate * dt)
             }
         } else {
-            boostScoreDrainTimer = 0
+            // Casual: boost is always available — energy stays full, only score limits it.
+            boostEnergy = 1.0
+            if isBoostHeld {
+                if score <= 0 {
+                    isBoostHeld = false
+                    boostTouch  = nil
+                    setBoostButtonActive(false)
+                } else {
+                    boostScoreDrainTimer += dt
+                    while boostScoreDrainTimer >= 0.2 {
+                        boostScoreDrainTimer -= 0.2
+                        score = max(0, score - 1)
+                        updateScoreDisplay()
+                        updateSpeedForScore()
+                        if score == 0 {
+                            isBoostHeld = false
+                            boostTouch  = nil
+                            setBoostButtonActive(false)
+                            break
+                        }
+                    }
+                }
+            } else {
+                boostScoreDrainTimer = 0
+            }
         }
 
         // --- Player Movement ---
@@ -2886,7 +2951,7 @@ class GameScene: SKScene {
         let playerDist = baseDist * raceControlSpeedFactor
 
         positionHistory.append(snakeHead.position)
-        positionHistory.setCapacity(historyCapacity(forSegmentCount: bodySegments.count))
+        updateHistoryCapacityIfNeeded()
 
         if isTouching {
             let dynamicTurnSpeed = playerTurnSpeedBase
@@ -2960,10 +3025,13 @@ class GameScene: SKScene {
         if !isSpecialOfflineMode { updateSuperMouse(dt: dt) }
 
         // --- Trail food spawning (player) ---
-        if !isSpecialOfflineMode, gameStarted, let tailPos = bodyPositionCache.last {
+        // Spawn a few segments behind the head so the trail is always visible near the action.
+        // At 5000+ pts the tail is ~7000px off-screen; spawning there makes the trail invisible.
+        if !isSpecialOfflineMode, gameStarted, !bodyPositionCache.isEmpty {
             trailFoodTimer += dt
             if isBoostHeld, trailFoodTimer >= playerTrailInterval {
-                spawnTrailFood(at: tailPos,
+                let trailIdx = min(6, bodyPositionCache.count - 1)
+                spawnTrailFood(at: bodyPositionCache[trailIdx],
                                colorIndex: selectedSnakeColorIndex,
                                patternIndex: selectedSnakePatternIndex)
                 trailFoodTimer = 0
