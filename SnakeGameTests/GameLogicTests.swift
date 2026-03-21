@@ -125,6 +125,9 @@ final class GameLogicTests: XCTestCase {
             let profile = GameLogic.botPersonalityProfile(for: kind)
             XCTAssertGreaterThan(profile.replanInterval, 0)
             XCTAssertGreaterThan(profile.foodSearchRadius, 0)
+            XCTAssertGreaterThan(profile.emergencyTurnMultiplier, 0)
+            XCTAssertGreaterThan(profile.escapeSpeedReductionCap, 0)
+            XCTAssertGreaterThanOrEqual(profile.corridorPreference, 0)
         }
     }
 
@@ -173,5 +176,44 @@ final class GameLogicTests: XCTestCase {
             personality: GameLogic.botPersonalityProfile(for: .coward)
         )
         XCTAssertEqual(GameLogic.chooseBotIntent(snapshot), .forage)
+    }
+
+    func test_givenLowClearanceNonEscapePath_whenPreferringEscape_thenReturnsTrue() {
+        XCTAssertTrue(
+            GameLogic.shouldPreferEscape(
+                nonEscapeClearanceScore: 0.42,
+                bestNonEscapeScore: 30,
+                bestEscapeScore: 28,
+                immediateDanger: 0.60
+            )
+        )
+    }
+
+    func test_givenWideCorridorAndEnoughMediumHeadings_whenCheckingViableEscapeCorridor_thenReturnsTrue() {
+        XCTAssertTrue(GameLogic.hasViableEscapeCorridor(widestSafeSpanDegrees: 45, mediumRangeHeadingCount: 3))
+        XCTAssertFalse(GameLogic.hasViableEscapeCorridor(widestSafeSpanDegrees: 15, mediumRangeHeadingCount: 2))
+    }
+
+    func test_givenEscapeIntentAndHighTurnDemand_whenCalculatingSteeringMultiplier_thenReducesSpeedMoreThanRoam() {
+        let roamMultiplier = GameLogic.botSteeringSpeedMultiplier(
+            turnDemand: 1.0,
+            immediateDanger: 0.8,
+            intent: .roam,
+            isCircled: false,
+            baseReductionCap: 0.18,
+            challengeReductionCap: 0.12,
+            isChallengeOrNemesis: false
+        )
+        let escapeMultiplier = GameLogic.botSteeringSpeedMultiplier(
+            turnDemand: 1.0,
+            immediateDanger: 0.8,
+            intent: .escape,
+            isCircled: true,
+            baseReductionCap: 0.18,
+            challengeReductionCap: 0.12,
+            isChallengeOrNemesis: false
+        )
+
+        XCTAssertLessThan(escapeMultiplier, roamMultiplier)
     }
 }

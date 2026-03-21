@@ -5,6 +5,7 @@
 
 import SwiftUI
 import GameController
+import UIKit
 
 struct StartScreenView: View {
     @Binding var isPlaying:        Bool
@@ -25,6 +26,10 @@ struct StartScreenView: View {
     @State private var showPlayAreaCustomize:  Bool = false
     @State private var showSettingsMenu:       Bool = false
     @State private var controllerConnected: Bool = false
+    @State private var showLogExporter: Bool = false
+    @State private var logExportItems: [Any] = []
+    @State private var logExportErrorMessage: String?
+    @State private var showDeleteLogsConfirmation: Bool = false
 
     // Detect compact vertical class = iPhone landscape
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -95,6 +100,25 @@ struct StartScreenView: View {
         }
         .sheet(isPresented: $showCustomize)          { SnakeCustomizeView() }
         .sheet(isPresented: $showPlayAreaCustomize) { PlayAreaCustomizeView() }
+        .sheet(isPresented: $showLogExporter) {
+            ActivityView(activityItems: logExportItems)
+        }
+        .alert("Performance Logs", isPresented: Binding(
+            get: { logExportErrorMessage != nil },
+            set: { if !$0 { logExportErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(logExportErrorMessage ?? "")
+        }
+        .alert("Delete All Logs?", isPresented: $showDeleteLogsConfirmation) {
+            Button("Delete All", role: .destructive) {
+                deleteAllPerformanceLogs()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes every exported performance log saved by the game from this device.")
+        }
     }
 
     // ─────────────────────────────────────────────
@@ -249,6 +273,24 @@ struct StartScreenView: View {
                         ) {
                             showSettingsMenu = false
                             GameCenterManager.shared.showLeaderboard()
+                        }
+
+                        settingsModalButton(
+                            title: "Export Logs",
+                            systemImage: "square.and.arrow.up.fill",
+                            tint: Color(red: 0.98, green: 0.55, blue: 0.30)
+                        ) {
+                            showSettingsMenu = false
+                            exportLatestPerformanceLogs()
+                        }
+
+                        settingsModalButton(
+                            title: "Delete All Logs",
+                            systemImage: "trash.fill",
+                            tint: Color(red: 1.0, green: 0.34, blue: 0.34)
+                        ) {
+                            showSettingsMenu = false
+                            showDeleteLogsConfirmation = true
                         }
                     }
                     .padding(.horizontal, 22)
@@ -638,6 +680,29 @@ struct StartScreenView: View {
     private func startGame(in mode: GameMode) {
         selectedGameMode = mode
         onPlayTapped()
+    }
+
+    private func exportLatestPerformanceLogs() {
+        let exportURLs = PerformanceLogStore.exportURLsForLatestSession()
+        guard !exportURLs.isEmpty else {
+            logExportErrorMessage = "No performance logs were found yet. Play a session first, then export the latest logs from Settings."
+            return
+        }
+        logExportItems = exportURLs
+        showLogExporter = true
+    }
+
+    private func deleteAllPerformanceLogs() {
+        do {
+            let deletedCount = try PerformanceLogStore.deleteAllLogs()
+            if deletedCount == 0 {
+                logExportErrorMessage = "There were no performance logs to delete."
+            } else {
+                logExportErrorMessage = "Deleted \(deletedCount) log file\(deletedCount == 1 ? "" : "s")."
+            }
+        } catch {
+            logExportErrorMessage = "Could not delete performance logs: \(error.localizedDescription)"
+        }
     }
 }
 

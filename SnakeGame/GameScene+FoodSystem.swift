@@ -14,9 +14,164 @@ enum FoodType: Int {
 
 extension GameScene {
 
+    var activePersistentFoodCount: Int {
+        activeRegularFoodCount + activeSpecialFoodCount
+    }
+
+    var targetPersistentFoodCount: Int {
+        foodCount + maxActiveSpecialFoodItems
+    }
+
+    func isSpecialFoodType(_ type: FoodType) -> Bool {
+        switch type {
+        case .shield, .multiplier, .magnet, .ghost, .shrink:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func isPersistentFoodType(_ type: FoodType) -> Bool {
+        type == .regular || isSpecialFoodType(type)
+    }
+
+    func canSpawnPersistentFood(of type: FoodType) -> Bool {
+        guard foodItems.count < maxTotalFoodItems else { return false }
+        guard isPersistentFoodType(type) else { return false }
+        switch type {
+        case .regular:
+            return activeRegularFoodCount < foodCount && activeRegularFoodCount < maxRegularFoodItems
+        default:
+            return activeRegularFoodCount >= foodCount
+                && activeSpecialFoodCount < maxActiveSpecialFoodItems
+                && activePersistentFoodCount < targetPersistentFoodCount
+        }
+    }
+
+    func shouldSpawnPersistentReplacement(afterEating type: FoodType) -> Bool {
+        guard isPersistentFoodType(type) else { return false }
+        guard foodItems.count < maxTotalFoodItems else { return false }
+        if activeRegularFoodCount < foodCount {
+            return true
+        }
+        return activePersistentFoodCount < targetPersistentFoodCount
+    }
+
+    private func availableSpecialFoodTypesForSpawn() -> [FoodType] {
+        [.shield, .multiplier, .magnet, .ghost, .shrink].filter { type in
+            let cooldownRemaining = specialFoodCooldowns[type] ?? 0
+            return cooldownRemaining <= 0 && activeSpecialCount(for: type) < 1
+        }
+    }
+
+    func nextPersistentFoodTypeForSpawn() -> FoodType? {
+        if canSpawnPersistentFood(of: .regular) {
+            return .regular
+        }
+        let availableSpecialTypes = availableSpecialFoodTypesForSpawn()
+        guard !availableSpecialTypes.isEmpty else { return nil }
+        let type = availableSpecialTypes.randomElement() ?? .shield
+        return canSpawnPersistentFood(of: type) ? type : nil
+    }
+
+    func invalidateFoodSearchCaches() {
+        foodNeighborhoodCache.removeAll(keepingCapacity: true)
+    }
+
+    func registerFoodInsertion(type: FoodType, index: Int) {
+        switch type {
+        case .regular:
+            activeRegularFoodCount += 1
+        case .trail:
+            activeTrailFoodCount += 1
+        case .death:
+            activeDeathFoodCount += 1
+        case .shield, .multiplier, .magnet, .ghost, .shrink:
+            activeSpecialFoodCount += 1
+            activeSpecialFoodIndices.append(index)
+        }
+    }
+
+    func registerFoodRemoval(type: FoodType) {
+        switch type {
+        case .regular:
+            activeRegularFoodCount = max(0, activeRegularFoodCount - 1)
+        case .trail:
+            activeTrailFoodCount = max(0, activeTrailFoodCount - 1)
+        case .death:
+            activeDeathFoodCount = max(0, activeDeathFoodCount - 1)
+        case .shield, .multiplier, .magnet, .ghost, .shrink:
+            activeSpecialFoodCount = max(0, activeSpecialFoodCount - 1)
+        }
+    }
+
+    func fixSpecialFoodIndicesAfterSwap(removedAt index: Int, movedFrom last: Int) {
+        guard !activeSpecialFoodIndices.isEmpty else { return }
+        if let removedSpecialIndex = activeSpecialFoodIndices.firstIndex(of: index) {
+            activeSpecialFoodIndices.remove(at: removedSpecialIndex)
+        }
+        if let movedSpecialIndex = activeSpecialFoodIndices.firstIndex(of: last) {
+            activeSpecialFoodIndices[movedSpecialIndex] = index
+        }
+    }
+
+    func rebuildFoodRuntimeStateFromArrays() {
+        activeRegularFoodCount = 0
+        activeDeathFoodCount = 0
+        activeTrailFoodCount = 0
+        activeSpecialFoodCount = 0
+        activeSpecialFoodIndices.removeAll(keepingCapacity: true)
+        for (index, type) in foodTypes.enumerated() {
+            registerFoodInsertion(type: type, index: index)
+        }
+        invalidateFoodSearchCaches()
+    }
+
+    private func recomputeClusterBonus(for index: Int) {
+        guard index >= 0, index < foodItems.count, foodItems[index].parent != nil else { return }
+        if cachedClusterBonuses.count != foodItems.count {
+            cachedClusterBonuses = Array(repeating: 0, count: foodItems.count)
+        }
+
+        let neighbors = nearbyFoodIndices(around: foodItems[index].position, radius: clusterBonusRadius)
+        var bonus: CGFloat = 0
+        let source = foodItems[index].position
+        for neighborIndex in neighbors where neighborIndex != index && neighborIndex < foodItems.count {
+            let dx = foodItems[neighborIndex].position.x - source.x
+            let dy = foodItems[neighborIndex].position.y - source.y
+            guard dx * dx + dy * dy < clusterBonusRadius * clusterBonusRadius else { continue }
+            switch foodTypes[neighborIndex] {
+            case .death: bonus += 0.55
+            case .trail: bonus += 0.18
+            default:     bonus += 0.10
+            }
+        }
+        cachedClusterBonuses[index] = min(2.4, bonus)
+    }
+
+    func recomputeClusterBonusesLocally(around centers: [CGPoint]) {
+        guard !centers.isEmpty else { return }
+        rebuildFoodGridIfNeeded()
+        if cachedClusterBonuses.count != foodItems.count {
+            cachedClusterBonuses = Array(repeating: 0, count: foodItems.count)
+        }
+        var affected: Set<Int> = []
+        for center in centers {
+            for index in nearbyFoodIndices(around: center, radius: clusterBonusRadius) where index < foodItems.count {
+                affected.insert(index)
+            }
+        }
+        for index in affected {
+            recomputeClusterBonus(for: index)
+        }
+        debugIncrement(\.clusterBonusLocalRecomputes)
+        debugIncrement(\.clusterBonusItemsTouched, by: affected.count)
+        clusterBonusDirty = false
+    }
+
     // MARK: - Food System
     func spawnInitialFood() {
-        for _ in 0..<foodCount { spawnFood() }
+        for _ in 0..<targetPersistentFoodCount { spawnFood() }
     }
     func randomSpawnFoodType() -> FoodType {
         let roll = Int.random(in: 0...99)
@@ -32,14 +187,14 @@ extension GameScene {
 
         guard candidate != .regular else { return .regular }
 
-        // Enforce 30-second cooldown for this special type (remaining seconds > 0 = locked)
+        // Enforce 20-second cooldown for this special type (remaining seconds > 0 = locked)
         if let remaining = specialFoodCooldowns[candidate], remaining > 0 {
             return .regular
         }
         // Max 1 of each special type at a time
         if activeSpecialCount(for: candidate) >= 1 { return .regular }
-        // Max 4 special items total at a time
-        if totalActiveSpecialCount() >= 4 { return .regular }
+        // Max 6 special items total at a time
+        if totalActiveSpecialCount() >= maxActiveSpecialFoodItems { return .regular }
 
         return candidate
     }
@@ -53,14 +208,7 @@ extension GameScene {
 
     /// Counts all active special food items (shield, multiplier, magnet, ghost, shrink).
     private func totalActiveSpecialCount() -> Int {
-        var n = 0
-        for t in foodTypes {
-            switch t {
-            case .shield, .multiplier, .magnet, .ghost, .shrink: n += 1
-            default: break
-            }
-        }
-        return n
+        activeSpecialFoodCount
     }
 
     func makeRegularFoodNode() -> SKLabelNode {
@@ -99,7 +247,17 @@ extension GameScene {
     }
 
     func spawnFood() {
-        let type = randomSpawnFoodType()
+        guard foodItems.count < maxTotalFoodItems else {
+            debugIncrementFoodCounter(\.foodSkippedByCap, type: .regular)
+            return
+        }
+
+        guard let type = nextPersistentFoodTypeForSpawn() else {
+            let skippedType: FoodType = activeRegularFoodCount < foodCount ? .regular : .shield
+            debugIncrementFoodCounter(\.foodSkippedByCap, type: skippedType)
+            return
+        }
+
         let food = makeFoodNode(for: type)
 
         // 60 % of spawns are biased toward high-traffic zones; 40 % are uniform random.
@@ -113,8 +271,12 @@ extension GameScene {
         addChild(food)
         foodItems.append(food)
         foodTypes.append(type)
-        foodGridInsert(at: foodItems.count - 1)
-        clusterBonusDirty = true
+        let newIndex = foodItems.count - 1
+        foodGridInsert(at: newIndex)
+        registerFoodInsertion(type: type, index: newIndex)
+        debugIncrementFoodCounter(\.foodSpawnedByType, type: type)
+        invalidateFoodSearchCaches()
+        recomputeClusterBonusesLocally(around: [pos])
     }
 
     func randomPositionInArena() -> CGPoint {
@@ -223,46 +385,63 @@ extension GameScene {
     /// Radius 7 pt is visually distinct but smaller than regular food (foodRadius 12 pt).
     func makeTrailFoodNode(colorIndex: Int, patternIndex: Int) -> SKNode {
         let idx   = colorIndex % snakeColorThemes.count
-        let theme = snakeColorThemes[idx]
-        let node  = SKShapeNode(circleOfRadius: 7)
-        node.fillColor   = theme.bodySKColor
-        node.strokeColor = theme.bodyStrokeSKColor
-        node.lineWidth   = 1.5
-        node.glowWidth   = 4.0
-        return node
+        return acquireReusableFoodNode(key: .trail(idx)) {
+            let theme = snakeColorThemes[idx]
+            let node  = SKShapeNode(circleOfRadius: 7)
+            node.fillColor   = theme.bodySKColor
+            node.strokeColor = theme.bodyStrokeSKColor
+            node.lineWidth   = 1.5
+            node.glowWidth   = 4.0
+            return node
+        }
     }
 
     /// Body-segment circle matching a dead snake's skin, same visual size as regular food.
     /// Scale 0.8 → effective radius 8px.
     func makeDeathFoodNode(colorIndex: Int, patternIndex: Int) -> SKShapeNode {
         let idx     = colorIndex % snakeColorThemes.count
-        let theme   = snakeColorThemes[idx]
         let pattern = SnakePattern(rawValue: patternIndex) ?? .solid
-        let node    = makeBodySegment(color: theme.bodySKColor,
-                                      stroke: theme.bodyStrokeSKColor,
-                                      pattern: pattern, segIndex: 0)
-        node.setScale(0.8)
-        return node
+        let node = acquireReusableFoodNode(key: .deathBody(idx, patternIndex)) {
+            let theme = snakeColorThemes[idx]
+            return makeBodySegment(color: theme.bodySKColor,
+                                   stroke: theme.bodyStrokeSKColor,
+                                   pattern: pattern, segIndex: 0)
+        }
+        if let node = node as? SKShapeNode {
+            node.setScale(0.8)
+            return node
+        }
+        return SKShapeNode()
     }
 
     /// Mini snake head (with eyes) matching a dead snake's head color.
     /// Scale 0.65 on headRadius(13) → effective radius ~8.5px, slightly bigger than body circles.
     func makeDeathHeadNode(colorIndex: Int) -> SKNode {
         let idx   = colorIndex % snakeColorThemes.count
-        let theme = snakeColorThemes[idx]
-        let head  = SKShapeNode(circleOfRadius: headRadius)
-        head.fillColor   = theme.headSKColor
-        head.strokeColor = theme.headStrokeSKColor
-        head.lineWidth   = 2
-        head.glowWidth   = 4
+        let head = acquireReusableFoodNode(key: .deathHead(idx)) {
+            let theme = snakeColorThemes[idx]
+            let head  = SKShapeNode(circleOfRadius: headRadius)
+            head.fillColor   = theme.headSKColor
+            head.strokeColor = theme.headStrokeSKColor
+            head.lineWidth   = 2
+            head.glowWidth   = 4
+            addEyes(to: head)
+            return head
+        }
         head.setScale(0.65)
-        addEyes(to: head)
         return head
     }
 
     func spawnTrailFood(at position: CGPoint, colorIndex: Int, patternIndex: Int) {
         // Hard cap: O(1) counter check instead of O(n) filter
-        guard activeTrailFoodCount < maxTrailFoodItems else { return }
+        guard foodItems.count < maxTotalFoodItems else {
+            debugIncrementFoodCounter(\.foodSkippedByCap, type: .trail)
+            return
+        }
+        guard activeTrailFoodCount < maxTrailFoodItems else {
+            debugIncrementFoodCounter(\.foodSkippedByCap, type: .trail)
+            return
+        }
 
         let food = makeTrailFoodNode(colorIndex: colorIndex, patternIndex: patternIndex)
         food.position = position
@@ -270,10 +449,12 @@ extension GameScene {
         addChild(food)
         foodItems.append(food)
         foodTypes.append(.trail)
-        foodGridInsert(at: foodItems.count - 1)
-        activeTrailFoodCount += 1
-        // Do NOT set clusterBonusDirty here: trail food spawns ~53×/sec and the cluster bonus
-        // cache doesn't need trail-food precision for bot food-targeting decisions.
+        let newIndex = foodItems.count - 1
+        foodGridInsert(at: newIndex)
+        registerFoodInsertion(type: .trail, index: newIndex)
+        debugIncrementFoodCounter(\.foodSpawnedByType, type: .trail)
+        // Do not invalidate neighborhood caches or recompute cluster bonuses here.
+        // Trail food is high-frequency and bot targeting tolerates stale trail precision.
 
         food.run(SKAction.sequence([
             SKAction.fadeIn(withDuration: 0.25),
@@ -283,12 +464,10 @@ extension GameScene {
                 guard let self, let food else { return }
                 if let idx = self.foodItems.firstIndex(where: { $0 === food }) {
                     // Natural expiry path: item still in arrays, hasn't been eaten early
+                    self.debugIncrementFoodCounter(\.foodExpiredByType, type: .trail)
                     self.removeFoodItem(at: idx)
-                    self.activeTrailFoodCount = max(0, self.activeTrailFoodCount - 1)
                 }
-                // If not found: food was eaten early; counter already decremented at eat site
-            },
-            SKAction.removeFromParent()
+            }
         ]))
     }
 
@@ -297,20 +476,27 @@ extension GameScene {
     /// remaining items are scaled body-segment circles with the same color + pattern.
     func spawnDeathFood(at positions: [CGPoint], colorIndex: Int, patternIndex: Int) {
         guard !positions.isEmpty else { return }
-        let totalItems = max(1, positions.count / 3)
-        let step       = max(1, positions.count / totalItems)
+        guard foodItems.count < maxTotalFoodItems else {
+            debugIncrementFoodCounter(\.foodSkippedByCap, type: .death, by: max(1, positions.count / 3))
+            return
+        }
 
-        let deathPopAnimation = SKAction.sequence([
-            SKAction.group([SKAction.fadeIn(withDuration: 0.3),
-                            SKAction.scale(to: 1.3, duration: 0.15)]),
-            SKAction.scale(to: 1.0, duration: 0.15),
-            SKAction.wait(forDuration: 15.0),
-            SKAction.fadeOut(withDuration: 1.5),
-            SKAction.removeFromParent()
-        ])
+        let totalItems = max(1, positions.count / 3)
+        let remainingDeathBudget = max(0, maxDeathFoodItems - activeDeathFoodCount)
+        let totalBudget = max(0, maxTotalFoodItems - foodItems.count)
+        let allowedItems = min(totalItems, remainingDeathBudget, totalBudget)
+        let skippedItems = max(0, totalItems - allowedItems)
+        if skippedItems > 0 {
+            debugIncrementFoodCounter(\.foodSkippedByCap, type: .death, by: skippedItems)
+        }
+        guard allowedItems > 0 else { return }
+        let step = max(1, positions.count / allowedItems)
 
         var isFirst = true
-        for i in Swift.stride(from: 0, to: positions.count, by: step) {
+        var spawnedCenters: [CGPoint] = []
+        spawnedCenters.reserveCapacity(allowedItems)
+        var spawned = 0
+        for i in Swift.stride(from: 0, to: positions.count, by: step) where spawned < allowedItems {
             let food: SKNode = isFirst
                 ? makeDeathHeadNode(colorIndex: colorIndex)
                 : makeDeathFoodNode(colorIndex: colorIndex, patternIndex: patternIndex)
@@ -320,9 +506,29 @@ extension GameScene {
             addChild(food)
             foodItems.append(food)
             foodTypes.append(.death)
-            foodGridInsert(at: foodItems.count - 1)
-            food.run(deathPopAnimation)
+            let newIndex = foodItems.count - 1
+            foodGridInsert(at: newIndex)
+            registerFoodInsertion(type: .death, index: newIndex)
+            debugIncrementFoodCounter(\.foodSpawnedByType, type: .death)
+            food.run(SKAction.sequence([
+                SKAction.group([SKAction.fadeIn(withDuration: 0.3),
+                                SKAction.scale(to: 1.3, duration: 0.15)]),
+                SKAction.scale(to: 1.0, duration: 0.15),
+                SKAction.wait(forDuration: 15.0),
+                SKAction.fadeOut(withDuration: 1.5),
+                SKAction.run { [weak self, weak food] in
+                    guard let self, let food else { return }
+                    if let idx = self.foodItems.firstIndex(where: { $0 === food }) {
+                        self.debugIncrementFoodCounter(\.foodExpiredByType, type: .death)
+                        self.removeFoodItem(at: idx)
+                    }
+                }
+            ]))
+            spawnedCenters.append(positions[i])
+            spawned += 1
         }
+        invalidateFoodSearchCaches()
+        recomputeClusterBonusesLocally(around: spawnedCenters)
     }
 
     func isPositionOnPlayerSnake(_ p: CGPoint) -> Bool {
@@ -336,24 +542,42 @@ extension GameScene {
     @discardableResult
     func removeFoodItem(at index: Int) -> FoodType {
         let removedType = foodTypes[index]
+        let removedNode = foodItems[index]
         let last = foodItems.count - 1
         let removedPos = foodItems[index].position   // capture before potential swap
+        let centersToRefresh: [CGPoint]
         if index != last {
+            let movedPosition = foodItems[last].position
             foodItems.swapAt(index, last)
             foodTypes.swapAt(index, last)
             if cachedClusterBonuses.count > last {
                 cachedClusterBonuses.swapAt(index, last)
             }
             foodGridFixSwap(removedAt: index, removedPos: removedPos, movedFrom: last)
+            fixSpecialFoodIndicesAfterSwap(removedAt: index, movedFrom: last)
+            centersToRefresh = [removedPos, movedPosition]
         } else {
             // Removing the last element — just remove from grid directly
             foodGridRemoveLast(at: removedPos)
+            if let specialIndex = activeSpecialFoodIndices.firstIndex(of: index) {
+                activeSpecialFoodIndices.remove(at: specialIndex)
+            }
+            centersToRefresh = [removedPos]
         }
         foodItems.removeLast()
         foodTypes.removeLast()
         if cachedClusterBonuses.count > foodItems.count {
             cachedClusterBonuses.removeLast()
         }
+        registerFoodRemoval(type: removedType)
+        debugIncrementFoodCounter(\.foodRemovedByType, type: removedType)
+        invalidateFoodSearchCaches()
+        removedNode.removeAllActions()
+        removedNode.removeFromParent()
+        if removedType == .trail || removedType == .death {
+            recycleReusableFoodNode(removedNode)
+        }
+        recomputeClusterBonusesLocally(around: centersToRefresh)
         return removedType
     }
 
@@ -367,6 +591,7 @@ extension GameScene {
             for dcy in -1...1 {
                 guard let indices = foodSpatialGrid[GridCell(x: hc.x + dcx, y: hc.y + dcy)] else { continue }
                 for i in indices {
+                    debugIncrement(\.playerFoodCollisionChecks)
                     guard i < foodItems.count, foodItems[i].parent != nil else { continue }
                     let dx = headPos.x - foodItems[i].position.x
                     let dy = headPos.y - foodItems[i].position.y
@@ -382,20 +607,20 @@ extension GameScene {
     func eatFood(at index: Int) {
         let foodPos = foodItems[index].position
         let type    = foodTypes[index]
-
-        if type == .trail { activeTrailFoodCount = max(0, activeTrailFoodCount - 1) }
+        debugIncrementFoodCounter(\.foodEatenByType, type: type)
         foodItems[index].removeFromParent()
         removeFoodItem(at: index)
-        clusterBonusDirty = true
         // Set cooldown BEFORE spawnFood() so the replacement roll sees the lockout.
         // Stored as remaining seconds (CGFloat), ticked down by dt in updatePowerUps()
         // so the cooldown freezes during pause/backgrounding, matching other timers.
         switch type {
         case .shield, .multiplier, .magnet, .ghost, .shrink:
-            specialFoodCooldowns[type] = 30.0
+            specialFoodCooldowns[type] = 20.0
         default: break
         }
-        spawnFood()
+        if shouldSpawnPersistentReplacement(afterEating: type) {
+            spawnFood()
+        }
         // Body length is now derived from score via syncSnakeLength() — no direct addBodySegment() call here.
 
         // Apply power-up effects
@@ -505,11 +730,74 @@ extension GameScene {
     /// (i.e. after the magnet power-up has moved food nodes between cells).
     func rebuildFoodGridIfNeeded() {
         guard foodGridDirty else { return }
+        #if DEBUG
+        debugPerfStats.fullFoodGridRebuilds += 1
+        #endif
         foodSpatialGrid.removeAll(keepingCapacity: true)
         for i in foodItems.indices where foodItems[i].parent != nil {
             foodSpatialGrid[foodCell(for: foodItems[i].position), default: []].append(i)
         }
         foodGridDirty = false
+        invalidateFoodSearchCaches()
+    }
+
+    private func removeFoodGridIndex(_ index: Int, from cell: GridCell) {
+        foodSpatialGrid[cell]?.removeAll(where: { $0 == index })
+        if foodSpatialGrid[cell]?.isEmpty == true {
+            foodSpatialGrid.removeValue(forKey: cell)
+        }
+    }
+
+    private func appendFoodGridIndex(_ index: Int, to cell: GridCell) {
+        foodSpatialGrid[cell, default: []].append(index)
+    }
+
+    func moveFoodItem(at index: Int, to newPosition: CGPoint) {
+        guard index < foodItems.count else { return }
+        let oldPosition = foodItems[index].position
+        guard oldPosition != newPosition else { return }
+
+        if foodGridDirty {
+            foodItems[index].position = newPosition
+            return
+        }
+
+        let oldCell = foodCell(for: oldPosition)
+        let newCell = foodCell(for: newPosition)
+        foodItems[index].position = newPosition
+        invalidateFoodSearchCaches()
+        guard oldCell != newCell else { return }
+        removeFoodGridIndex(index, from: oldCell)
+        appendFoodGridIndex(index, to: newCell)
+        recomputeClusterBonusesLocally(around: [oldPosition, newPosition])
+    }
+
+    func nearbyFoodIndices(around center: CGPoint, radius: CGFloat, excludeTrailAndDeath: Bool = false) -> [Int] {
+        rebuildFoodGridIfNeeded()
+        let cellRadius = Int(ceil(radius / foodGridCellSize))
+        let centerCell = foodCell(for: center)
+        let cacheKey = FoodNeighborhoodCacheKey(cell: centerCell, cellRadius: cellRadius, excludeTrailAndDeath: excludeTrailAndDeath)
+        if let cached = foodNeighborhoodCache[cacheKey] {
+            debugIncrement(\.foodNeighborhoodCacheHits)
+            return cached
+        }
+        debugIncrement(\.foodNeighborhoodCacheMisses)
+        var indices: [Int] = []
+        indices.reserveCapacity(max(8, (cellRadius * 2 + 1) * (cellRadius * 2 + 1) * 2))
+        for dcx in -cellRadius...cellRadius {
+            for dcy in -cellRadius...cellRadius {
+                guard let cellIndices = foodSpatialGrid[GridCell(x: centerCell.x + dcx, y: centerCell.y + dcy)] else { continue }
+                for index in cellIndices where index < foodItems.count {
+                    if excludeTrailAndDeath {
+                        let type = foodTypes[index]
+                        if type == .trail || type == .death { continue }
+                    }
+                    indices.append(index)
+                }
+            }
+        }
+        foodNeighborhoodCache[cacheKey] = indices
+        return indices
     }
 
     /// Insert a newly-appended food item into the grid.
@@ -582,7 +870,7 @@ extension GameScene {
 
             if inViewport, let p = pos {
                 // Write position and unhide before any rendering work.
-                segment.position = p
+                if segment.position != p { segment.position = p }
                 if segment.isHidden { segment.isHidden = false }
                 // Orient pill/leaf segments to face the direction of travel
                 if needsRotation && index > 0 {
@@ -590,14 +878,20 @@ extension GameScene {
                     let dx = prev.x - p.x
                     let dy = prev.y - p.y
                     if dx * dx + dy * dy > 0.01 {
-                        segment.zRotation = atan2(dy, dx) - (.pi / 2)
+                        let desiredRotation = atan2(dy, dx) - (.pi / 2)
+                        if abs(segment.zRotation - desiredRotation) > 0.0005 {
+                            segment.zRotation = desiredRotation
+                        }
                     }
                 }
 
                 let progress = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
                 let scale = 1.0 - progress * 0.22
-                segment.setScale(scale)
-                segment.alpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
+                if abs(segment.xScale - scale) > 0.0005 || abs(segment.yScale - scale) > 0.0005 {
+                    segment.setScale(scale)
+                }
+                let desiredAlpha = ghostActive ? max(0.22, 0.44 - progress * 0.10) : (1.0 - progress * 0.10)
+                if abs(segment.alpha - desiredAlpha) > 0.0005 { segment.alpha = desiredAlpha }
 
                 // Glow gradient: bright leading quarter fades to nothing at the tail.
                 // Neon pattern keeps its full glow everywhere; boost adds extra.
@@ -614,7 +908,8 @@ extension GameScene {
                 let desiredGlow: CGFloat = ghostActive ? baseGlow * 0.4 : baseGlow
                 // Guard: glowWidth triggers SpriteKit re-render every time it's set, even if unchanged.
                 if segment.glowWidth != desiredGlow { segment.glowWidth = desiredGlow }
-                segment.zPosition = snakeHead.zPosition - 0.04 - CGFloat(index) * 0.0005
+                let desiredZ = snakeHead.zPosition - 0.04 - CGFloat(index) * 0.0005
+                if abs(segment.zPosition - desiredZ) > 0.0005 { segment.zPosition = desiredZ }
             } else {
                 // Hide off-screen segments so stale positions don't show as ghost body parts.
                 if !segment.isHidden { segment.isHidden = true }

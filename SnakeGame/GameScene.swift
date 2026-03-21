@@ -2,6 +2,10 @@ import SpriteKit
 import AVFoundation
 import UIKit
 import GameController
+import os
+#if DEBUG
+import QuartzCore
+#endif
 
 
 // MARK: - GameScene
@@ -10,6 +14,117 @@ class GameScene: SKScene {
     struct GridCell: Hashable {
         let x: Int
         let y: Int
+    }
+
+    struct BotBodyCellEntry {
+        let botIndex: Int
+        let point: CGPoint
+    }
+
+    struct FoodNeighborhoodCacheKey: Hashable {
+        let cell: GridCell
+        let cellRadius: Int
+        let excludeTrailAndDeath: Bool
+    }
+
+    enum ReusableFoodNodeKey: Hashable {
+        case trail(Int)
+        case deathBody(Int, Int)
+        case deathHead(Int)
+    }
+
+    enum TransientParticlePoolKey: Hashable {
+        case eat(Int)
+        case death(Int)
+    }
+
+    enum DebugSubsystem: String, CaseIterable {
+        case powerUps
+        case player
+        case collisions
+        case superMouse
+        case maintenance
+        case cameraAndHUD
+        case bots
+        case botAI
+        case botFoodTargeting
+        case botClusterBonus
+        case botCircledDetection
+        case botCircledEscape
+        case botCollisions
+        case botHeadHits
+        case minimapAndArrow
+        case heatmap
+    }
+
+    struct DebugMetric {
+        var total: CFTimeInterval = 0
+        var max: CFTimeInterval = 0
+    }
+
+    struct DebugPerfStats {
+        var frameCount: Int = 0
+        var subsystemMetrics: [DebugSubsystem: DebugMetric] = [:]
+        var fullFoodGridRebuilds: Int = 0
+        var transientNodeAllocations: Int = 0
+        var reusedTransientNodes: Int = 0
+        var liveTransientNodes: Int = 0
+        var botReplans: Int = 0
+        var detailedAIDecisions: Int = 0
+        var ambientAIDecisions: Int = 0
+        var totalFoodCandidates: Int = 0
+        var totalThreats: Int = 0
+        var playerFoodCollisionChecks: Int = 0
+        var botFoodCollisionChecks: Int = 0
+        var botVsBotBroadPhaseChecks: Int = 0
+        var botVsBotFinePhaseChecks: Int = 0
+        var botHeadVsPlayerBodyChecks: Int = 0
+        var foodNeighborhoodCacheHits: Int = 0
+        var foodNeighborhoodCacheMisses: Int = 0
+        var clusterBonusLocalRecomputes: Int = 0
+        var clusterBonusItemsTouched: Int = 0
+        var botUpdateSteps: Int = 0
+        var botCollisionSteps: Int = 0
+        var botHeadSteps: Int = 0
+        var accumulatorClampCount: Int = 0
+        var foodSpawnedByType: [String: Int] = [:]
+        var foodRemovedByType: [String: Int] = [:]
+        var foodEatenByType: [String: Int] = [:]
+        var foodExpiredByType: [String: Int] = [:]
+        var foodSkippedByCap: [String: Int] = [:]
+        var maxFoodCandidatesPerBotWindow: Int = 0
+        var maxThreatsPerBotWindow: Int = 0
+    }
+
+    struct PerformanceLogSnapshotDelta {
+        var frameCount: Int = 0
+        var subsystemTotals: [DebugSubsystem: CFTimeInterval] = [:]
+        var fullFoodGridRebuilds: Int = 0
+        var transientNodeAllocations: Int = 0
+        var reusedTransientNodes: Int = 0
+        var botReplans: Int = 0
+        var detailedAIDecisions: Int = 0
+        var ambientAIDecisions: Int = 0
+        var totalFoodCandidates: Int = 0
+        var totalThreats: Int = 0
+        var playerFoodCollisionChecks: Int = 0
+        var botFoodCollisionChecks: Int = 0
+        var botVsBotBroadPhaseChecks: Int = 0
+        var botVsBotFinePhaseChecks: Int = 0
+        var botHeadVsPlayerBodyChecks: Int = 0
+        var foodNeighborhoodCacheHits: Int = 0
+        var foodNeighborhoodCacheMisses: Int = 0
+        var clusterBonusLocalRecomputes: Int = 0
+        var clusterBonusItemsTouched: Int = 0
+        var botUpdateSteps: Int = 0
+        var botCollisionSteps: Int = 0
+        var botHeadSteps: Int = 0
+        var accumulatorClampCount: Int = 0
+        var foodSpawnedByType: [String: Int] = [:]
+        var foodRemovedByType: [String: Int] = [:]
+        var foodEatenByType: [String: Int] = [:]
+        var foodExpiredByType: [String: Int] = [:]
+        var foodSkippedByCap: [String: Int] = [:]
     }
 
     // MARK: - Callbacks & Config
@@ -21,6 +136,7 @@ class GameScene: SKScene {
     var playerName: String = "Player"
     var activeLayout: PlayAreaLayout = .default
     private var hasShutdown = false
+    let performanceLogger = Logger(subsystem: "co.chandrashrestha.viperun", category: "Performance")
 
     // MARK: - Audio
     var backgroundMusicPlayer: AVAudioPlayer?
@@ -64,7 +180,7 @@ class GameScene: SKScene {
     let initialBotBodyCount:     Int     = 10
     let spacingBetweenSegments:  Int     = 8
     let segmentPixelSpacing:     CGFloat = 14.0
-    let foodCount:               Int     = 240
+    let foodCount:               Int     = 360
     let maxDeltaTime:            Double  = 0.1
     let minimumGameplayFPS:      Double  = 30.0
     var botUpdateAccumulator:    CGFloat = 0
@@ -130,19 +246,31 @@ class GameScene: SKScene {
     // Rebuilt lazily whenever food is added or removed (clusterBonusDirty = true).
     var cachedClusterBonuses: [CGFloat] = []
     var clusterBonusDirty: Bool = true
+    let clusterBonusRadius: CGFloat = 110.0
     // Spatial grid for food collision queries: cuts checkFoodCollisions / checkBotFoodCollision
     // from O(n=340) down to O(~3) per query.  Cell size 200 pt → 30×30 = 900 cells on the 6000 pt world.
     // Indices stored are into the foodItems/foodTypes arrays; kept in sync by removeFoodItem(at:).
     var foodSpatialGrid: [GridCell: [Int]] = [:]
     let foodGridCellSize: CGFloat = 200.0
     var foodGridDirty: Bool = true   // set true when magnet moves food; triggers lazy full rebuild
+    var foodNeighborhoodCache: [FoodNeighborhoodCacheKey: [Int]] = [:]
     // Trail food
     var trailFoodTimer: CGFloat = 0
+    var activeRegularFoodCount: Int = 0
+    var activeDeathFoodCount: Int = 0
     var activeTrailFoodCount: Int = 0         // O(1) counter; avoids O(n) filter on trail cap check
+    var activeSpecialFoodCount: Int = 0
+    var activeSpecialFoodIndices: [Int] = []
     let playerTrailInterval: CGFloat = 0.35   // player spawns trail food every 0.35s
     let botTrailInterval:    CGFloat = 0.60   // bots spawn trail food every 0.60s
+    let maxRegularFoodItems: Int = 360
+    let maxActiveSpecialFoodItems: Int = 6
+    let maxDeathFoodItems:   Int = 200
     let maxTrailFoodItems:   Int     = 300    // hard cap on active .trail nodes
+    let maxTotalFoodItems:   Int = 1000
     // Death food: makeDeathHeadNode (head) + makeDeathFoodNode (body segments) matching dead snake skin
+    var reusableFoodNodes: [ReusableFoodNodeKey: [SKNode]] = [:]
+    var activeReusableFoodKeys: [ObjectIdentifier: ReusableFoodNodeKey] = [:]
 
     // MARK: - Movement Heatmap (food density weighting)
     // 20×20 grid over the playable arena. Each cell accumulates activity as snake heads pass through.
@@ -168,6 +296,9 @@ class GameScene: SKScene {
     var hudScoreFontSize:          CGFloat = 44   // set in createScorePanel, used for combo offset
     var miniLeaderboard:           SKNode?
     var miniLeaderboardPanelHeight: CGFloat = 134  // updated in updateMiniLeaderboard
+    var miniLeaderboardBackground: SKShapeNode?
+    var miniLeaderboardTitleLabel: SKLabelNode?
+    var miniLeaderboardEntryLabels: [SKLabelNode] = []
     var leaderboardUpdateTimer: CGFloat = 0
     var minimapUpdateTimer: CGFloat = 0
     var leaderArrowUpdateTimer: CGFloat = 0
@@ -269,7 +400,6 @@ class GameScene: SKScene {
     var isSnakeRaceMode: Bool { false }
     var isSpecialOfflineMode: Bool { false }
 
-    var hasUsedRevive: Bool = false
     var hasDoubledCoins: Bool = false
 
     // MARK: - Coin Earning Counters
@@ -312,8 +442,11 @@ class GameScene: SKScene {
     var minimapNode:              SKNode?
     var minimapPlayerDot:         SKShapeNode?
     var minimapBotDots:           [SKShapeNode] = []
+    var minimapBotDisplayKeys:    [Int] = []
     var leaderArrowNode:          SKNode?
     var leaderArrowLabel:         SKLabelNode?
+    var lastLeaderArrowText:      String = ""
+    var lastLeaderArrowHidden:    Bool   = true
 
     // MARK: - Shield Wiggle
     var tailWigglePhase: CGFloat = 0
@@ -344,6 +477,26 @@ class GameScene: SKScene {
     var botVisibilityUpdateTimer: CGFloat = 0
     var circledDetectionTimer: CGFloat = 0
     var frameCounter = 0
+    var botBodyCellIndex: [GridCell: [BotBodyCellEntry]] = [:]
+
+    // MARK: - Transient UI / FX Pools
+    var floatingTextPool: [SKLabelNode] = []
+    var transientParticlePools: [TransientParticlePoolKey: [SKShapeNode]] = [:]
+    #if DEBUG
+    var debugPerfStats = DebugPerfStats()
+    #endif
+    var performanceLogFileURL: URL?
+    var performanceReadableLogFileURL: URL?
+    var performanceLogBuffer: [String] = []
+    var performanceReadableLogBuffer: [String] = []
+    let performanceLogQueue = DispatchQueue(label: "co.chandrashrestha.viperun.performance-log", qos: .utility)
+    var performanceLoggingEnabled = true
+    var performanceLogSampleInterval: CFTimeInterval = 10.0
+    var performanceLogSpikeThresholdMs: Double = 20.0
+    var performanceLogMinSpikeInterval: CFTimeInterval = 10.0
+    var performanceLogLastSampleUptime: CFTimeInterval = 0
+    var performanceLogLastSpikeUptime: CFTimeInterval = 0
+    var performanceLogLastDelta = PerformanceLogSnapshotDelta()
 
     // MARK: - Remote Players (Online mode)
 
@@ -367,6 +520,7 @@ class GameScene: SKScene {
         setupNewGame()
         startBackgroundMusic()
         setupControllerSupport()
+        setupPerformanceLogObservers()
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
@@ -396,6 +550,9 @@ class GameScene: SKScene {
         guard !hasShutdown else { return }
         hasShutdown = true
 
+        logPerformanceSnapshot(event: "shutdown", forceFlush: true)
+        flushPerformanceLogBuffer()
+
         removeAllActions()
         joystickTouch = nil
         boostTouch = nil
@@ -403,7 +560,615 @@ class GameScene: SKScene {
         stopBackgroundMusic()
         NotificationCenter.default.removeObserver(self, name: .GCControllerDidConnect, object: nil)
         NotificationCenter.default.removeObserver(self, name: .GCControllerDidDisconnect, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willTerminateNotification, object: nil)
         connectedController = nil
+    }
+
+    #if DEBUG
+    @inline(__always)
+    func debugMeasure<T>(_ subsystem: DebugSubsystem, _ body: () -> T) -> T {
+        let start = CACurrentMediaTime()
+        let result = body()
+        let elapsed = CACurrentMediaTime() - start
+        debugPerfStats.frameCount += subsystem == .powerUps ? 1 : 0
+        var metric = debugPerfStats.subsystemMetrics[subsystem] ?? DebugMetric()
+        metric.total += elapsed
+        metric.max = max(metric.max, elapsed)
+        debugPerfStats.subsystemMetrics[subsystem] = metric
+        return result
+    }
+
+    func debugRecordTransientNodeAllocation(reused: Bool) {
+        if reused {
+            debugPerfStats.reusedTransientNodes += 1
+        } else {
+            debugPerfStats.transientNodeAllocations += 1
+        }
+        debugPerfStats.liveTransientNodes += 1
+    }
+
+    func debugRecordTransientNodeRelease() {
+        debugPerfStats.liveTransientNodes = max(0, debugPerfStats.liveTransientNodes - 1)
+    }
+
+    @inline(__always)
+    func debugIncrement(_ keyPath: WritableKeyPath<DebugPerfStats, Int>, by amount: Int = 1) {
+        debugPerfStats[keyPath: keyPath] += amount
+    }
+
+    func debugIncrementFoodCounter(_ keyPath: WritableKeyPath<DebugPerfStats, [String: Int]>, type: FoodType, by amount: Int = 1) {
+        let key = performanceName(for: type)
+        debugPerfStats[keyPath: keyPath][key, default: 0] += amount
+    }
+
+    func debugRecordBotDecision(detailed: Bool, foodCandidates: Int, threats: Int) {
+        debugPerfStats.botReplans += 1
+        if detailed {
+            debugPerfStats.detailedAIDecisions += 1
+        } else {
+            debugPerfStats.ambientAIDecisions += 1
+        }
+        debugPerfStats.totalFoodCandidates += foodCandidates
+        debugPerfStats.totalThreats += threats
+        debugPerfStats.maxFoodCandidatesPerBotWindow = max(debugPerfStats.maxFoodCandidatesPerBotWindow, foodCandidates)
+        debugPerfStats.maxThreatsPerBotWindow = max(debugPerfStats.maxThreatsPerBotWindow, threats)
+    }
+    #else
+    @inline(__always)
+    func debugMeasure<T>(_ subsystem: DebugSubsystem, _ body: () -> T) -> T {
+        body()
+    }
+
+    func debugRecordTransientNodeAllocation(reused: Bool) {}
+    func debugRecordTransientNodeRelease() {}
+    func debugIncrement(_ keyPath: WritableKeyPath<DebugPerfStats, Int>, by amount: Int = 1) {}
+    func debugIncrementFoodCounter(_ keyPath: WritableKeyPath<DebugPerfStats, [String: Int]>, type: FoodType, by amount: Int = 1) {}
+    func debugRecordBotDecision(detailed: Bool, foodCandidates: Int, threats: Int) {}
+    #endif
+
+    func acquireFloatingTextLabel() -> SKLabelNode {
+        if let label = floatingTextPool.popLast() {
+            label.removeAllActions()
+            label.alpha = 1
+            label.isHidden = false
+            debugRecordTransientNodeAllocation(reused: true)
+            return label
+        }
+        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .center
+        debugRecordTransientNodeAllocation(reused: false)
+        return label
+    }
+
+    func recycleFloatingTextLabel(_ label: SKLabelNode) {
+        label.removeAllActions()
+        label.removeFromParent()
+        label.text = nil
+        label.alpha = 1
+        label.isHidden = false
+        floatingTextPool.append(label)
+        debugRecordTransientNodeRelease()
+    }
+
+    func acquireTransientParticle(radius: CGFloat, pool: TransientParticlePoolKey) -> SKShapeNode {
+        if var bucket = transientParticlePools[pool], let node = bucket.popLast() {
+            transientParticlePools[pool] = bucket
+            node.removeAllActions()
+            node.alpha = 1
+            node.isHidden = false
+            node.setScale(1.0)
+            debugRecordTransientNodeAllocation(reused: true)
+            return node
+        }
+        let node = SKShapeNode(circleOfRadius: radius)
+        node.strokeColor = .clear
+        debugRecordTransientNodeAllocation(reused: false)
+        return node
+    }
+
+    func recycleTransientParticle(_ node: SKShapeNode, pool: TransientParticlePoolKey) {
+        node.removeAllActions()
+        node.removeFromParent()
+        node.alpha = 1
+        node.isHidden = false
+        node.setScale(1.0)
+        transientParticlePools[pool, default: []].append(node)
+        debugRecordTransientNodeRelease()
+    }
+
+    func acquireReusableFoodNode(key: ReusableFoodNodeKey, factory: () -> SKNode) -> SKNode {
+        if var bucket = reusableFoodNodes[key], let node = bucket.popLast() {
+            reusableFoodNodes[key] = bucket
+            node.removeAllActions()
+            node.removeFromParent()
+            node.alpha = 1
+            node.isHidden = false
+            node.zRotation = 0
+            activeReusableFoodKeys[ObjectIdentifier(node)] = key
+            debugRecordTransientNodeAllocation(reused: true)
+            return node
+        }
+        let node = factory()
+        activeReusableFoodKeys[ObjectIdentifier(node)] = key
+        debugRecordTransientNodeAllocation(reused: false)
+        return node
+    }
+
+    func recycleReusableFoodNode(_ node: SKNode) {
+        let nodeID = ObjectIdentifier(node)
+        guard let key = activeReusableFoodKeys[nodeID] else { return }
+        node.removeAllActions()
+        node.removeFromParent()
+        node.alpha = 1
+        node.isHidden = false
+        node.zRotation = 0
+        reusableFoodNodes[key, default: []].append(node)
+        activeReusableFoodKeys.removeValue(forKey: nodeID)
+        debugRecordTransientNodeRelease()
+    }
+
+    func setupPerformanceLogObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground(_:)),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillTerminate(_:)),
+            name: UIApplication.willTerminateNotification,
+            object: nil
+        )
+    }
+
+    @objc func handleAppDidEnterBackground(_ notification: Notification) {
+        logPerformanceSnapshot(event: "background", forceFlush: true)
+        flushPerformanceLogBuffer()
+    }
+
+    @objc func handleAppWillTerminate(_ notification: Notification) {
+        logPerformanceSnapshot(event: "terminate", forceFlush: true)
+        flushPerformanceLogBuffer()
+    }
+
+    func startPerformanceLogSession(reason: String) {
+        guard performanceLoggingEnabled else { return }
+
+        flushPerformanceLogBuffer()
+        performanceLogBuffer.removeAll(keepingCapacity: true)
+        performanceReadableLogBuffer.removeAll(keepingCapacity: true)
+        performanceLogFileURL = nil
+        performanceReadableLogFileURL = nil
+        performanceLogLastSampleUptime = 0
+        performanceLogLastSpikeUptime = 0
+        performanceLogLastDelta = PerformanceLogSnapshotDelta()
+
+        do {
+            let files = try PerformanceLogStore.createSessionFiles()
+            performanceLogFileURL = files.jsonURL
+            performanceReadableLogFileURL = files.textURL
+            performanceLogger.notice("Performance log file: \(files.jsonURL.path, privacy: .public)")
+            performanceLogger.notice("Performance readable log file: \(files.textURL.path, privacy: .public)")
+            logPerformanceSnapshot(
+                event: "session_start",
+                extra: [
+                    "reason": reason,
+                    "json_log_path": files.jsonURL.path,
+                    "text_log_path": files.textURL.path
+                ],
+                forceFlush: true
+            )
+        } catch {
+            performanceLogger.error("Failed to create performance log directory: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func appendPerformanceLogLine(_ line: String, forceFlush: Bool = false) {
+        guard performanceLoggingEnabled, performanceLogFileURL != nil else { return }
+        performanceLogBuffer.append(line)
+        if forceFlush || performanceLogBuffer.count >= 8 {
+            flushPerformanceLogBuffer()
+        }
+    }
+
+    func appendReadablePerformanceLogLine(_ line: String, forceFlush: Bool = false) {
+        guard performanceLoggingEnabled, performanceReadableLogFileURL != nil else { return }
+        performanceReadableLogBuffer.append(line)
+        if forceFlush || performanceReadableLogBuffer.count >= 4 {
+            flushPerformanceLogBuffer()
+        }
+    }
+
+    func flushPerformanceLogBuffer() {
+        func scheduleWrite(fileURL: URL, payload: String) {
+            performanceLogQueue.async {
+                guard let data = payload.data(using: .utf8) else { return }
+                do {
+                    let handle = try FileHandle(forWritingTo: fileURL)
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                    try handle.close()
+                } catch {
+                    print("Performance log write failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        if let fileURL = performanceLogFileURL, !performanceLogBuffer.isEmpty {
+            let payload = performanceLogBuffer.joined(separator: "\n") + "\n"
+            performanceLogBuffer.removeAll(keepingCapacity: true)
+            scheduleWrite(fileURL: fileURL, payload: payload)
+        }
+
+        if let fileURL = performanceReadableLogFileURL, !performanceReadableLogBuffer.isEmpty {
+            let payload = performanceReadableLogBuffer.joined(separator: "\n\n") + "\n\n"
+            performanceReadableLogBuffer.removeAll(keepingCapacity: true)
+            scheduleWrite(fileURL: fileURL, payload: payload)
+        }
+    }
+
+    func performanceFoodTypeCounts() -> [String: Int] {
+        var counts: [String: Int] = [
+            "regular": 0,
+            "shield": 0,
+            "multiplier": 0,
+            "trail": 0,
+            "death": 0,
+            "magnet": 0,
+            "ghost": 0,
+            "shrink": 0
+        ]
+        for type in foodTypes {
+            counts[performanceName(for: type), default: 0] += 1
+        }
+        return counts
+    }
+
+    func performanceName(for type: FoodType) -> String {
+        switch type {
+        case .regular: return "regular"
+        case .shield: return "shield"
+        case .multiplier: return "multiplier"
+        case .trail: return "trail"
+        case .death: return "death"
+        case .magnet: return "magnet"
+        case .ghost: return "ghost"
+        case .shrink: return "shrink"
+        }
+    }
+
+    func readablePerformanceEntry(
+        event: String,
+        frameDurationMs: Double?,
+        currentTime: TimeInterval?,
+        activeBotCount: Int,
+        deadBotCount: Int,
+        foodCounts: [String: Int],
+        debugTiming: [String: Any],
+        extra: [String: Any]
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        let timestamp = formatter.string(from: Date())
+
+        let foodOrder = ["regular", "shield", "multiplier", "trail", "death", "magnet", "ghost", "shrink"]
+        let foodSummary = foodOrder
+            .map { "\($0)=\(foodCounts[$0, default: 0])" }
+            .joined(separator: " ")
+
+        let timingSummary: String
+        if let subsystemAverages = debugTiming["subsystem_avg_ms"] as? [String: Double] {
+            let subsystemOrder = [
+                "player", "bots", "botAI", "botFoodTargeting", "botClusterBonus",
+                "botCircledDetection", "botCircledEscape", "botCollisions", "botHeadHits",
+                "collisions", "cameraAndHUD", "minimapAndArrow", "heatmap", "powerUps",
+                "superMouse", "maintenance"
+            ]
+            timingSummary = subsystemOrder
+                .compactMap { key in
+                    guard let value = subsystemAverages[key] else { return nil }
+                    return "\(key)=\(String(format: "%.2f", value))ms"
+                }
+                .joined(separator: " ")
+        } else {
+            timingSummary = ""
+        }
+
+        var lines: [String] = []
+        let frameText = frameDurationMs.map { String(format: "%.2fms", $0) } ?? "n/a"
+        lines.append("[\(timestamp)] \(event.uppercased()) frame=\(frameText) sceneTime=\(String(format: "%.3f", currentTime ?? lastUpdateTime))")
+        lines.append("player score=\(score) body=\(bodySegments.count) visibleBody=\(bodySegments.filter { !$0.isHidden }.count) position=(\(Int(snakeHead?.position.x ?? 0)), \(Int(snakeHead?.position.y ?? 0)))")
+        lines.append("food total=\(foodItems.count) \(foodSummary)")
+        lines.append("foodCaps persistent=\(activePersistentFoodCount) regular=\(activeRegularFoodCount)/\(maxRegularFoodItems) special=\(activeSpecialFoodCount) trail=\(activeTrailFoodCount)/\(maxTrailFoodItems) death=\(activeDeathFoodCount)/\(maxDeathFoodItems) overall=\(foodItems.count)/\(maxTotalFoodItems)")
+        lines.append("bots active=\(activeBotCount) dead=\(deadBotCount)")
+        lines.append("flags boost=\(isBoostHeld) magnet=\(magnetActive) shield=\(shieldActive) ghost=\(ghostActive) multiplier=\(multiplierActive) superMouse=\(String(describing: superMouseState)) nodes=\(totalSceneNodeCount())")
+        lines.append("device model=\(deviceModelIdentifier()) thermal=\(thermalStateName()) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
+        if !timingSummary.isEmpty {
+            lines.append("timings \(timingSummary)")
+        }
+        if let rebuilds = debugTiming["full_food_grid_rebuilds_since_last"] as? Int,
+           let allocations = debugTiming["transient_allocations_since_last"] as? Int,
+           let reuses = debugTiming["transient_reuses_since_last"] as? Int,
+           let live = debugTiming["live_transient_nodes"] as? Int {
+            lines.append("churn foodGridRebuilds=\(rebuilds) transientAllocs=\(allocations) transientReuses=\(reuses) liveTransient=\(live)")
+        }
+        if let replans = debugTiming["bots_replanned_this_window"] as? Int,
+           let detailed = debugTiming["detailed_ai_decisions"] as? Int,
+           let ambient = debugTiming["ambient_ai_decisions"] as? Int,
+           let avgFood = debugTiming["avg_food_candidates_per_bot"] as? Double,
+           let maxFood = debugTiming["max_food_candidates_per_bot"] as? Int,
+           let avgThreats = debugTiming["avg_threats_per_bot"] as? Double,
+           let maxThreats = debugTiming["max_threats_per_bot"] as? Int {
+            lines.append("botWork replans=\(replans) detailed=\(detailed) ambient=\(ambient) avgFoodCandidates=\(String(format: "%.2f", avgFood)) maxFoodCandidates=\(maxFood) avgThreats=\(String(format: "%.2f", avgThreats)) maxThreats=\(maxThreats)")
+        }
+        if let playerFoodChecks = debugTiming["player_food_collision_checks"] as? Int,
+           let botFoodChecks = debugTiming["bot_food_collision_checks"] as? Int,
+           let broad = debugTiming["bot_vs_bot_broad_phase_checks"] as? Int,
+           let fine = debugTiming["bot_vs_bot_fine_phase_checks"] as? Int,
+           let botHeadChecks = debugTiming["bot_head_vs_player_body_checks"] as? Int {
+            lines.append("collisionChecks playerFood=\(playerFoodChecks) botFood=\(botFoodChecks) botBroad=\(broad) botFine=\(fine) botHeadVsPlayer=\(botHeadChecks)")
+        }
+        if let cacheHits = debugTiming["food_neighborhood_cache_hits"] as? Int,
+           let cacheMisses = debugTiming["food_neighborhood_cache_misses"] as? Int,
+           let localRecomputes = debugTiming["cluster_bonus_local_recomputes"] as? Int,
+           let touched = debugTiming["cluster_bonus_items_touched"] as? Int {
+            lines.append("cache foodNeighborhoodHits=\(cacheHits) misses=\(cacheMisses) clusterLocalRecomputes=\(localRecomputes) clusterItemsTouched=\(touched)")
+        }
+        if let botSteps = debugTiming["bot_update_steps_this_window"] as? Int,
+           let collisionSteps = debugTiming["bot_collision_steps_this_window"] as? Int,
+           let headSteps = debugTiming["bot_head_steps_this_window"] as? Int,
+           let clamps = debugTiming["accumulator_clamp_count"] as? Int {
+            lines.append("framePressure botSteps=\(botSteps) botCollisionSteps=\(collisionSteps) botHeadSteps=\(headSteps) accumulatorClamps=\(clamps)")
+        }
+        if let spawned = debugTiming["food_spawned_by_type"] as? [String: Int],
+           let eaten = debugTiming["food_eaten_by_type"] as? [String: Int],
+           let expired = debugTiming["food_expired_by_type"] as? [String: Int],
+           let skipped = debugTiming["food_skipped_by_cap"] as? [String: Int] {
+            let summarize: ([String: Int]) -> String = { values in
+                values.keys.sorted().map { "\($0)=\(values[$0, default: 0])" }.joined(separator: " ")
+            }
+            lines.append("foodFlow spawned{\(summarize(spawned))} eaten{\(summarize(eaten))} expired{\(summarize(expired))} skippedCap{\(summarize(skipped))}")
+        }
+        if !extra.isEmpty {
+            let extraSummary = extra.keys.sorted().map { key in
+                "\(key)=\(String(describing: extra[key] ?? ""))"
+            }.joined(separator: " ")
+            lines.append("extra \(extraSummary)")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    func totalSceneNodeCount() -> Int {
+        func countNodes(_ node: SKNode) -> Int {
+            1 + node.children.reduce(0) { $0 + countNodes($1) }
+        }
+        return countNodes(self)
+    }
+
+    func thermalStateName() -> String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: return "nominal"
+        case .fair: return "fair"
+        case .serious: return "serious"
+        case .critical: return "critical"
+        @unknown default: return "unknown"
+        }
+    }
+
+    func deviceModelIdentifier() -> String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        return mirror.children.reduce(into: "") { partialResult, element in
+            guard let value = element.value as? Int8, value != 0 else { return }
+            partialResult.append(Character(UnicodeScalar(UInt8(value))))
+        }
+    }
+
+    func debugDeltaDictionary(current: [String: Int], prior: inout [String: Int]) -> [String: Int] {
+        var delta: [String: Int] = [:]
+        for key in Set(current.keys).union(prior.keys) {
+            let value = max(0, current[key, default: 0] - prior[key, default: 0])
+            if value > 0 {
+                delta[key] = value
+            }
+            prior[key] = current[key, default: 0]
+        }
+        return delta
+    }
+
+    func performanceDeltaSnapshot() -> [String: Any] {
+        #if DEBUG
+        let frameDelta = max(0, debugPerfStats.frameCount - performanceLogLastDelta.frameCount)
+        var subsystemAveragesMs: [String: Double] = [:]
+        var subsystemMaxMs: [String: Double] = [:]
+        for subsystem in DebugSubsystem.allCases {
+            let total = debugPerfStats.subsystemMetrics[subsystem]?.total ?? 0
+            let priorTotal = performanceLogLastDelta.subsystemTotals[subsystem] ?? 0
+            let deltaTotal = max(0, total - priorTotal)
+            if frameDelta > 0 {
+                subsystemAveragesMs[subsystem.rawValue] = (deltaTotal / Double(frameDelta)) * 1000
+            } else {
+                subsystemAveragesMs[subsystem.rawValue] = 0
+            }
+            subsystemMaxMs[subsystem.rawValue] = (debugPerfStats.subsystemMetrics[subsystem]?.max ?? 0) * 1000
+            performanceLogLastDelta.subsystemTotals[subsystem] = total
+        }
+
+        let deltaSnapshot: [String: Any] = [
+            "window_frame_count": frameDelta,
+            "subsystem_avg_ms": subsystemAveragesMs,
+            "subsystem_max_ms_since_start": subsystemMaxMs,
+            "full_food_grid_rebuilds_since_last": max(0, debugPerfStats.fullFoodGridRebuilds - performanceLogLastDelta.fullFoodGridRebuilds),
+            "transient_allocations_since_last": max(0, debugPerfStats.transientNodeAllocations - performanceLogLastDelta.transientNodeAllocations),
+            "transient_reuses_since_last": max(0, debugPerfStats.reusedTransientNodes - performanceLogLastDelta.reusedTransientNodes),
+            "live_transient_nodes": debugPerfStats.liveTransientNodes,
+            "bots_replanned_this_window": max(0, debugPerfStats.botReplans - performanceLogLastDelta.botReplans),
+            "detailed_ai_decisions": max(0, debugPerfStats.detailedAIDecisions - performanceLogLastDelta.detailedAIDecisions),
+            "ambient_ai_decisions": max(0, debugPerfStats.ambientAIDecisions - performanceLogLastDelta.ambientAIDecisions),
+            "avg_food_candidates_per_bot": max(0, debugPerfStats.botReplans - performanceLogLastDelta.botReplans) > 0
+                ? Double(max(0, debugPerfStats.totalFoodCandidates - performanceLogLastDelta.totalFoodCandidates)) / Double(max(1, debugPerfStats.botReplans - performanceLogLastDelta.botReplans))
+                : 0,
+            "max_food_candidates_per_bot": debugPerfStats.maxFoodCandidatesPerBotWindow,
+            "avg_threats_per_bot": max(0, debugPerfStats.botReplans - performanceLogLastDelta.botReplans) > 0
+                ? Double(max(0, debugPerfStats.totalThreats - performanceLogLastDelta.totalThreats)) / Double(max(1, debugPerfStats.botReplans - performanceLogLastDelta.botReplans))
+                : 0,
+            "max_threats_per_bot": debugPerfStats.maxThreatsPerBotWindow,
+            "player_food_collision_checks": max(0, debugPerfStats.playerFoodCollisionChecks - performanceLogLastDelta.playerFoodCollisionChecks),
+            "bot_food_collision_checks": max(0, debugPerfStats.botFoodCollisionChecks - performanceLogLastDelta.botFoodCollisionChecks),
+            "bot_vs_bot_broad_phase_checks": max(0, debugPerfStats.botVsBotBroadPhaseChecks - performanceLogLastDelta.botVsBotBroadPhaseChecks),
+            "bot_vs_bot_fine_phase_checks": max(0, debugPerfStats.botVsBotFinePhaseChecks - performanceLogLastDelta.botVsBotFinePhaseChecks),
+            "bot_head_vs_player_body_checks": max(0, debugPerfStats.botHeadVsPlayerBodyChecks - performanceLogLastDelta.botHeadVsPlayerBodyChecks),
+            "food_neighborhood_cache_hits": max(0, debugPerfStats.foodNeighborhoodCacheHits - performanceLogLastDelta.foodNeighborhoodCacheHits),
+            "food_neighborhood_cache_misses": max(0, debugPerfStats.foodNeighborhoodCacheMisses - performanceLogLastDelta.foodNeighborhoodCacheMisses),
+            "cluster_bonus_local_recomputes": max(0, debugPerfStats.clusterBonusLocalRecomputes - performanceLogLastDelta.clusterBonusLocalRecomputes),
+            "cluster_bonus_items_touched": max(0, debugPerfStats.clusterBonusItemsTouched - performanceLogLastDelta.clusterBonusItemsTouched),
+            "bot_update_steps_this_window": max(0, debugPerfStats.botUpdateSteps - performanceLogLastDelta.botUpdateSteps),
+            "bot_collision_steps_this_window": max(0, debugPerfStats.botCollisionSteps - performanceLogLastDelta.botCollisionSteps),
+            "bot_head_steps_this_window": max(0, debugPerfStats.botHeadSteps - performanceLogLastDelta.botHeadSteps),
+            "accumulator_clamp_count": max(0, debugPerfStats.accumulatorClampCount - performanceLogLastDelta.accumulatorClampCount),
+            "food_spawned_by_type": debugDeltaDictionary(current: debugPerfStats.foodSpawnedByType, prior: &performanceLogLastDelta.foodSpawnedByType),
+            "food_removed_by_type": debugDeltaDictionary(current: debugPerfStats.foodRemovedByType, prior: &performanceLogLastDelta.foodRemovedByType),
+            "food_eaten_by_type": debugDeltaDictionary(current: debugPerfStats.foodEatenByType, prior: &performanceLogLastDelta.foodEatenByType),
+            "food_expired_by_type": debugDeltaDictionary(current: debugPerfStats.foodExpiredByType, prior: &performanceLogLastDelta.foodExpiredByType),
+            "food_skipped_by_cap": debugDeltaDictionary(current: debugPerfStats.foodSkippedByCap, prior: &performanceLogLastDelta.foodSkippedByCap)
+        ]
+
+        performanceLogLastDelta.frameCount = debugPerfStats.frameCount
+        performanceLogLastDelta.fullFoodGridRebuilds = debugPerfStats.fullFoodGridRebuilds
+        performanceLogLastDelta.transientNodeAllocations = debugPerfStats.transientNodeAllocations
+        performanceLogLastDelta.reusedTransientNodes = debugPerfStats.reusedTransientNodes
+        performanceLogLastDelta.botReplans = debugPerfStats.botReplans
+        performanceLogLastDelta.detailedAIDecisions = debugPerfStats.detailedAIDecisions
+        performanceLogLastDelta.ambientAIDecisions = debugPerfStats.ambientAIDecisions
+        performanceLogLastDelta.totalFoodCandidates = debugPerfStats.totalFoodCandidates
+        performanceLogLastDelta.totalThreats = debugPerfStats.totalThreats
+        performanceLogLastDelta.playerFoodCollisionChecks = debugPerfStats.playerFoodCollisionChecks
+        performanceLogLastDelta.botFoodCollisionChecks = debugPerfStats.botFoodCollisionChecks
+        performanceLogLastDelta.botVsBotBroadPhaseChecks = debugPerfStats.botVsBotBroadPhaseChecks
+        performanceLogLastDelta.botVsBotFinePhaseChecks = debugPerfStats.botVsBotFinePhaseChecks
+        performanceLogLastDelta.botHeadVsPlayerBodyChecks = debugPerfStats.botHeadVsPlayerBodyChecks
+        performanceLogLastDelta.foodNeighborhoodCacheHits = debugPerfStats.foodNeighborhoodCacheHits
+        performanceLogLastDelta.foodNeighborhoodCacheMisses = debugPerfStats.foodNeighborhoodCacheMisses
+        performanceLogLastDelta.clusterBonusLocalRecomputes = debugPerfStats.clusterBonusLocalRecomputes
+        performanceLogLastDelta.clusterBonusItemsTouched = debugPerfStats.clusterBonusItemsTouched
+        performanceLogLastDelta.botUpdateSteps = debugPerfStats.botUpdateSteps
+        performanceLogLastDelta.botCollisionSteps = debugPerfStats.botCollisionSteps
+        performanceLogLastDelta.botHeadSteps = debugPerfStats.botHeadSteps
+        performanceLogLastDelta.accumulatorClampCount = debugPerfStats.accumulatorClampCount
+        debugPerfStats.maxFoodCandidatesPerBotWindow = 0
+        debugPerfStats.maxThreatsPerBotWindow = 0
+        return deltaSnapshot
+        #else
+        return [:]
+        #endif
+    }
+
+    func logPerformanceSnapshot(
+        event: String,
+        frameDurationMs: Double? = nil,
+        currentTime: TimeInterval? = nil,
+        extra: [String: Any] = [:],
+        forceFlush: Bool = false
+    ) {
+        guard performanceLoggingEnabled, performanceLogFileURL != nil else { return }
+
+        let activeBotCount = bots.filter { $0.isActive && !$0.isDead }.count
+        let deadBotCount = bots.filter(\.isDead).count
+        let visibleBodySegments = bodySegments.filter { !$0.isHidden }.count
+        let playerPosition: [String: CGFloat]
+        if snakeHead != nil {
+            playerPosition = ["x": snakeHead.position.x, "y": snakeHead.position.y]
+        } else {
+            playerPosition = ["x": 0, "y": 0]
+        }
+        let foodCounts = performanceFoodTypeCounts()
+        let debugTiming = performanceDeltaSnapshot()
+        let payload: [String: Any] = [
+            "event": event,
+            "timestamp_ms": Int(Date().timeIntervalSince1970 * 1000),
+            "scene_time": currentTime ?? lastUpdateTime,
+            "frame_ms": frameDurationMs ?? NSNull(),
+            "player_score": score,
+            "player_body_segments": bodySegments.count,
+            "player_visible_body_segments": visibleBodySegments,
+            "player_position": playerPosition,
+            "player_body_points": bodyPositionCache.count,
+            "player_body_cell_count": playerBodyCellIndex.count,
+            "active_bot_count": activeBotCount,
+            "dead_bot_count": deadBotCount,
+            "active_bot_body_points": bots.reduce(0) { $0 + $1.bodyPositionCache.count },
+            "bot_body_cell_count": botBodyCellIndex.count,
+            "food_total": foodItems.count,
+            "food_counts": foodCounts,
+            "regular_food_count": activeRegularFoodCount,
+            "death_food_count": activeDeathFoodCount,
+            "active_trail_food_count": activeTrailFoodCount,
+            "trail_food_count": activeTrailFoodCount,
+            "special_food_count": activeSpecialFoodCount,
+            "persistent_food_count": activePersistentFoodCount,
+            "node_count": totalSceneNodeCount(),
+            "visible_bot_segment_count": bots.reduce(0) { partial, bot in
+                partial + bot.body.reduce(0) { $0 + ($1.isHidden ? 0 : 1) }
+            },
+            "circled_bot_count": bots.filter { $0.isActive && !$0.isDead && $0.isCircled }.count,
+            "low_power_mode_enabled": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            "thermal_state": thermalStateName(),
+            "device_model": deviceModelIdentifier(),
+            "boost_active": isBoostHeld,
+            "magnet_active": magnetActive,
+            "shield_active": shieldActive,
+            "ghost_active": ghostActive,
+            "multiplier_active": multiplierActive,
+            "super_mouse_state": String(describing: superMouseState),
+            "debug_timing": debugTiming,
+            "extra": extra
+        ]
+
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+              let line = String(data: data, encoding: .utf8) else {
+            return
+        }
+        appendPerformanceLogLine(line, forceFlush: forceFlush)
+        appendReadablePerformanceLogLine(
+            readablePerformanceEntry(
+                event: event,
+                frameDurationMs: frameDurationMs,
+                currentTime: currentTime,
+                activeBotCount: activeBotCount,
+                deadBotCount: deadBotCount,
+                foodCounts: foodCounts,
+                debugTiming: debugTiming,
+                extra: extra
+            ),
+            forceFlush: forceFlush
+        )
+    }
+
+    func maybeLogPerformanceSnapshot(frameDurationMs: Double, currentTime: TimeInterval, frameStartUptime: CFTimeInterval) {
+        guard performanceLoggingEnabled else { return }
+        let shouldLogSpike = frameDurationMs >= performanceLogSpikeThresholdMs
+            && (frameStartUptime - performanceLogLastSpikeUptime) >= performanceLogMinSpikeInterval
+        let shouldLogSample = performanceLogLastSampleUptime == 0
+            || (frameStartUptime - performanceLogLastSampleUptime) >= performanceLogSampleInterval
+
+        if shouldLogSpike {
+            performanceLogLastSpikeUptime = frameStartUptime
+            performanceLogLastSampleUptime = frameStartUptime
+            logPerformanceSnapshot(event: "spike", frameDurationMs: frameDurationMs, currentTime: currentTime, forceFlush: true)
+            return
+        }
+
+        if shouldLogSample {
+            performanceLogLastSampleUptime = frameStartUptime
+            logPerformanceSnapshot(event: "sample", frameDurationMs: frameDurationMs, currentTime: currentTime)
+        }
     }
 
     // MARK: - Game Controller Support
@@ -664,7 +1429,6 @@ class GameScene: SKScene {
         gameStarted         = false
         isPausedGame        = false
         scoreMultiplier     = 1
-        hasUsedRevive            = false
         hasDoubledCoins          = false
         regularFoodEatenForCoin  = 0
         deathFoodEatenForCoin    = 0
@@ -700,7 +1464,10 @@ class GameScene: SKScene {
         leaderArrowUpdateTimer = 0
         miniLeaderboardNeedsRefresh = true
         trailFoodTimer       = 0
+        activeRegularFoodCount = 0
+        activeDeathFoodCount = 0
         activeTrailFoodCount = 0
+        activeSpecialFoodCount = 0
         tailWigglePhase      = 0
         // Initialise heatmap with a small uniform baseline so early food isn't purely central.
         movementHeatmap = Array(repeating: Array(repeating: 0.1, count: heatmapCols), count: heatmapRows)
@@ -736,7 +1503,15 @@ class GameScene: SKScene {
         foodItems.removeAll()
         foodTypes.removeAll()
         foodSpatialGrid.removeAll()
+        foodNeighborhoodCache.removeAll()
         foodGridDirty = false
+        cachedClusterBonuses.removeAll()
+        clusterBonusDirty = true
+        activeSpecialFoodIndices.removeAll()
+        reusableFoodNodes.removeAll()
+        activeReusableFoodKeys.removeAll()
+        floatingTextPool.removeAll()
+        transientParticlePools.removeAll()
         gameOverOverlay   = nil
         pauseOverlay      = nil
         powerUpPanel      = nil
@@ -746,8 +1521,16 @@ class GameScene: SKScene {
         joystickThumbNode = nil
         boostButtonNode   = nil
         miniLeaderboard   = nil
+        miniLeaderboardBackground = nil
+        miniLeaderboardTitleLabel = nil
+        miniLeaderboardEntryLabels.removeAll()
+        minimapNode = nil
+        minimapPlayerDot = nil
+        minimapBotDots.removeAll()
         leaderArrowNode   = nil
         leaderArrowLabel  = nil
+        lastLeaderArrowText = ""
+        lastLeaderArrowHidden = true
         hideSuperMouseHUD()
         superMouseCountdownLabel?.removeFromParent()
         superMouseCountdownLabel = nil
@@ -770,6 +1553,12 @@ class GameScene: SKScene {
         raceObstacles.removeAll()
         raceCheckpoints.removeAll()
         raceModeLabel = nil
+        minimapBotDisplayKeys.removeAll()
+        botBodyCellIndex.removeAll()
+        #if DEBUG
+        debugPerfStats = DebugPerfStats()
+        #endif
+        startPerformanceLogSession(reason: "setup_new_game")
 
         if gameMode == .challenge {
             backgroundColor = SKColor(red: 0.15, green: 0.05, blue: 0.05, alpha: 1.0)
@@ -1507,6 +2296,7 @@ class GameScene: SKScene {
         lastPlayerPosition = snakeHead.position
         UINotificationFeedbackGenerator().notificationOccurred(.error)
         spawnDeathParticles(at: snakeHead.position)
+        logPerformanceSnapshot(event: "game_over", forceFlush: true)
 
         run(deathAction) { [weak self] in
             self?.stopBackgroundMusic()
@@ -1632,12 +2422,10 @@ class GameScene: SKScene {
 
     // MARK: - Floating Score Text
     func spawnFloatingText(_ text: String, at position: CGPoint, color: SKColor = SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)) {
-        let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+        let label = acquireFloatingTextLabel()
         label.text                    = text
         label.fontSize                = 24
         label.fontColor               = color
-        label.horizontalAlignmentMode = .center
-        label.verticalAlignmentMode   = .center
         label.position                = position
         label.zPosition               = 700
         addChild(label)
@@ -1648,7 +2436,10 @@ class GameScene: SKScene {
                 SKAction.sequence([SKAction.wait(forDuration: 0.3),
                                    SKAction.fadeOut(withDuration: 0.5)])
             ]),
-            SKAction.removeFromParent()
+            SKAction.run { [weak self, weak label] in
+                guard let self, let label else { return }
+                self.recycleFloatingTextLabel(label)
+            }
         ]))
     }
 
@@ -1690,9 +2481,10 @@ class GameScene: SKScene {
             SKColor(red: 1.0, green: 0.5, blue: 0.2, alpha: 1.0)
         ]
         for _ in 0..<8 {
-            let p = SKShapeNode(circleOfRadius: 4)
-            p.fillColor = colors.randomElement()!; p.strokeColor = .clear
-            p.position = position; p.zPosition = 600
+            let p = acquireTransientParticle(radius: 4, pool: .eat(40))
+            p.fillColor = colors.randomElement()!
+            p.position = position
+            p.zPosition = 600
             addChild(p)
             let angle = CGFloat.random(in: 0...(2 * .pi))
             let dist  = CGFloat.random(in: 30...70)
@@ -1700,7 +2492,10 @@ class GameScene: SKScene {
                 SKAction.group([SKAction.moveBy(x: cos(angle) * dist, y: sin(angle) * dist, duration: 0.5),
                                 SKAction.fadeOut(withDuration: 0.5),
                                 SKAction.scale(to: 0.1, duration: 0.5)]),
-                SKAction.removeFromParent()
+                SKAction.run { [weak self, weak p] in
+                    guard let self, let p else { return }
+                    self.recycleTransientParticle(p, pool: .eat(40))
+                }
             ]))
         }
     }
@@ -1712,9 +2507,12 @@ class GameScene: SKScene {
             SKColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
         ]
         for _ in 0..<20 {
-            let p = SKShapeNode(circleOfRadius: CGFloat.random(in: 4...8))
-            p.fillColor = colors.randomElement()!; p.strokeColor = .clear
-            p.position = position; p.zPosition = 600
+            let radius = CGFloat.random(in: 4...8)
+            let key = Int((radius * 10).rounded())
+            let p = acquireTransientParticle(radius: radius, pool: .death(key))
+            p.fillColor = colors.randomElement()!
+            p.position = position
+            p.zPosition = 600
             addChild(p)
             let angle = CGFloat.random(in: 0...(2 * .pi))
             let dist  = CGFloat.random(in: 50...120)
@@ -1722,7 +2520,10 @@ class GameScene: SKScene {
                 SKAction.group([SKAction.moveBy(x: cos(angle) * dist, y: sin(angle) * dist, duration: 0.8),
                                 SKAction.fadeOut(withDuration: 0.8),
                                 SKAction.scale(to: 0.1, duration: 0.8)]),
-                SKAction.removeFromParent()
+                SKAction.run { [weak self, weak p] in
+                    guard let self, let p else { return }
+                    self.recycleTransientParticle(p, pool: .death(key))
+                }
             ]))
         }
     }
@@ -1979,7 +2780,7 @@ class GameScene: SKScene {
     // consecutive segments share cells, so unique cell count drops ~3–4×.
     // The ±1-cell neighbourhood check still covers ±30 px, which comfortably exceeds
     // the 22 px combined collision radius (collisionRadius + bodySegmentRadius).
-    private let occupancyCellSize: CGFloat = 30.0
+    let occupancyCellSize: CGFloat = 30.0
 
     func gridCell(for point: CGPoint) -> GridCell {
         GridCell(x: Int(point.x / occupancyCellSize), y: Int(point.y / occupancyCellSize))
@@ -1993,7 +2794,6 @@ class GameScene: SKScene {
     func showSuperMouseAlert() {
         let cam = cameraNode
         let zoom = cameraScale()
-        let halfW = size.width  * zoom / 2
         let halfH = size.height * zoom / 2
 
         // --- Banner ---
@@ -2679,7 +3479,9 @@ class GameScene: SKScene {
 
             for j in (i + 1)..<bots.count {
                 guard bots[j].isActive, !bots[j].isDead, let headJ = bots[j].head else { continue }
+                debugIncrement(\.botVsBotBroadPhaseChecks)
                 guard botPairWithinBroadPhase(bots[i], bots[j]) else { continue }
+                debugIncrement(\.botVsBotFinePhaseChecks)
 
                 // Head-to-head collision (evaluated once per pair)
                 if bots[i].ghostTimeLeft <= 0, bots[j].ghostTimeLeft <= 0 {
@@ -2873,6 +3675,7 @@ class GameScene: SKScene {
     // MARK: - Game Loop
     override func update(_ currentTime: TimeInterval) {
         guard !isGameOver, gameSetupComplete, gameStarted, !isPausedGame else { return }
+        let frameStartUptime = CFAbsoluteTimeGetCurrent()
         readControllerInput()
 
         let frameDelta: CGFloat = lastUpdateTime == 0
@@ -2881,8 +3684,10 @@ class GameScene: SKScene {
         let dt: CGFloat = min(frameDelta, CGFloat(maxDeltaTime))
         lastUpdateTime = currentTime
 
-        updatePowerUps(dt: dt)
-        tickCombo(dt: dt)
+        debugMeasure(.powerUps) {
+            updatePowerUps(dt: dt)
+            tickCombo(dt: dt)
+        }
         frameCounter += 1
 
         // --- Boost Drain / Energy Regen ---
@@ -2950,51 +3755,54 @@ class GameScene: SKScene {
         let raceControlSpeedFactor: CGFloat = isSnakeRaceMode ? (0.72 + joystickEngagement * 0.72) : 1.0
         let playerDist = baseDist * raceControlSpeedFactor
 
-        positionHistory.append(snakeHead.position)
-        updateHistoryCapacityIfNeeded()
+        let (dangerCount, dangerStart): (Int, Int) = debugMeasure(.player) {
+            positionHistory.append(snakeHead.position)
+            updateHistoryCapacityIfNeeded()
 
-        if isTouching {
-            let dynamicTurnSpeed = playerTurnSpeedBase
-                + joystickEngagement * playerTurnSpeedBoost
-                + (isBoostHeld ? 25 : 0)
-            smoothlyRotate(
-                current: &currentAngle,
-                target: targetAngle,
-                dt: dt,
-                maxTurnSpeed: dynamicTurnSpeed
-            )
-        }
-
-        snakeHead.position.x += cos(currentAngle) * playerDist
-        snakeHead.position.y += sin(currentAngle) * playerDist
-        snakeHead.zRotation   = (currentAngle * 180.0 / .pi - 90.0) * .pi / 180.0
-        lastPlayerPosition    = snakeHead.position
-
-        fillArcPositions(history: positionHistory, leadPos: snakeHead.position,
-                         count: bodySegments.count, spacing: segmentPixelSpacing,
-                         into: &bodyPositionCache)
-
-        // Shield wiggle: last 30% of body oscillates perpendicular to movement
-        let totalSegs   = bodySegments.count
-        let dangerCount = shieldActive ? max(1, Int(CGFloat(totalSegs) * 0.30)) : 0
-        let dangerStart = totalSegs - dangerCount
-        if shieldActive { tailWigglePhase += dt * 8.0 }
-
-        for i in bodyPositionCache.indices {
-            var pos = bodyPositionCache[i]
-            let isWiggling = shieldActive && i >= dangerStart
-            if isWiggling {
-                let progress: CGFloat = dangerCount > 1
-                    ? CGFloat(i - dangerStart) / CGFloat(dangerCount - 1)
-                    : 1.0
-                let amplitude: CGFloat = 9.0 * progress
-                let phase = tailWigglePhase + CGFloat(i - dangerStart) * 0.8
-                pos.x += -sin(currentAngle) * sin(phase) * amplitude
-                pos.y +=  cos(currentAngle) * sin(phase) * amplitude
+            if isTouching {
+                let dynamicTurnSpeed = playerTurnSpeedBase
+                    + joystickEngagement * playerTurnSpeedBoost
+                    + (isBoostHeld ? 25 : 0)
+                smoothlyRotate(
+                    current: &currentAngle,
+                    target: targetAngle,
+                    dt: dt,
+                    maxTurnSpeed: dynamicTurnSpeed
+                )
             }
-            bodyPositionCache[i] = pos
+
+            snakeHead.position.x += cos(currentAngle) * playerDist
+            snakeHead.position.y += sin(currentAngle) * playerDist
+            snakeHead.zRotation   = (currentAngle * 180.0 / .pi - 90.0) * .pi / 180.0
+            lastPlayerPosition    = snakeHead.position
+
+            fillArcPositions(history: positionHistory, leadPos: snakeHead.position,
+                             count: bodySegments.count, spacing: segmentPixelSpacing,
+                             into: &bodyPositionCache)
+
+            // Shield wiggle: last 30% of body oscillates perpendicular to movement
+            let totalSegs = bodySegments.count
+            let dangerCount = shieldActive ? max(1, Int(CGFloat(totalSegs) * 0.30)) : 0
+            let dangerStart = totalSegs - dangerCount
+            if shieldActive { tailWigglePhase += dt * 8.0 }
+
+            for i in bodyPositionCache.indices {
+                var pos = bodyPositionCache[i]
+                let isWiggling = shieldActive && i >= dangerStart
+                if isWiggling {
+                    let progress: CGFloat = dangerCount > 1
+                        ? CGFloat(i - dangerStart) / CGFloat(dangerCount - 1)
+                        : 1.0
+                    let amplitude: CGFloat = 9.0 * progress
+                    let phase = tailWigglePhase + CGFloat(i - dangerStart) * 0.8
+                    pos.x += -sin(currentAngle) * sin(phase) * amplitude
+                    pos.y +=  cos(currentAngle) * sin(phase) * amplitude
+                }
+                bodyPositionCache[i] = pos
+            }
+            updatePlayerBodyPathAndCollisionSet()
+            return (dangerCount, dangerStart)
         }
-        updatePlayerBodyPathAndCollisionSet()
 
         // Shield tail kills bots on contact
         if shieldActive && dangerCount > 0 && frameCounter % 2 == 0 {
@@ -3012,21 +3820,23 @@ class GameScene: SKScene {
         }
 
         // --- Collisions ---
-        if checkWallCollision() { playerGameOver(); return }
-        // Self-collision intentionally disabled: snake passes through its own body
-
-        if !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { playerGameOver(); return }
-        if !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { playerGameOver(); return }
-        
-
-        if !isSpecialOfflineMode { checkFoodCollisions() }
+        let didGameOver = debugMeasure(.collisions) {
+            if checkWallCollision() { return true }
+            if !isSpecialOfflineMode && checkPlayerHeadVsBotHeads() { return true }
+            if !isSpecialOfflineMode && checkPlayerCollidesWithBotBodies() { return true }
+            if !isSpecialOfflineMode { checkFoodCollisions() }
+            return false
+        }
+        if didGameOver { playerGameOver(); return }
 
         // --- Super Mouse ---
-        if !isSpecialOfflineMode { updateSuperMouse(dt: dt) }
+        debugMeasure(.superMouse) {
+            if !isSpecialOfflineMode { updateSuperMouse(dt: dt) }
+        }
 
         // --- Trail food spawning (player) ---
         // Spawn a few segments behind the head so the trail is always visible near the action.
-        // At 5000+ pts the tail is ~7000px off-screen; spawning there makes the trail invisible.
+        // At large arena sizes the tail can be far off-screen; spawning there makes the trail invisible.
         if !isSpecialOfflineMode, gameStarted, !bodyPositionCache.isEmpty {
             trailFoodTimer += dt
             if isBoostHeld, trailFoodTimer >= playerTrailInterval {
@@ -3041,24 +3851,23 @@ class GameScene: SKScene {
         }
 
         // --- Safety net: purge orphaned food entries (death food still relies on this) ---
-        if !isSpecialOfflineMode && frameCounter % 300 == 0 {
-            // Collect indices descending so swap-with-last in removeFoodItem doesn't corrupt
-            // earlier indices (removing highest-index first means swaps only affect already-seen slots).
-            var toRemove: [Int] = []
-            for (i, item) in foodItems.enumerated() where item.parent == nil {
-                toRemove.append(i)
+        debugMeasure(.maintenance) {
+            if !isSpecialOfflineMode && frameCounter % 300 == 0 {
+                var toRemove: [Int] = []
+                for (i, item) in foodItems.enumerated() where item.parent == nil {
+                    toRemove.append(i)
+                }
+                for i in toRemove.sorted(by: >) {
+                    removeFoodItem(at: i)
+                }
             }
-            for i in toRemove.sorted(by: >) {
-                removeFoodItem(at: i)
-            }
-            // Reconcile counter against live trail entries to correct any drift
-            activeTrailFoodCount = foodTypes.filter { $0 == .trail }.count
-            foodGridDirty = true   // grid may be stale after batch removals
         }
 
         // --- Camera & HUD ---
-        updateCamera()
-        updateHUDPositions()
+        debugMeasure(.cameraAndHUD) {
+            updateCamera()
+            updateHUDPositions()
+        }
 
         if !isSpecialOfflineMode {
             botVisibilityUpdateTimer += dt
@@ -3069,7 +3878,11 @@ class GameScene: SKScene {
             circledDetectionTimer += dt
             if circledDetectionTimer >= 0.5 {
                 circledDetectionTimer = 0
-                detectCircledBots()
+                debugMeasure(.bots) {
+                    debugMeasure(.botCircledDetection) {
+                        detectCircledBots()
+                    }
+                }
             }
         }
 
@@ -3093,49 +3906,75 @@ class GameScene: SKScene {
             // Extra debt is discarded, which causes bots to slow down gracefully rather than
             // stacking up expensive catch-up work that makes the next frame even slower.
             let maxStepsPerFrame: CGFloat = 3 * simulationStep
-            if botUpdateAccumulator    > maxStepsPerFrame { botUpdateAccumulator    = maxStepsPerFrame }
-            if botCollisionAccumulator > maxStepsPerFrame { botCollisionAccumulator = maxStepsPerFrame }
-            if botHeadCheckAccumulator > maxStepsPerFrame { botHeadCheckAccumulator = maxStepsPerFrame }
-
-            while botUpdateAccumulator >= simulationStep {
-                updateBots(dt: simulationStep, updateAI: true)
-                botUpdateAccumulator -= simulationStep
+            if botUpdateAccumulator > maxStepsPerFrame {
+                botUpdateAccumulator = maxStepsPerFrame
+                debugIncrement(\.accumulatorClampCount)
+            }
+            if botCollisionAccumulator > maxStepsPerFrame {
+                botCollisionAccumulator = maxStepsPerFrame
+                debugIncrement(\.accumulatorClampCount)
+            }
+            if botHeadCheckAccumulator > maxStepsPerFrame {
+                botHeadCheckAccumulator = maxStepsPerFrame
+                debugIncrement(\.accumulatorClampCount)
             }
 
-            while botCollisionAccumulator >= simulationStep {
-                checkBotVsBotCollisions()
-                botCollisionAccumulator -= simulationStep
-            }
+            debugMeasure(.bots) {
+                while botUpdateAccumulator >= simulationStep {
+                    debugIncrement(\.botUpdateSteps)
+                    debugMeasure(.botAI) {
+                        updateBots(dt: simulationStep, updateAI: true)
+                    }
+                    botUpdateAccumulator -= simulationStep
+                }
 
-            while botHeadCheckAccumulator >= simulationStep {
-                checkBotHeadsHitPlayerBody()
-                botHeadCheckAccumulator -= simulationStep
+                while botCollisionAccumulator >= simulationStep {
+                    debugIncrement(\.botCollisionSteps)
+                    debugMeasure(.botCollisions) {
+                        checkBotVsBotCollisions()
+                    }
+                    botCollisionAccumulator -= simulationStep
+                }
+
+                while botHeadCheckAccumulator >= simulationStep {
+                    debugIncrement(\.botHeadSteps)
+                    debugMeasure(.botHeadHits) {
+                        checkBotHeadsHitPlayerBody()
+                    }
+                    botHeadCheckAccumulator -= simulationStep
+                }
             }
         }
 
         // --- Minimap (every frame) ---
-        minimapUpdateTimer += dt
-        if minimapUpdateTimer >= (1.0 / 15.0) {
-            minimapUpdateTimer = 0
-            updateMinimap()
-        }
+        debugMeasure(.minimapAndArrow) {
+            minimapUpdateTimer += dt
+            if minimapUpdateTimer >= (1.0 / 15.0) {
+                minimapUpdateTimer = 0
+                updateMinimap()
+            }
 
-        leaderArrowUpdateTimer += dt
-        if leaderArrowUpdateTimer >= 0.1 {
-            leaderArrowUpdateTimer = 0
-            updateLeaderArrow()
-            updateSuperMouseHUD()
-        }
+            leaderArrowUpdateTimer += dt
+            if leaderArrowUpdateTimer >= 0.1 {
+                leaderArrowUpdateTimer = 0
+                updateLeaderArrow()
+                updateSuperMouseHUD()
+            }
 
-        // --- Mini Leaderboard (refresh on change, with 1 Hz fallback) ---
-        leaderboardUpdateTimer += dt
-        if miniLeaderboardNeedsRefresh || leaderboardUpdateTimer >= 1.0 {
-            leaderboardUpdateTimer = 0
-            updateMiniLeaderboard()
+            leaderboardUpdateTimer += dt
+            if miniLeaderboardNeedsRefresh || leaderboardUpdateTimer >= 1.0 {
+                leaderboardUpdateTimer = 0
+                updateMiniLeaderboard()
+            }
         }
 
         // --- Movement Heatmap update ---
-        updateMovementHeatmap(dt: dt)
+        debugMeasure(.heatmap) {
+            updateMovementHeatmap(dt: dt)
+        }
+
+        let frameDurationMs = (CFAbsoluteTimeGetCurrent() - frameStartUptime) * 1000
+        maybeLogPerformanceSnapshot(frameDurationMs: frameDurationMs, currentTime: currentTime, frameStartUptime: frameStartUptime)
     }
 }
 

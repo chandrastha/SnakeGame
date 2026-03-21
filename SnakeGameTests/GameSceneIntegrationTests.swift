@@ -14,6 +14,27 @@ final class GameSceneIntegrationTests: XCTestCase {
         return scene
     }
 
+    private func setPlayerBody(_ points: [CGPoint], on scene: GameScene) {
+        scene.bodyPositionCache = points
+        scene.playerBodyOccupancy.removeAll()
+        scene.playerBodyCellIndex.removeAll()
+        for (index, point) in points.enumerated() {
+            let cell = scene.gridCell(for: point)
+            scene.playerBodyOccupancy.insert(cell)
+            scene.playerBodyCellIndex[cell, default: []].append(index)
+        }
+    }
+
+    private func bodyRing(center: CGPoint, radius: CGFloat, angleStepDegrees: Int = 10, skipping skippedDegrees: ClosedRange<Int>? = nil) -> [CGPoint] {
+        stride(from: 0, through: 350, by: angleStepDegrees).compactMap { degrees in
+            if let skippedDegrees, skippedDegrees.contains(degrees) {
+                return nil
+            }
+            let radians = CGFloat(degrees) * .pi / 180
+            return CGPoint(x: center.x + cos(radians) * radius, y: center.y + sin(radians) * radius)
+        }
+    }
+
     // MARK: - Integration Tests: SpriteKit + SwiftUI Bridge Points
 
     func test_givenFreshScene_whenDidMove_thenInitialStateIsPrepared() {
@@ -164,5 +185,70 @@ final class GameSceneIntegrationTests: XCTestCase {
 
         XCTAssertTrue(scene.isGameOver)
         XCTAssertTrue(scene.bots[botIndex].isDead)
+    }
+
+    func test_givenMultipleGameOvers_whenReviving_thenPlayerCanReviveEachTime() {
+        let scene = makeRunningScene()
+
+        scene.isGameOver = true
+        scene.showGameOverScreen()
+        scene.revivePlayer()
+
+        XCTAssertFalse(scene.isGameOver)
+        XCTAssertNil(scene.gameOverOverlay)
+
+        scene.isGameOver = true
+        scene.showGameOverScreen()
+        scene.revivePlayer()
+
+        XCTAssertFalse(scene.isGameOver)
+        XCTAssertNil(scene.gameOverOverlay)
+        XCTAssertEqual(scene.snakeHead.position, CGPoint(x: scene.worldSize / 2, y: scene.worldSize / 2))
+    }
+
+    func test_givenBotInsideClosedPlayerLoop_whenDetectingCircledBots_thenMarksBotCircled() throws {
+        let scene = makeRunningScene()
+        guard let botIndex = scene.bots.indices.first else {
+            return XCTFail("Expected at least one bot")
+        }
+
+        for index in scene.bots.indices where index != botIndex {
+            scene.bots[index].isActive = false
+            scene.bots[index].isDead = true
+            scene.bots[index].bodyPositionCache.removeAll()
+        }
+
+        scene.bots[botIndex].isActive = true
+        scene.bots[botIndex].isDead = false
+        scene.bots[botIndex].position = CGPoint(x: 2500, y: 2500)
+        scene.bots[botIndex].bodyPositionCache = [CGPoint(x: 2500, y: 2500)]
+        setPlayerBody(bodyRing(center: scene.bots[botIndex].position, radius: 210), on: scene)
+
+        scene.detectCircledBots()
+
+        XCTAssertTrue(scene.bots[botIndex].isCircled)
+    }
+
+    func test_givenBotInsideLoopWithWideExit_whenDetectingCircledBots_thenLeavesBotUncircled() throws {
+        let scene = makeRunningScene()
+        guard let botIndex = scene.bots.indices.first else {
+            return XCTFail("Expected at least one bot")
+        }
+
+        for index in scene.bots.indices where index != botIndex {
+            scene.bots[index].isActive = false
+            scene.bots[index].isDead = true
+            scene.bots[index].bodyPositionCache.removeAll()
+        }
+
+        scene.bots[botIndex].isActive = true
+        scene.bots[botIndex].isDead = false
+        scene.bots[botIndex].position = CGPoint(x: 2500, y: 2500)
+        scene.bots[botIndex].bodyPositionCache = [CGPoint(x: 2500, y: 2500)]
+        setPlayerBody(bodyRing(center: scene.bots[botIndex].position, radius: 210, skipping: 330...350), on: scene)
+
+        scene.detectCircledBots()
+
+        XCTAssertFalse(scene.bots[botIndex].isCircled)
     }
 }

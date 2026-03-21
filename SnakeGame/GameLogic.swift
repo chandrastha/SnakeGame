@@ -71,6 +71,12 @@ struct BotPersonalityProfile {
     let foodSearchRadius: CGFloat
     /// 0–1. How long the bot stays locked onto a chosen target before re-evaluating.
     let targetStickiness: CGFloat
+    /// Multiplier applied to turn rate when danger-response steering activates.
+    let emergencyTurnMultiplier: CGFloat
+    /// Maximum proportional speed reduction allowed while tightening a turn to survive.
+    let escapeSpeedReductionCap: CGFloat
+    /// 0–1. Preference for wider escape corridors over narrow high-clearance lines.
+    let corridorPreference: CGFloat
 }
 
 /// Snapshot of the arena state used by `chooseBotIntent`.
@@ -328,7 +334,8 @@ enum GameLogic {
                 cutBias: 0.25, boostBias: 0.40, unpredictability: 0.18,
                 turnRateMultiplier: 1.02, horizonMultiplier: 1.08,
                 cruiseSpeedMultiplier: 0.98, replanInterval: 0.22,
-                desiredClearance: 92, foodSearchRadius: 720, targetStickiness: 0.62
+                desiredClearance: 92, foodSearchRadius: 720, targetStickiness: 0.62,
+                emergencyTurnMultiplier: 1.04, escapeSpeedReductionCap: 0.14, corridorPreference: 0.64
             )
         case .hunter:
             // Aggressive head-chaser — highest aggression, strong cut & boost bias.
@@ -337,7 +344,8 @@ enum GameLogic {
                 cutBias: 0.68, boostBias: 0.78, unpredictability: 0.12,
                 turnRateMultiplier: 1.08, horizonMultiplier: 1.02,
                 cruiseSpeedMultiplier: 1.05, replanInterval: 0.18,
-                desiredClearance: 72, foodSearchRadius: 620, targetStickiness: 0.78
+                desiredClearance: 80, foodSearchRadius: 620, targetStickiness: 0.78,
+                emergencyTurnMultiplier: 1.06, escapeSpeedReductionCap: 0.16, corridorPreference: 0.58
             )
         case .coward:
             // Survival-first — highest caution and clearance, escapes at the first sign of danger.
@@ -346,7 +354,8 @@ enum GameLogic {
                 cutBias: 0.10, boostBias: 0.72, unpredictability: 0.15,
                 turnRateMultiplier: 1.15, horizonMultiplier: 1.22,
                 cruiseSpeedMultiplier: 1.00, replanInterval: 0.16,
-                desiredClearance: 116, foodSearchRadius: 640, targetStickiness: 0.55
+                desiredClearance: 116, foodSearchRadius: 640, targetStickiness: 0.55,
+                emergencyTurnMultiplier: 1.08, escapeSpeedReductionCap: 0.18, corridorPreference: 0.84
             )
         case .opportunist:
             // Jack-of-all-trades — every stat near the middle so it adapts to any situation.
@@ -355,7 +364,8 @@ enum GameLogic {
                 cutBias: 0.52, boostBias: 0.58, unpredictability: 0.20,
                 turnRateMultiplier: 1.06, horizonMultiplier: 1.00,
                 cruiseSpeedMultiplier: 1.01, replanInterval: 0.20,
-                desiredClearance: 84, foodSearchRadius: 690, targetStickiness: 0.66
+                desiredClearance: 84, foodSearchRadius: 690, targetStickiness: 0.66,
+                emergencyTurnMultiplier: 1.05, escapeSpeedReductionCap: 0.15, corridorPreference: 0.68
             )
         case .sprinter:
             // Speed demon — highest boost bias and cruise multiplier, fastest replan cadence.
@@ -364,7 +374,8 @@ enum GameLogic {
                 cutBias: 0.48, boostBias: 0.98, unpredictability: 0.16,
                 turnRateMultiplier: 1.18, horizonMultiplier: 0.94,
                 cruiseSpeedMultiplier: 1.10, replanInterval: 0.16,
-                desiredClearance: 78, foodSearchRadius: 650, targetStickiness: 0.60
+                desiredClearance: 86, foodSearchRadius: 650, targetStickiness: 0.60,
+                emergencyTurnMultiplier: 1.06, escapeSpeedReductionCap: 0.16, corridorPreference: 0.56
             )
         case .vulture:
             // Patient opportunist — widest search radius, nearly max scavenger bias.
@@ -373,7 +384,8 @@ enum GameLogic {
                 cutBias: 0.38, boostBias: 0.64, unpredictability: 0.18,
                 turnRateMultiplier: 1.00, horizonMultiplier: 1.10,
                 cruiseSpeedMultiplier: 1.00, replanInterval: 0.22,
-                desiredClearance: 90, foodSearchRadius: 760, targetStickiness: 0.72
+                desiredClearance: 90, foodSearchRadius: 760, targetStickiness: 0.72,
+                emergencyTurnMultiplier: 1.04, escapeSpeedReductionCap: 0.15, corridorPreference: 0.78
             )
         case .interceptor:
             // Path-cutter — highest cut bias, locks onto targets stubbornly (high stickiness).
@@ -382,7 +394,8 @@ enum GameLogic {
                 cutBias: 0.92, boostBias: 0.70, unpredictability: 0.10,
                 turnRateMultiplier: 1.12, horizonMultiplier: 1.15,
                 cruiseSpeedMultiplier: 1.03, replanInterval: 0.18,
-                desiredClearance: 76, foodSearchRadius: 610, targetStickiness: 0.80
+                desiredClearance: 86, foodSearchRadius: 610, targetStickiness: 0.80,
+                emergencyTurnMultiplier: 1.06, escapeSpeedReductionCap: 0.16, corridorPreference: 0.70
             )
         case .trickster:
             // Erratic mover — highest unpredictability, low target stickiness.
@@ -391,7 +404,8 @@ enum GameLogic {
                 cutBias: 0.58, boostBias: 0.62, unpredictability: 0.34,
                 turnRateMultiplier: 1.16, horizonMultiplier: 0.98,
                 cruiseSpeedMultiplier: 1.02, replanInterval: 0.19,
-                desiredClearance: 80, foodSearchRadius: 660, targetStickiness: 0.50
+                desiredClearance: 86, foodSearchRadius: 660, targetStickiness: 0.50,
+                emergencyTurnMultiplier: 1.05, escapeSpeedReductionCap: 0.15, corridorPreference: 0.52
             )
         case .nemesis:
             // Hyper-aggressive apex predator for challenge mode.
@@ -400,7 +414,8 @@ enum GameLogic {
                 cutBias: 0.96, boostBias: 1.00, unpredictability: 0.08,
                 turnRateMultiplier: 1.30, horizonMultiplier: 1.20,
                 cruiseSpeedMultiplier: 1.22, replanInterval: 0.12,
-                desiredClearance: 70, foodSearchRadius: 920, targetStickiness: 0.96
+                desiredClearance: 76, foodSearchRadius: 920, targetStickiness: 0.96,
+                emergencyTurnMultiplier: 1.08, escapeSpeedReductionCap: 0.12, corridorPreference: 0.74
             )
         }
     }
@@ -511,6 +526,7 @@ enum GameLogic {
         let escapeRoute = clamp01(snapshot.escapeRouteQuality)
         let crowding    = clamp01(snapshot.nearbyCrowding)
         let profile     = snapshot.personality
+        let effectiveCut = cut * (1.0 - crowding * (0.16 + profile.caution * 0.10))
 
         // 1. Escape: immediate high danger, or moderate danger with limited exits.
         if danger > 0.72 || (danger > 0.45 && escapeRoute < 0.40) {
@@ -519,8 +535,8 @@ enum GameLogic {
 
         // 2. Cut-off: personality-adjusted threshold keeps low-cutBias bots (e.g. coward)
         //    from attempting cut-offs; crowding guard prevents collisions in packed spaces.
-        if cut > max(hunt, food) * (0.88 - profile.cutBias * 0.14) &&
-            cut > 0.42 &&
+        if effectiveCut > max(hunt, food) * (0.90 - profile.cutBias * 0.14) &&
+            effectiveCut > 0.42 &&
             crowding < 0.78 {
             return .cutOff
         }
@@ -546,5 +562,48 @@ enum GameLogic {
 
         // 6. Fallback: mild residual danger nudges toward escape; otherwise roam freely.
         return danger > 0.28 ? .escape : .roam
+    }
+
+    static func hasViableEscapeCorridor(
+        widestSafeSpanDegrees: CGFloat,
+        mediumRangeHeadingCount: Int,
+        minimumSpanDegrees: CGFloat = 30,
+        minimumMediumHeadingCount: Int = 3
+    ) -> Bool {
+        widestSafeSpanDegrees >= minimumSpanDegrees && mediumRangeHeadingCount >= minimumMediumHeadingCount
+    }
+
+    static func shouldPreferEscape(
+        nonEscapeClearanceScore: CGFloat,
+        bestNonEscapeScore: CGFloat,
+        bestEscapeScore: CGFloat,
+        immediateDanger: CGFloat,
+        minimumClearanceScore: CGFloat = 0.58,
+        competitivenessAllowance: CGFloat = 0.10
+    ) -> Bool {
+        if nonEscapeClearanceScore < minimumClearanceScore {
+            return true
+        }
+        guard bestEscapeScore.isFinite else { return false }
+        guard immediateDanger >= 0.45 else { return false }
+        return bestNonEscapeScore <= bestEscapeScore * (1.0 + competitivenessAllowance)
+    }
+
+    static func botSteeringSpeedMultiplier(
+        turnDemand: CGFloat,
+        immediateDanger: CGFloat,
+        intent: BotIntent,
+        isCircled: Bool,
+        baseReductionCap: CGFloat,
+        challengeReductionCap: CGFloat,
+        isChallengeOrNemesis: Bool
+    ) -> CGFloat {
+        let normalizedTurnDemand = clamp01(turnDemand)
+        let normalizedDanger = clamp01(immediateDanger)
+        let cap = isChallengeOrNemesis ? min(baseReductionCap, challengeReductionCap) : baseReductionCap
+        let intentWeight: CGFloat = (intent == .escape || isCircled) ? 1.0 : 0.56
+        let dangerWeight: CGFloat = max(intent == .escape || isCircled ? 0.58 : 0.24, normalizedDanger)
+        let reduction = cap * normalizedTurnDemand * intentWeight * dangerWeight
+        return max(0.55, 1.0 - reduction)
     }
 }

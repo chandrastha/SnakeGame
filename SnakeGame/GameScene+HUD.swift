@@ -40,7 +40,6 @@ extension GameScene {
         updateBoostMeterVisual()
 
         let si        = safeInsets
-        let topInset  = si.top
         let leftInset = si.left
 
         let halfW = extents.halfW
@@ -152,7 +151,7 @@ extension GameScene {
 
         let cx = cameraNode.position.x
         let cy = cameraNode.position.y
-        let canRevive = !hasUsedRevive
+        let canRevive = true
         let canDoubleCoins = !hasDoubledCoins
         let isExpert = gameMode == .challenge
 
@@ -432,9 +431,6 @@ extension GameScene {
 
     // MARK: - Revive
     func revivePlayer() {
-        guard !hasUsedRevive else { return }
-        hasUsedRevive = true
-
         // Remove game over overlay
         gameOverOverlay?.removeFromParent()
         gameOverOverlay = nil
@@ -700,13 +696,30 @@ extension GameScene {
         node.zPosition = 500
         // Initial position is corrected by updateHUDPositions() immediately after; just place it off-screen.
         node.position = CGPoint(x: worldSize / 2, y: worldSize / 2)
+
+        let bg = SKShapeNode(rectOf: CGSize(width: 184, height: miniLeaderboardPanelHeight), cornerRadius: 14)
+        bg.fillColor = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.50)
+        bg.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.18)
+        bg.lineWidth = 1
+        node.addChild(bg)
+        miniLeaderboardBackground = bg
+
+        let title = SKLabelNode(fontNamed: "Arial-BoldMT")
+        title.text = "LEADERS"
+        title.fontSize = 11
+        title.fontColor = SKColor(white: 1.0, alpha: 0.52)
+        title.horizontalAlignmentMode = .center
+        title.verticalAlignmentMode = .center
+        title.position = CGPoint(x: 0, y: miniLeaderboardPanelHeight / 2 - 16)
+        node.addChild(title)
+        miniLeaderboardTitleLabel = title
+
         addChild(node)
         miniLeaderboard = node
     }
 
     func updateMiniLeaderboard() {
         guard let lb = miniLeaderboard else { return }
-        lb.removeAllChildren()
         miniLeaderboardNeedsRefresh = false
 
         var entries: [LeaderboardScoreEntry] = [LeaderboardScoreEntry(
@@ -719,35 +732,42 @@ extension GameScene {
         }
         let visibleEntries = GameLogic.leaderboardDisplayEntries(from: entries)
         let panelHeight = CGFloat(max(visibleEntries.count, 1)) * 20 + 34
-        miniLeaderboardPanelHeight = panelHeight
+        if miniLeaderboardPanelHeight != panelHeight {
+            miniLeaderboardPanelHeight = panelHeight
+            let path = CGPath(roundedRect: CGRect(x: -92, y: -panelHeight / 2, width: 184, height: panelHeight),
+                              cornerWidth: 14, cornerHeight: 14, transform: nil)
+            miniLeaderboardBackground?.path = path
+            miniLeaderboardTitleLabel?.position = CGPoint(x: 0, y: panelHeight / 2 - 16)
+        }
 
-        let bg = SKShapeNode(rectOf: CGSize(width: 184, height: panelHeight), cornerRadius: 14)
-        bg.fillColor = SKColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 0.50)
-        bg.strokeColor = SKColor(red: 0.80, green: 0.92, blue: 1.0, alpha: 0.18)
-        bg.lineWidth = 1
-        lb.addChild(bg)
-
-        let title = SKLabelNode(fontNamed: "Arial-BoldMT")
-        title.text = "LEADERS"
-        title.fontSize = 11
-        title.fontColor = SKColor(white: 1.0, alpha: 0.52)
-        title.horizontalAlignmentMode = .center
-        title.verticalAlignmentMode = .center
-        title.position = CGPoint(x: 0, y: panelHeight / 2 - 16)
-        lb.addChild(title)
+        while miniLeaderboardEntryLabels.count < visibleEntries.count {
+            let label = SKLabelNode(fontNamed: "Arial-BoldMT")
+            label.fontSize = 13
+            label.horizontalAlignmentMode = .left
+            label.verticalAlignmentMode = .center
+            miniLeaderboardEntryLabels.append(label)
+            lb.addChild(label)
+        }
 
         for (i, entry) in visibleEntries.enumerated() {
-            let label = SKLabelNode(fontNamed: "Arial-BoldMT")
-            label.text      = "\(entry.rank). \(entry.name)  \(entry.score)"
-            label.fontSize  = 13
-            label.fontColor = entry.isCurrentPlayer
+            let label = miniLeaderboardEntryLabels[i]
+            let desiredText = "\(entry.rank). \(entry.name)  \(entry.score)"
+            if label.text != desiredText { label.text = desiredText }
+            let desiredColor = entry.isCurrentPlayer
                 ? SKColor(red: 1, green: 0.85, blue: 0, alpha: 1)   // gold for player
                 : SKColor(white: 1, alpha: 0.70)
-            label.horizontalAlignmentMode = .left
-            label.verticalAlignmentMode   = .center
-            label.position = CGPoint(x: -84, y: panelHeight / 2 - 36 - CGFloat(i) * 20)
-            // -84 = -(184/2) + 8 → 8pt left padding inside the 184pt-wide panel
-            lb.addChild(label)
+            if label.fontColor != desiredColor { label.fontColor = desiredColor }
+            let desiredPosition = CGPoint(x: -84, y: panelHeight / 2 - 36 - CGFloat(i) * 20)
+            if label.position != desiredPosition { label.position = desiredPosition }
+            if label.isHidden { label.isHidden = false }
+        }
+
+        if miniLeaderboardEntryLabels.count > visibleEntries.count {
+            for index in visibleEntries.count..<miniLeaderboardEntryLabels.count {
+                if !miniLeaderboardEntryLabels[index].isHidden {
+                    miniLeaderboardEntryLabels[index].isHidden = true
+                }
+            }
         }
     }
 
@@ -797,6 +817,7 @@ extension GameScene {
             container.addChild(dot)
             minimapBotDots.append(dot)
         }
+        minimapBotDisplayKeys = Array(repeating: Int.min, count: localBotTargetCount)
 
         // Initial position (will be updated by updateHUDPositions each frame)
         let cx = worldSize / 2, cy = worldSize / 2
@@ -812,19 +833,30 @@ extension GameScene {
 
         let px = (snakeHead.position.x / world - 0.5) * mapSize
         let py = (snakeHead.position.y / world - 0.5) * mapSize
-        playerDot.position = CGPoint(x: px, y: py)
+        let desiredPlayerPosition = CGPoint(x: px, y: py)
+        if playerDot.position != desiredPlayerPosition {
+            playerDot.position = desiredPlayerPosition
+        }
 
         for (i, dot) in minimapBotDots.enumerated() {
             guard i < bots.count else { break }
             if !bots[i].isDead {
                 let bx = (bots[i].position.x / world - 0.5) * mapSize
                 let by = (bots[i].position.y / world - 0.5) * mapSize
-                dot.position = CGPoint(x: bx, y: by)
-                let theme = snakeColorThemes[bots[i].colorIndex % snakeColorThemes.count]
-                dot.fillColor = theme.bodySKColor.withAlphaComponent(bots[i].isActive ? 0.82 : 0.48)
-                dot.isHidden = false
+                let desiredPosition = CGPoint(x: bx, y: by)
+                if dot.position != desiredPosition { dot.position = desiredPosition }
+                let displayKey = bots[i].colorIndex * 2 + (bots[i].isActive ? 1 : 0)
+                if minimapBotDisplayKeys.indices.contains(i) && minimapBotDisplayKeys[i] != displayKey {
+                    minimapBotDisplayKeys[i] = displayKey
+                    let theme = snakeColorThemes[bots[i].colorIndex % snakeColorThemes.count]
+                    dot.fillColor = theme.bodySKColor.withAlphaComponent(bots[i].isActive ? 0.82 : 0.48)
+                }
+                if dot.isHidden { dot.isHidden = false }
             } else {
-                dot.isHidden = true
+                if !dot.isHidden { dot.isHidden = true }
+                if minimapBotDisplayKeys.indices.contains(i) {
+                    minimapBotDisplayKeys[i] = Int.min
+                }
             }
         }
 
@@ -892,7 +924,9 @@ extension GameScene {
     func updateLeaderArrow() {
         guard let arrowNode = leaderArrowNode, let label = leaderArrowLabel else { return }
         guard let target = highestScoringSnakeTarget(), !target.isPlayer else {
-            arrowNode.isHidden = true
+            if !arrowNode.isHidden { arrowNode.isHidden = true }
+            lastLeaderArrowHidden = true
+            lastLeaderArrowText = ""
             return
         }
 
@@ -901,15 +935,22 @@ extension GameScene {
         let extents = cameraHalfExtents()
         let inView = abs(dx) <= extents.halfW - 50 && abs(dy) <= extents.halfH - 90
         if inView {
-            arrowNode.isHidden = true
+            if !arrowNode.isHidden { arrowNode.isHidden = true }
+            lastLeaderArrowHidden = true
+            lastLeaderArrowText = ""
             return
         }
 
-        arrowNode.isHidden = false
-        arrowNode.zRotation = atan2(dy, dx) - .pi / 2
-        label.zRotation = -arrowNode.zRotation
+        if arrowNode.isHidden { arrowNode.isHidden = false }
+        let desiredRotation = atan2(dy, dx) - .pi / 2
+        if abs(arrowNode.zRotation - desiredRotation) > 0.0005 { arrowNode.zRotation = desiredRotation }
+        let desiredLabelRotation = -desiredRotation
+        if abs(label.zRotation - desiredLabelRotation) > 0.0005 { label.zRotation = desiredLabelRotation }
         let displayName = target.name.count > 10 ? String(target.name.prefix(10)) : target.name
-        label.text = "\(displayName) \(target.score)"
+        let desiredText = "\(displayName) \(target.score)"
+        if label.text != desiredText { label.text = desiredText }
+        lastLeaderArrowHidden = false
+        lastLeaderArrowText = desiredText
     }
 
 }
